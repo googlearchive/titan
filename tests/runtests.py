@@ -35,14 +35,12 @@ def main():
   sys.path.extend([tests_dir, root_dir])
   print 'Running tests...'
 
-  test_filenames = sys.argv
-  if test_filenames and test_filenames[0].endswith(os.path.basename(__file__)):
-    test_filenames = test_filenames[1:]
+  test_filenames = sys.argv[1:]
   if not test_filenames:
-    test_filenames = sorted(os.listdir(os.path.dirname(__file__)))
+    test_filenames = sorted(os.listdir(tests_dir))
 
   for basename in test_filenames:
-    filename = os.path.join(os.path.dirname(__file__), basename)
+    filename = os.path.join(tests_dir, basename)
     if not filename.endswith('_test.py'):
       continue
 

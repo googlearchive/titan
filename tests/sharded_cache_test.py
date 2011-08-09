@@ -15,7 +15,7 @@
 
 """Tests for sharded_cache.py."""
 
-from titan.common import testing
+from tests import testing
 
 import cPickle as pickle
 from google.appengine.api import memcache

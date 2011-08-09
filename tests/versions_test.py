@@ -15,7 +15,7 @@
 
 """Tests for versions.py."""
 
-from titan.common import testing
+from tests import testing
 
 from titan.common.lib.google.apputils import basetest
 from titan.files import files

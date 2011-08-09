@@ -15,7 +15,7 @@
 
 """Tests for files.py."""
 
-from titan.common import testing
+from tests import testing
 
 import copy
 import datetime

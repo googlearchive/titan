@@ -15,7 +15,7 @@
 
 """Tests for Titan handlers."""
 
-from titan.common import testing
+from tests import testing
 
 try:
   import json as simplejson
@@ -23,7 +23,7 @@ except ImportError:
   import simplejson
 import time
 import urllib
-from titan.common import webapp_testing
+from tests import webapp_testing
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.files import handlers

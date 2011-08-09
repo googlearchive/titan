@@ -15,7 +15,7 @@
 
 """Tests for titanfs.py."""
 
-from titan.common import testing
+from tests import testing
 
 import os
 import mox

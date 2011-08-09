@@ -15,19 +15,8 @@
 
 """Titan command-line file management tool.
 
-Upload files:
-  titan_client upload --target_path=<remote dir> <local filenames>
-
-Upload directories:
-  titan_client upload --target_path=<remote dir> <local dirs>
-
-Download files:
-  titan_client download --file_path=<remote path> [local target dir]
-  titan_client download --dir_path=<remote dir> [local target dir]
-
-The "help" command is self-documenting based on the docstrings of the
-corresponding functions for a command, so be sure to add appropriate
-documentation.
+For a list of available commands, run:
+  titan_client help [command]
 """
 
 import errno
@@ -71,6 +60,10 @@ class RequireFlags(object):
 class TitanCommands(object):
   """Class containing Titan command-line commands.
 
+  The "help" command is self-documenting based on the docstrings of the
+  corresponding functions for a command, so be sure to add appropriate
+  documentation.
+
   Attributes:
     args: List of command-line arguments.
     flags: Dict of command-line flags.
@@ -107,11 +100,11 @@ class TitanCommands(object):
   def Upload(self):
     """Uploads files from the local filesystem to a Titan file service.
 
-    Basic usage:
-      titan upload <local_paths> --target_path=<remote_path>
-
-    To upload a directory:
-      titan upload <dir_path> --recursive --target_path=<remote_path>
+    Upload files:
+      titan_client upload --target_path=<remote dir> <local filenames>
+    
+    Upload directories:
+      titan_client upload --target_path=<remote dir> --recursive <local dirs>
 
     Required flags:
       --host, -H: Host of the Titan service.
@@ -191,11 +184,9 @@ class TitanCommands(object):
   def Download(self, dir_paths=None, target_dir=None, quiet=False):
     """Downloads files from a Titan file service to the local filesystem.
 
-    Basic usage (download a file):
-      titan download --file_path=<remote_path> [target_dir]
-
-    To download a directory:
-      titan download --dir_path=<remote_dir> [target_dir]
+    Usage:
+      titan_client download --file_path=<remote path> [local target dir]
+      titan_client download --dir_path=<remote dir> [local target dir]
 
     Required flags:
       --host, -H: Host of the Titan service.

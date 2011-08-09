@@ -25,7 +25,7 @@ import threading
 import mox
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
-from titan.common import testing
+from tests import testing
 from tests import client_test
 from titan.files import files
 from titan.utils import titan_client
