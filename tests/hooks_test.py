@@ -32,50 +32,65 @@ class HooksTest(testing.ServicesTestCase):
     hooks._global_services_order = []
 
   def testHooks(self):
-    core_titan = self.mox.CreateMockAnything()
-    foo_hook = self.mox.CreateMockAnything()
-    another_foo_hook = self.mox.CreateMockAnything()
-    # "Foo" is a core Titan function which takes "base_arg".
-    # The "bar" service hooks around Foo and requires "extra_arg".
-    # The "baz" service hooks around Foo and requires "diff_arg".
-    #
-    # Return from baz service pre hook (which pops diff_arg):
-    first_new_kwargs = {
-        'base_arg': True,  # baz service modifies base_arg.
-        'extra_arg': False,  # baz service passes on other arguments unmodified.
-    }
-    # Return from bar service pre hook (which pops extra_arg):
-    second_new_kwargs = {
-        'base_arg': False,  # bar service modifies base_arg.
-    }
+    bar_foo_hook = self.mox.CreateMockAnything()
+    baz_foo_hook = self.mox.CreateMockAnything()
+
+    # "Foo" is a core Titan function and requires "base_arg".
+    # The "bar" service requires "bar_arg", similarly for the "baz" service.
+    def Foo(base_arg):
+      self.assertTrue(base_arg)
+      return 0
 
     # Order is important here...it's an onion. The pre hooks are called in the
     # _global_services_order and the post hooks are called in reverse.
-    another_foo_hook().AndReturn(another_foo_hook)
-    another_foo_hook.Pre(
-        base_arg=False, diff_arg=False, extra_arg=False
-    ).AndReturn(first_new_kwargs)
-    foo_hook().AndReturn(foo_hook)
-    foo_hook.Pre(
-        base_arg=True, extra_arg=False
-    ).AndReturn(second_new_kwargs)
-    core_titan.Foo(base_arg=False).AndReturn(0)
-    foo_hook.Post(0).AndReturn(1)
-    another_foo_hook.Post(1).AndReturn(2)
+    #
+    # Call stack for the wrapped Foo method:
+    # Baz pre hook --> Bar pre hook --> Foo --> Bar post hook --> Baz post hook
+    baz_foo_hook().AndReturn(baz_foo_hook)
+    baz_foo_hook.Pre(
+        base_arg=False, baz_arg=False, bar_arg=False
+    ).AndReturn({'base_arg': True})  # baz modifies the base_arg
+    bar_foo_hook().AndReturn(bar_foo_hook)
+    bar_foo_hook.Pre(
+        base_arg=True, baz_arg=False, bar_arg=False
+    ).AndReturn(None)
+    # The core titan method will be called here.
+    bar_foo_hook.Post(0).AndReturn(1)
+    baz_foo_hook.Post(1).AndReturn(2)
 
     self.mox.ReplayAll()
 
-    # First, the bar and baz services register.
-    hooks.RegisterHook('baz', 'foo-hook', hook_class=another_foo_hook)
-    hooks.RegisterHook('bar', 'foo-hook', hook_class=foo_hook)
+    # First, the baz and bar services register.
+    hooks.RegisterHook('baz', 'foo-hook', hook_class=baz_foo_hook)
+    hooks.RegisterHook('bar', 'foo-hook', hook_class=bar_foo_hook)
 
     # Then, the decorated and wrapped Foo() method is called.
     decorator = hooks.ProvideHook('foo-hook')
-    decorated_foo = decorator(core_titan.Foo)
-    result = decorated_foo(base_arg=False, extra_arg=False, diff_arg=False)
+    decorated_foo = decorator(Foo)
+    result = decorated_foo(base_arg=False, bar_arg=False, baz_arg=False)
     self.assertEqual(2, result)
 
     self.mox.VerifyAll()
+
+  def testComposeArguments(self):
+
+    def Method(foo, bar=None, baz=False):
+      pass
+
+    expected = {'foo': 1, 'bar': True, 'baz': True, 'non_core': True}
+    core_args, composite_kwargs = hooks.ProvideHook._ComposeArguments(
+        Method, 1, True, baz=True, non_core=True)
+    self.assertListEqual(['foo', 'bar', 'baz'], core_args)
+    self.assertDictEqual(expected, composite_kwargs)
+
+    expected = {'foo': 1, 'bar': None, 'baz': True}
+    core_args, composite_kwargs = hooks.ProvideHook._ComposeArguments(
+        Method, foo=1, baz=True)
+    self.assertListEqual(['foo', 'bar', 'baz'], core_args)
+    self.assertDictEqual(expected, composite_kwargs)
+
+    # Error handling:
+    self.assertRaises(TypeError, hooks.ProvideHook._ComposeArguments(Method))
 
   def testLoadServices(self):
     # Verify "does not define a RegisterService() method" error.

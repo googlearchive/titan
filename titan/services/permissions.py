@@ -55,11 +55,8 @@ class Permissions(object):
 class HookForGet(hooks.Hook):
   """Hook for files.Get()."""
 
-  def Pre(self, paths, file_ents=None, user=None, **kwargs):
-    new_kwargs = hooks.MakeKeywordArgs(locals(),
-                                       base_args=['paths', 'file_ents'])
+  def Pre(self, user=None, **kwargs):
     self.user = user
-    return new_kwargs
 
   def Post(self, file_objs):
     """For every File returned, verify that the user has read permissions."""
@@ -69,83 +66,71 @@ class HookForGet(hooks.Hook):
 class HookForRead(hooks.Hook):
   """Hook for files.Read()."""
 
-  def Pre(self, path, file_ent=None, user=None, **kwargs):
+  def Pre(self, user=None, **kwargs):
     """Pre hook to verify that a user has read permissions over a file."""
-    new_kwargs = hooks.MakeKeywordArgs(locals(), base_args=['path', 'file_ent'])
-
     # Verify that the user has read permissions.
-    path = files.ValidatePaths(path)
+    path = files.ValidatePaths(kwargs['path'])
+    file_ent = kwargs['file_ent']
     if not file_ent:
       file_ent, _ = files._GetFiles(path)
     _VerifyPermissions(file_ent, user=user, read=True)
 
     # Pass the file entity to the next layer to avoid duplicate RPCs.
-    new_kwargs['file_ent'] = file_ent
-    return new_kwargs
+    return {'file_ent': file_ent}
 
 class HookForWrite(hooks.Hook):
   """Hook for files.Write()."""
 
-  def Pre(self, path, content=None, blobs=None, mime_type=None, meta=None,
-          async=False, permissions=None, file_ent=None, user=None, **kwargs):
+  def Pre(self, user=None, permissions=None, **kwargs):
     """Pre hook for files.Write()."""
-    base_args = ['path', 'content', 'blobs', 'mime_type', 'meta', 'async',
-                 'file_ent']
-    new_kwargs = hooks.MakeKeywordArgs(locals(), base_args=base_args)
-
-    self.permissions = permissions
-
     # Check write permissions.
-    path = files.ValidatePaths(path)
+    path = files.ValidatePaths(kwargs['path'])
+    file_ent = kwargs['file_ent']
     if not file_ent:
       file_ent, _ = files._GetFiles(path)
     _VerifyPermissions(file_ent, user, write=True)
 
     # Pass the file entity to the next layer to avoid duplicate RPCs.
-    new_kwargs['file_ent'] = file_ent
+    changed_kwargs = {}
+    changed_kwargs['file_ent'] = file_ent
 
     # If changing permissions, update the permission meta properties.
     if permissions:
-      new_kwargs['meta'] = {} if meta is None else meta
-      new_kwargs['meta'].update({
+      changed_kwargs['meta'] = {} if kwargs['meta'] is None else kwargs['meta']
+      changed_kwargs['meta'].update({
           'permissions_read_users': list(permissions.read_users) or None,
           'permissions_write_users': list(permissions.write_users) or None,
       })
-    return new_kwargs
+    return changed_kwargs
 
 class HookForDelete(hooks.Hook):
   """Hook for files.Delete()."""
 
-  def Pre(self, paths, async=False, file_ents=None, update_subdir_caches=False,
-          user=None, **kwargs):
+  def Pre(self, user=None, **kwargs):
     """Pre hook for files.Delete()."""
-    base_args = ['paths', 'async', 'file_ents', 'update_subdir_caches']
-    new_kwargs = hooks.MakeKeywordArgs(locals(), base_args=base_args)
+    paths = kwargs['paths']
+    file_ents = kwargs['file_ents']
 
-    if not file_ents:
+    if not kwargs['file_ents']:
       file_ents, _ = files._GetFilesOrDie(paths)
     _VerifyPermissions(file_ents, user, write=True)
 
     # Pass the file entities to the next layer to avoid duplicate RPCs.
-    new_kwargs['file_ents'] = file_ents
-    return new_kwargs
+    return {'file_ents': file_ents}
 
 class HookForTouch(hooks.Hook):
   """Hook for files.Touch()."""
 
-  def Pre(self, paths, async=False, file_ents=None, user=None, **kwargs):
+  def Pre(self, user=None, **kwargs):
     """Pre hook for files.Touch()."""
-    base_args = ['paths', 'async', 'file_ents']
-    new_kwargs = hooks.MakeKeywordArgs(locals(), base_args=base_args)
-
-    paths = files.ValidatePaths(paths)
+    paths = files.ValidatePaths(kwargs['paths'])
+    file_ents = kwargs['file_ents']
     if not file_ents:
       file_ents, _ = files._GetFiles(paths)
     _VerifyPermissions(file_ents, user, write=True)
 
     # Pass the file entities to the next layer to avoid duplicate RPCs.
-    new_kwargs['file_ents'] = file_ents
-    return new_kwargs
+    return {'file_ents': file_ents}
 
 def _VerifyPermissions(file_ents, user, read=False, write=False):
   """Check user access over file_ents, verifying ability read and/or write."""

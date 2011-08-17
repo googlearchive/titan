@@ -20,6 +20,7 @@ Documentation:
 """
 
 import functools
+import inspect
 import sys
 
 try:
@@ -58,15 +59,6 @@ def LoadServices(config_module=appengine_config):
           % service_module_str)
     service_module.RegisterService()
 
-def MakeKeywordArgs(locals_dict, base_args):
-  """Make the new_kwargs dict given a function's locals() and the base args."""
-  new_kwargs = {}
-  for base_arg in base_args:
-    new_kwargs[base_arg] = locals_dict[base_arg]
-  # Also, pass all of the arguments for all other service layers:
-  new_kwargs.update(locals_dict['kwargs'])
-  return new_kwargs
-
 class ProvideHook(object):
   """Decorator for wrapping a function to execute pre and post hooks."""
 
@@ -76,26 +68,48 @@ class ProvideHook(object):
   def __call__(self, func):
 
     @functools.wraps(func)
-    def WrappedFunc(*args, **kwargs):
-      return self._HandleHookedCall(self.hook_name, func, *args, **kwargs)
-
+    def WrappedFunc(*func_args, **func_kwargs):
+      core_arg_names, composite_kwargs = self._ComposeArguments(
+          func, *func_args, **func_kwargs)
+      return self._HandleHookedCall(
+          self.hook_name, func, core_arg_names, composite_kwargs)
     return WrappedFunc
 
   @staticmethod
-  def _HandleHookedCall(hook_name, func, *args, **kwargs):
+  def _ComposeArguments(func, *args, **kwargs):
+    """Condense all args and kwargs into a single kwargs dictionary."""
+    core_arg_names, _, _, defaults = inspect.getargspec(func)
+    composite_kwargs = {}
+
+    # Loop through the defaults backwards, associating each to its core arg
+    # name. Anything left over is the name of a core method positional arg.
+    defaults = defaults or ()
+    for i, default in enumerate(defaults[::-1]):
+      composite_kwargs[core_arg_names[-(i + 1)]] = default
+
+    # Overlay given positional arguments over their keyword-arg equivalent.
+    for i, arg in enumerate(args):
+      composite_kwargs[core_arg_names[i]] = arg
+
+    # Overlay given keyword arguments over the defaults.
+    composite_kwargs.update(kwargs)
+    return core_arg_names, composite_kwargs
+
+  @staticmethod
+  def _HandleHookedCall(hook_name, func, core_args, composite_kwargs):
     """Executing pre and post hooks around the given function."""
     # Pull out the services_override var before executing hooks.
-    services_override = kwargs.get('services_override')
+    services_override = composite_kwargs.get('services_override')
     if services_override is not None:
-      del kwargs['services_override']
+      del composite_kwargs['services_override']
 
     # Get the current hooks if any exist.
     hooks = _global_hooks.get(hook_name)
-
     if hooks:
-      result = hooks.RunWithHooks(services_override, func, *args, **kwargs)
+      result = hooks.RunWithHooks(
+          services_override, func, core_args, composite_kwargs)
     else:
-      result = func(*args, **kwargs)
+      result = func(**composite_kwargs)
     return result
 
 def RegisterHook(service_name, hook_name, hook_class):
@@ -130,18 +144,20 @@ class HookContainer(object):
   def RegisterHook(self, service_name, hook_class):
     self._hook_classes[service_name] = hook_class
 
-  def RunWithHooks(self, services_override, func, *args, **kwargs):
+  def RunWithHooks(self, services_override, func, core_args, composite_kwargs):
     """Run the given method and arguments with any registered hooks.
 
     Args:
       services_override: A list of the enabled service names, or None if all
           services are enabled.
-      func: The low-level Titan method to call with *args and **kwargs.
+      func: The low-level Titan method to call with **composite_kwargs.
+      core_args: A list of strings of args accepted by the core method.
+      composite_kwargs: A dictionary of all given arguments.
     Returns:
       The result of running func wrapped in the service layers.
     """
     hook_runner = HookRunner(self._hook_classes, services_override)
-    return hook_runner.Run(func, *args, **kwargs)
+    return hook_runner.Run(func, core_args, composite_kwargs)
 
 class HookRunner(object):
   """A one-time-use object to run a set of hooks around a core titan method."""
@@ -151,28 +167,21 @@ class HookRunner(object):
     self._hook_classes = hook_classes
     self.services_override = services_override
 
-  def Run(self, func, *args, **kwargs):
+  def Run(self, func, core_args, composite_kwargs):
     """Run pre hooks --> func --> post hooks."""
     # 1. Execute all service pre hooks, returning the final arguments dict.
-    new_kwargs = self._ExecutePreHooks(*args, **kwargs)
+    new_core_kwargs = self._ExecutePreHooks(core_args, composite_kwargs)
 
     # 2. Call the lowest-level Titan function using the arguments which have
     # gone through all service layers.
-    if self.had_pre_hooks:
-      data = func(**new_kwargs)
-    else:
-      data = func(*args, **kwargs)
+    data = func(**new_core_kwargs)
 
     # 3. Execute post hooks (in reverse order), possibly changing the results.
     return self._ExecutePostHooks(data)
 
-  def _ExecutePreHooks(self, *args, **kwargs):
+  def _ExecutePreHooks(self, core_args, composite_kwargs):
     """In order of the global services, execute pre hooks."""
-    # All pre hooks consume the arguments they care about and return a
-    # dictionary of new keyword arguments to be passed to the next layer down.
-    # This lets service layers wrap each other and only modify certain args.
-    new_kwargs = {}
-    first_hook_complete = False
+    new_core_kwargs = composite_kwargs.copy()
     for service_name in _global_services_order:
       service_is_enabled = (self.services_override is None
                             or service_name in self.services_override)
@@ -184,17 +193,16 @@ class HookRunner(object):
         if not hasattr(self._hooks[service_name], 'Pre'):
           continue
 
-        # The first pre hook function is given *args and **kwargs and it returns
-        # the new_kwargs dictionary with all arguments for the next call.
-        # Every pre hook afterward is given **new_kwargs.
-        if not first_hook_complete:
-          new_kwargs = self._hooks[service_name].Pre(*args, **kwargs)
-          first_hook_complete = True
-        else:
-          new_kwargs = self._hooks[service_name].Pre(**new_kwargs)
+        # Service layers return None, or a dict of which core args to modify.
+        args_to_change = self._hooks[service_name].Pre(**new_core_kwargs)
+        if args_to_change:
+          new_core_kwargs.update(args_to_change)
 
-    self.had_pre_hooks = first_hook_complete
-    return new_kwargs
+    # Remove non-core arguments which were consumed by service layers.
+    core_kwargs = {}
+    for core_arg in core_args:
+      core_kwargs[core_arg] = new_core_kwargs[core_arg]
+    return core_kwargs
 
   def _ExecutePostHooks(self, data):
     """In reverse order of the global services, execute post hooks.
