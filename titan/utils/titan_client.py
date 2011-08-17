@@ -28,6 +28,7 @@ import logging
 from multiprocessing import pool
 import optparse
 import os
+import re
 import sys
 import time
 from titan.common.lib.google.apputils import app
@@ -102,7 +103,7 @@ class TitanCommands(object):
 
     Upload files:
       titan_client upload --target_path=<remote dir> <local filenames>
-    
+
     Upload directories:
       titan_client upload --target_path=<remote dir> --recursive <local dirs>
 
@@ -288,7 +289,7 @@ class TitanCommands(object):
         len(path_map), HumanizeDuration(seconds))
     return path_map
 
-  def Help(self):
+  def Help(self, method=None):
     """Prints the help message.
 
     Basic usage:
@@ -297,10 +298,14 @@ class TitanCommands(object):
     Help with a specific command:
       titan help <command>
 
+    Args:
+      method: The function pointer whose docstring will be parsed.
     Returns:
       The help message.
     """
-    if self.args:
+    if method:
+      helpdoc = inspect.getdoc(method)
+    elif self.args:
       command = self.args[0]
       method = self._GetMethodForCommand(command)
       helpdoc = inspect.getdoc(method)
@@ -318,6 +323,10 @@ class TitanCommands(object):
       helpdoc.append('  titan help <command>')
       helpdoc = '\n'.join(helpdoc)
 
+    # Remove internal docstring comments (anything after Args, Returns, etc.)
+    clean_helpdoc = re.search('(.*)(?:Args|Returns|Raises):\n', helpdoc)
+    if clean_helpdoc:
+      helpdoc = clean_helpdoc.group(1)
     print helpdoc
     return helpdoc
 

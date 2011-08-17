@@ -88,8 +88,8 @@ class TitanCommandsTest(testing.BaseTestCase):
 
     # Verify command-specific helpdoc.
     self.commands.args = ['upload']
-    self.assertEqual(inspect.getdoc(self.commands.Upload),
-                     self.commands.Help())
+    self.assertIn(self.commands.Help(), inspect.getdoc(self.commands.Upload))
+    self.assertNotIn('Returns', self.commands.Help())
 
     # Verify CommandValueError is raised for unknown command.
     self.commands.args = ['unknown_command']

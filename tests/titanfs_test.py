@@ -36,7 +36,7 @@ class TitanFilesystemCommandsTest(testing.BaseTestCase):
         'host': 'localhost',
         'port': 80,
         'secure': False,
-        'sync_dir': FLAGS.test_tmpdir,
+        'sync_dir': [FLAGS.test_tmpdir],
         'target_path': '/',
         'username': 'titanuser@example.com',
     }
@@ -64,7 +64,7 @@ class TitanFilesystemCommandsTest(testing.BaseTestCase):
 
   def testLocalFileEventHandlerHelpers(self):
     handler = titanfs.LocalFileEventHandler(
-        sync_dir='/local/', target_path='/remote', titan_rpc_client=None)
+        base_dir='/local/', target_path='/remote', titan_rpc_client=None)
 
     event_mock = mox.MockObject(titanfs.pyinotify.ProcessEvent)
     event_mock.name = 'filename'
@@ -95,7 +95,7 @@ class TitanFilesystemCommandsTest(testing.BaseTestCase):
 
   def testProcessing(self):
     handler = titanfs.LocalFileEventHandler(
-        sync_dir=FLAGS.test_tmpdir, target_path='/',
+        base_dir=FLAGS.test_tmpdir, target_path='/',
         titan_rpc_client=self.titan_client_stub)
     event_mock = mox.MockObject(titanfs.pyinotify.ProcessEvent)
     event_mock.dir = False

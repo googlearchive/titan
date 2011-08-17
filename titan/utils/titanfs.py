@@ -73,17 +73,17 @@ def IgnoreTemporaryFiles(func):
 class LocalFileEventHandler(pyinotify.ProcessEvent):
   """Event handler for local filesystem events."""
 
-  def __init__(self, sync_dir, target_path, titan_rpc_client,
+  def __init__(self, base_dir, target_path, titan_rpc_client,
                excluded_filenames_regex=None):
     super(LocalFileEventHandler, self).__init__()
-    self.sync_dir = sync_dir
+    self.base_dir = base_dir
     self.target_path = target_path
     self.titan_rpc_client = titan_rpc_client
     self.excluded_filenames_regex = excluded_filenames_regex
 
   def _GetRemoteTarget(self, event):
     filename = event.pathname
-    rel_file_path = filename[len(self.sync_dir):]
+    rel_file_path = filename[len(self.base_dir):]
     # Strip leading slash.
     if rel_file_path.startswith('/'):
       rel_file_path = rel_file_path[1:]
@@ -166,31 +166,40 @@ class TitanFilesystemCommands(titan_client.TitanCommands):
     self.RegisterCommand('start', self.Start)
 
   @titan_client.RequireFlags('host', 'sync_dir', 'target_path')
-  def Start(self, excluded_filenames_regex=EXCLUDED_FILENAMES_REGEX):
+  def Start(self, base_dir=None, sync_dirs=None,
+            excluded_filenames_regex=EXCLUDED_FILENAMES_REGEX):
     """Start watching and syncing the local and remote filesystem changes.
 
-    Basic usage:
+    Usage:
       titanfs start --host=<hostname> --sync_dir=<local dir>
+          [--base_dir=<directory name to strip from sync_dirs>]
           [--target_path=<remote base path>]
     """
     # TODO(user): add syncing from remote changes to local files.
 
     target_path = self.flags['target_path']
-    sync_dir = self.flags['sync_dir']
+    if not sync_dirs:
+      sync_dirs = self.flags.get('sync_dir')
+    if not base_dir and sync_dirs:
+      # Determine the directory that contains all given sync dirs.
+      base_dir = os.path.commonprefix(sync_dirs)
+      if not base_dir.endswith('/'):
+        base_dir = os.path.split(base_dir)[0]
     # Passing True to the default arg of .get doesn't work, so set it directly:
     recursive = True if self.flags.get('recursive') is None else False
 
     self.ValidateAuth()
     watch_manager = pyinotify.WatchManager()
     local_file_handler = LocalFileEventHandler(
-        sync_dir=sync_dir,
+        base_dir=base_dir,
         target_path=target_path,
         titan_rpc_client=self.titan_rpc_client,
         excluded_filenames_regex=excluded_filenames_regex)
 
+    logging.info('Starting directory watcher, please wait...')
     notifier = pyinotify.Notifier(watch_manager, local_file_handler)
-    watch_manager.add_watch(sync_dir, WATCHED_EVENTS, rec=recursive)
-
+    for sync_dir in sync_dirs:
+      watch_manager.add_watch(sync_dir, WATCHED_EVENTS, rec=recursive)
     logging.info('Ready. Watching for changes...')
     notifier.loop()
 
@@ -204,6 +213,7 @@ def AddTitanFilesystemOptions(parser):
 
   parser.AddOption(
       '--sync_dir', dest='sync_dir',
+      action='append', default=[],
       help=('The local base directory to watch for changes.'))
 
 def main(unused_argv):
