@@ -34,6 +34,13 @@ Usage:
   Some of these methods can take async=True and return asynchronous RPC objects.
 """
 
+try:
+  # Load appengine_config here to guarantee that that hooks.LoadServices
+  # can register all services for any request paths.
+  import appengine_config
+except ImportError:
+  appengine_config = None
+
 import collections
 import cStringIO
 import datetime
@@ -46,9 +53,6 @@ from google.appengine.ext import db
 from google.appengine.ext import deferred
 from titan.common import hooks
 from titan.files import files_cache
-
-# Load registered service hooks.
-hooks.LoadServices()
 
 # Arbitrary cutoff for when content will be stored in blobstore.
 MAX_CONTENT_SIZE = 1 << 19  # 500 KiB
@@ -490,7 +494,10 @@ def Touch(paths, async=False, file_ents=None):
   for i, file_ent in enumerate(files_list):
     if not file_ent:
       # File doesn't exist, touch it.
-      file_ent = _File.get(Write(paths_list[i], content=''))
+      # We disable Write hooks by passing services_override=[] because we assume
+      # that all hook behavior/manipulation is done around Touch() itself.
+      file_ent = _File.get(Write(paths_list[i], content='',
+                                 services_override=[]))
       # Inject new _File entity back into the object that will be put().
       if is_multiple:
         file_ents[i] = file_ent

@@ -180,6 +180,6 @@ class ServicesTestCase(BaseTestCase):
     hooks.global_hooks = {}
     hooks.global_services_order = []
 
-  def EnableServices(self, config_module_name):
+  def EnableServices(self, services):
     """Let tests define a custom set of TITAN_SERVICES."""
-    hooks.LoadServices(config_module=sys.modules[config_module_name])
+    hooks.LoadServices(services)

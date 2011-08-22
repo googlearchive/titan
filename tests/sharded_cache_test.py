@@ -15,10 +15,9 @@
 
 """Tests for sharded_cache.py."""
 
-from tests import testing
-
 import cPickle as pickle
 from google.appengine.api import memcache
+from google.appengine.ext import testbed
 from titan.common.lib.google.apputils import basetest
 from titan.common import sharded_cache
 
@@ -31,7 +30,15 @@ SMALL_CONTENT = 'a' * 1000
 LARGE_CONTENT = 'b' * MAX_VALUE_SIZE * 2
 LARGE_CONTENT_PICKLED = pickle.dumps(LARGE_CONTENT)
 
-class ShardedCacheTest(testing.BaseTestCase):
+class ShardedCacheTest(basetest.TestCase):
+
+  def setUp(self):
+    self.testbed = testbed.Testbed()
+    self.testbed.activate()
+    self.testbed.init_memcache_stub()
+
+  def tearDown(self):
+    self.testbed.deactivate()
 
   def testGet(self):
     sharded_cache.Set('foo', SMALL_CONTENT)

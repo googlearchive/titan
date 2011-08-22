@@ -13,14 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""API for storing objects larger than 1MB in memcache.
+"""API for storing objects larger than 1MB in App Engine memcache.
 
 This may be useful for relatively small blobstore entities which need to
-be read into app memory often but can't be cached due to size limits.
+be read into app memory often, but can't be cached due to size limits.
 
-This module should be used with care and not with very large objects,
-keeping in mind AppEngine's soft memory limit of ~200MB. Also, this module is
-capable of storing objects smaller than 1MB, but it is less efficient at it.
+This module should not be used with very large objects, keeping in mind the
+32 MB limit of memcache.set_multi. Also, this module is capable of caching
+objects smaller than 1MB, but it is less efficient at it.
 """
 
 import cPickle as pickle

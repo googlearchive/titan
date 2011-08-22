@@ -23,11 +23,6 @@ import functools
 import inspect
 import sys
 
-try:
-  import appengine_config
-except ImportError:
-  appengine_config = None
-
 # For now, store registered services in global variables. These vars are
 # populated when files.py is imported and runs LoadServices(). Because
 # of this, we can guarantee services are registered at the lowest level
@@ -42,12 +37,15 @@ except ImportError:
 _global_hooks = {}
 _global_services_order = []
 
-def LoadServices(config_module=appengine_config):
-  """Load all the services specified by appengine_config.TITAN_SERVICES."""
-  if not hasattr(config_module, 'TITAN_SERVICES'):
-    # No services are configured.
-    return
-  for service_module_str in config_module.TITAN_SERVICES:
+def LoadServices(services):
+  """Import and initialize the given service modules strings.
+
+  This should be called at the module level in appengine_config.py.
+
+  Args:
+    services: An iterable of module name strings.
+  """
+  for service_module_str in services:
     # Load each module and call module.RegisterService(). Each service must
     # define RegisterService(), which calls RegisterHook for each service hook.
     __import__(service_module_str)

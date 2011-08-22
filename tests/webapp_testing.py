@@ -13,7 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base test case classes for App Engine webapp handlers."""
+"""Base test case classes for App Engine webapp handlers.
+
+Usage:
+  class YourTestCase(webapp_testing.WebAppTestCase):
+
+    def testGetHandler(self):
+      response = self.Get(handlers.SomeHandlerClass, params={'query': 'param'})
+      # ... assert response correctness ...
+
+    def testPostHandler(self):
+      response = self.Post(handlers.SomeHandlerClass, params={'query': 'param'})
+      # Or, to send data which is already urlencoded:
+      response = self.Post(handlers.SomeHandlerClass, payload='query=param')
+      # ... assert response correctness ...
+"""
 
 import cStringIO
 import urllib
@@ -53,6 +67,7 @@ class WebAppTestCase(basetest.TestCase):
         'APPLICATION_ID': 'dev~testapp',
         'CONTENT_TYPE': 'application/x-www-form-urlencoded',
         'PATH_TRANSLATED': '/tmp/fake-file.py',
+        'wsgi.url_scheme': 'http',
     }
     return env
 
@@ -82,7 +97,14 @@ class WebAppTestCase(basetest.TestCase):
     return handler
 
   def Get(self, handler_class, params=None, *args, **kwargs):
-    """Makes a GET request on a handler and returns the response object."""
+    """Makes a GET request to a handler and returns the response object.
+
+    Args:
+      handler_class: A webapp handler class which defines a get() method.
+      params: A dictionary or iterable of two-tuples to be urlencoded.
+    Returns:
+      A response object processed by the handler's get() method.
+    """
     environ = self.GetDefaultEnvironment()
     environ['REQUEST_METHOD'] = 'GET'
     if params:
@@ -97,7 +119,16 @@ class WebAppTestCase(basetest.TestCase):
     return handler.response
 
   def Post(self, handler_class, payload=None, params=None, *args, **kwargs):
-    """Makes a POST request on a handler and returns the response object."""
+    """Makes a POST request on a handler and returns the response object.
+
+    Args:
+      handler_class: A webapp handler class which defines a post() method.
+      payload: A urlencoded data payload.
+      params: If provided, will be urlencoded and sent as the payload.
+          This is a convenience arg to allow passing a dictionary of query args.
+    Returns:
+      A response object processed by the handler's post() method.
+    """
     environ = self.GetDefaultEnvironment()
     environ['REQUEST_METHOD'] = 'POST'
     if payload or params:

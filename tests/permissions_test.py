@@ -21,15 +21,14 @@ from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.services import permissions
 
-TITAN_SERVICES = (
-    'titan.services.permissions',
-)
-
 class PermissionsTest(testing.ServicesTestCase):
 
   @testing.DisableCaching
   def testPermissions(self):
-    self.EnableServices(__name__)
+    services = (
+        'titan.services.permissions',
+    )
+    self.EnableServices(services)
 
     # Setting write permissions.
     perms = permissions.Permissions(write_users=['titanuser@example.com'])

@@ -21,17 +21,16 @@ from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.services import versions
 
-TITAN_SERVICES = (
-    'titan.services.versions',
-)
-
 class VersionsTest(testing.ServicesTestCase):
 
   def testVersions(self):
     # TODO(user): implement the versions service, but until then
     # verify that the hook wrapping is working correctly.
     self.assertRaises(files.BadFileError, files.Get, '/foo')
-    self.EnableServices(__name__)
+    services = (
+        'titan.services.versions',
+    )
+    self.EnableServices(services)
     self.assertRaises(NotImplementedError, files.Get, '/foo')
     self.assertRaises(NotImplementedError, files.Write, '/foo')
 

@@ -20,11 +20,6 @@ from tests import testing
 from titan.common.lib.google.apputils import basetest
 from titan.common import hooks
 
-TITAN_SERVICES = (
-    # Module which does not define RegisterService() method:
-    'sys',
-)
-
 class HooksTest(testing.ServicesTestCase):
 
   def tearDown(self):
@@ -94,14 +89,13 @@ class HooksTest(testing.ServicesTestCase):
 
   def testLoadServices(self):
     # Verify "does not define a RegisterService() method" error.
-    self.assertRaises(AttributeError, self.EnableServices, __name__)
+    self.assertRaises(AttributeError, self.EnableServices, ('sys',))
 
     # Basic integration with the versions service just for testing LoadServices.
-    global TITAN_SERVICES
-    TITAN_SERVICES = (
+    services = (
         'titan.services.versions',
     )
-    self.EnableServices(__name__)
+    self.EnableServices(services)
     self.assertIn('file-write', hooks._global_hooks)
     self.assertEqual(['versions'], hooks._global_services_order)
 

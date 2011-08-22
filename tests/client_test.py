@@ -22,8 +22,8 @@ import urlparse
 import mox
 from google.appengine.tools import appengine_rpc
 from tests import appengine_rpc_test_util
-from tests import webapp_testing
 from titan.common.lib.google.apputils import basetest
+from tests import webapp_testing
 from titan.files import client
 from titan.files import files
 from titan.files import handlers
