@@ -36,8 +36,8 @@ class PermissionsTest(testing.ServicesTestCase):
 
     # Everyone can still read, only titanuser@example.com (the environment
     # default) can write.
-    self.assertEqual('Test', files.Read('/bar'))
-    self.assertEqual('Test', files.Read('/bar', user='bob'))
+    self.assertEqual('Test', files.Get('/bar').content)
+    self.assertEqual('Test', files.Get('/bar', user='bob').content)
     self.assertRaises(
         permissions.PermissionsError, files.Write, '/bar', 'Test', user='bob')
     self.assertRaises(
@@ -45,26 +45,25 @@ class PermissionsTest(testing.ServicesTestCase):
     self.assertRaises(
         permissions.PermissionsError, files.Delete, '/bar', user='bob')
     files.Write('/bar', 'New content')
-    self.assertEqual('New content', files.Read('/bar'))
+    self.assertEqual('New content', files.Get('/bar').content)
 
     # Verify users with write can also read, even if not in the read whitelist.
     perms = permissions.Permissions(write_users=['titanuser@example.com'],
                                     read_users=['bob'])
     files.Write('/bar', 'Test', permissions=perms)
-    self.assertEqual('Test', files.Read('/bar'))
+    self.assertEqual('Test', files.Get('/bar').content)
 
     # Restrict both read and write permissions.
     perms = permissions.Permissions(write_users=['titanuser@example.com'],
                                     read_users=['titanuser@example.com'])
     files.Write('/bar', 'Test', permissions=perms)
-    self.assertRaises(permissions.PermissionsError, files.Read, '/bar',
+    self.assertRaises(permissions.PermissionsError, files.Get, '/bar',
                       user='bob@example.com')
     self.assertRaises(permissions.PermissionsError, files.Write, '/bar', 'Test',
                       user='bob')
-    # Verify Get(), Read(), and Delete() hooks.
+    # Verify Get() and Delete() hooks.
     self.assertEqual('Test', files.Get('/bar').content)
     self.assertEqual('Test', files.File('/bar').content)
-    self.assertEqual('Test', files.Read('/bar'))
     self.assertEqual(None, files.Delete('/bar'))
 
     # Allow app-level admins to do anything.
@@ -73,7 +72,7 @@ class PermissionsTest(testing.ServicesTestCase):
     files.Write('/bar', 'Test', permissions=perms)
     self.stubs.Set(permissions.users, 'is_current_user_admin', lambda: True)
     files.Write('/bar', 'New content')
-    self.assertEqual('New content', files.Read('/bar'))
+    self.assertEqual('New content', files.Get('/bar').content)
     # Reset permissions.
     perms = permissions.Permissions(write_users=None, read_users=None)
     files.Write('/bar', 'Test', permissions=perms)
@@ -90,7 +89,7 @@ class PermissionsTest(testing.ServicesTestCase):
     files.Write('/bar', content='Test', user='bob')
     # Without user arg, and test the Touch() code path:
     files.Touch('/bar')
-    self.assertEqual('Test', files.Read('/bar'))
+    self.assertEqual('Test', files.Get('/bar').content)
     self.stubs.UnsetAll()
 
 if __name__ == '__main__':

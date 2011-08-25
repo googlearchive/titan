@@ -36,7 +36,6 @@ _global_memory_files_version = 0
 # The "RegisterService" method is required for all Titan service plugins.
 def RegisterService():
   hooks.RegisterHook(SERVICE_NAME, 'file-get', hook_class=HookForGet)
-  hooks.RegisterHook(SERVICE_NAME, 'file-read', hook_class=HookForRead)
   hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
   hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)
   hooks.RegisterHook(SERVICE_NAME, 'file-delete', hook_class=HookForDelete)
@@ -59,20 +58,6 @@ class HookForGet(hooks.Hook):
 
     # Pass the global file_ents to the core Titan method, avoiding further RPCs.
     return {'file_ents': file_ent}
-
-class HookForRead(hooks.Hook):
-  """A hook for files.Read()."""
-
-  def Pre(self, **kwargs):
-    path = files.ValidatePaths(kwargs['path'])
-    file_ents_map = _GetGlobalEntities(path)
-
-    # If no paths matched for serving from globals, continue as normal.
-    if not file_ents_map:
-      return
-
-    file_ent = file_ents_map.values()[0]
-    return {'file_ent': file_ent}
 
 class HookForWrite(hooks.Hook):
   """A hook for files.Write()."""

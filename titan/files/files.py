@@ -23,7 +23,6 @@ Usage:
 
   files.Exists('/some/file.html')
   files.Get('/some/file.html')
-  files.Read('/some/file.html')
   files.Write('/some/file.html', content='Hello')
   files.Delete('/some/file.html')
   files.Touch('/some/file.html')
@@ -271,17 +270,22 @@ def Get(paths, file_ents=None):
   Raises:
     BadFileError: If any given file paths don't exist.
   Returns:
-    Non-lazy File object or tuple of File objects.
+    None: If given single path which didn't exist.
+    An evaluated File object: If given a single path which did exist.
+    Dict: When given multiple paths, returns a dict of paths --> evaluated File
+        objects. Non-existent file paths are not included in the result.
   """
-  file_ents, is_multiple = _GetFilesOrDie(file_ents or paths)
+  file_ents, is_multiple = _GetFiles(file_ents or paths)
   if not is_multiple:
-    return File(paths, file_ent=file_ents)
-  return tuple([File(f.key().name(), file_ent=f) for f in file_ents])
+    if file_ents:
+      return File(paths, file_ent=file_ents)
+    return
 
-@hooks.ProvideHook('file-read')
-def Read(path, file_ent=None):
-  """Get the contents of a File."""
-  return _ReadContentOrBlobs(path, file_ent=file_ent)
+  file_objs = {}
+  for i, file_ent in enumerate(file_ents):
+    if file_ent:
+      file_objs[paths[i]] = File(paths[i], file_ent=file_ent)
+  return file_objs
 
 @hooks.ProvideHook('file-write')
 def Write(path, content=None, blobs=None, mime_type=None, meta=None,

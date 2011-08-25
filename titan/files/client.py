@@ -54,7 +54,10 @@ class TitanClient(appengine_rpc.HttpRpcServer):
           expensive if the content is large and particularly if the content is
           stored in blobstore.
     Returns:
-      A dictionary (or list of dictionaries) of the File properties.
+      None: If given single path which didn't exist.
+      Serialized File dictionary: If given a single path which did exist.
+      Dict: When given multiple paths, returns a dict of paths --> serialized
+          File objects. Non-existent file paths are not included in the result.
     """
     is_multiple = hasattr(paths, '__iter__')
     if not is_multiple:
@@ -63,19 +66,18 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     if full:
       params += [('full', full)]
 
-    try:
-      data = simplejson.loads(self._Get('/_titan/get', params))
-    except urllib2.HTTPError, e:
-      if e.code == 404:
-        raise BadFileError(e)
-      raise
-    for file_obj in data:
+    data = simplejson.loads(self._Get('/_titan/get', params))
+    if not is_multiple and not data:
+      # Single file requested doesn't exist.
+      return
+
+    for file_obj in data.values():
       file_obj['modified'] = datetime.datetime.fromtimestamp(
           file_obj['modified'])
       file_obj['created'] = datetime.datetime.fromtimestamp(
           file_obj['created'])
 
-    return data if is_multiple else data[0]
+    return data if is_multiple else data.values()[0]
 
   def Read(self, path):
     """Returns the contents of a file."""

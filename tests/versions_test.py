@@ -26,7 +26,6 @@ class VersionsTest(testing.ServicesTestCase):
   def testVersions(self):
     # TODO(user): implement the versions service, but until then
     # verify that the hook wrapping is working correctly.
-    self.assertRaises(files.BadFileError, files.Get, '/foo')
     services = (
         'titan.services.versions',
     )

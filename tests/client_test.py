@@ -57,7 +57,7 @@ class ClientTest(testing.BaseTestCase):
     self.assertFalse(files.Exists(self.file_path))
     file_content = 'foobar'
     self.titan.Write(self.file_path, file_content)
-    self.assertEqual(file_content, files.Read(self.file_path))
+    self.assertEqual(file_content, files.Get(self.file_path).content)
 
     # Verify meta properties are set.
     self.titan.Write(self.file_path, 'foobar v2', meta={'foo': 'bar'})
@@ -101,14 +101,15 @@ class ClientTest(testing.BaseTestCase):
     file_obj = self.titan.Get(self.file_path, full=True)
     self.assertDictEqual(expected, file_obj)
 
-    # Get multiple.
-    expected = files.Get([self.file_path])
-    expected = [file_obj.Serialize() for file_obj in expected]
-    file_objs = self.titan.Get([self.file_path])
-    self.assertListEqual(expected, file_objs)
+    # Get single non-existent.
+    self.assertEqual(None, self.titan.Get('/fake/file'))
 
-    # Error handling.
-    self.assertRaises(client.BadFileError, self.titan.Get, '/fake/file')
+    # Get multiple.
+    expected = files.Get([self.file_path, '/fake'])
+    for key in expected:
+      expected[key] = expected[key].Serialize()
+    file_objs = self.titan.Get([self.file_path, '/fake'])
+    self.assertDictEqual(expected, file_objs)
 
   def testListFiles(self):
     files.Touch('/foo/bar.txt')

@@ -77,7 +77,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     key = files.Write(self.valid_path, 'foobar')
     actual_file = files._File.get(key)
     to_timestamp = lambda x: time.mktime(x.timetuple()) + 1e-6 * x.microsecond
-    expected_obj = [{
+    expected_file_obj = {
         'name': 'file.txt',
         'path': self.valid_path,
         'paths': ['/', '/path', '/path/to', '/path/to/some'],
@@ -87,29 +87,28 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'content': 'foobar',
         'blobs': [],
         'exists': True,
-    }]
+    }
+    expected_result = {
+        self.valid_path: expected_file_obj,
+    }
     response = self.Get(handlers.GetHandler, params={
         'path': self.valid_path,
         'full': True,
     })
     self.assertEqual(200, response.status)
     self.assertEqual('application/json', response.headers['Content-Type'])
-    self.assertSameElements(expected_obj,
+    self.assertSameElements(expected_result,
                             simplejson.loads(response.out.getvalue()))
 
     # Verify that POST requests return 405 (method not allowed) status.
     response = self.Post(handlers.GetHandler)
     self.assertEqual(405, response.status)
 
-    # Verify that requests with BadFileError return a 404 status.
-    self.mox.StubOutWithMock(files, 'Get')
-    files.Get([self.error_path]).AndRaise(files.BadFileError)
-    self.mox.ReplayAll()
     response = self.Get(handlers.GetHandler, params={
         'path': self.error_path,
     })
-    self.assertEqual(404, response.status)
-    self.mox.VerifyAll()
+    self.assertEqual(200, response.status)
+    self.assertEqual({}, simplejson.loads(response.out.getvalue()))
 
   def testReadHandler(self):
     # Verify that GET requests return the file contents.
@@ -128,14 +127,10 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertEqual(405, response.status)
 
     # Verify that requests with BadFileError return a 404 status.
-    self.mox.StubOutWithMock(files, 'Get')
-    files.Get(self.error_path).AndRaise(files.BadFileError)
-    self.mox.ReplayAll()
     response = self.Get(handlers.ReadHandler, params={
         'path': self.error_path,
     })
     self.assertEqual(404, response.status)
-    self.mox.VerifyAll()
 
   def testWriteHandler(self):
     # Verify that successful POST requests return a 200 status.
@@ -147,7 +142,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     })
     response = self.Post(handlers.WriteHandler, payload=payload)
     self.assertEqual(200, response.status)
-    self.assertEqual(file_content, files.Read(self.valid_path))
+    self.assertEqual(file_content, files.Get(self.valid_path).content)
 
     # Verify setting blobs.
     blob_key = 'ablobkey'

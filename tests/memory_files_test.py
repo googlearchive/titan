@@ -50,7 +50,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     files.Write('/special/foo', 'foo')
     memcache.flush_all()
     del os.environ['MEMORY_FILES_VERSION']
-    files.Read('/special/foo')
+    files.Get('/special/foo')
     self.assertFalse('/special/foo' in global_file_ents)
     self.assertEqual(None, os.environ.get('MEMORY_FILES_VERSION'))
     self.assertEqual(None, memcache.get('version',
@@ -59,15 +59,11 @@ class MemoryFileTest(testing.ServicesTestCase):
     # On any read (after a Write has populated the memcache version counter),
     # the globals cache is usable and should be populated.
     files.Write('/special/foo', 'foo')
-    files.Read('/special/foo')
+    files.Get('/special/foo')
     self.assertTrue('/special/foo' in global_file_ents)
     self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
     self.assertEqual(1, memcache.get('version',
                                      namespace=namespace))
-    # Reset to test Get() as well.
-    memory_files._EvictGlobalEntities(['/special/foo'])
-    files.Get('/special/foo')
-    self.assertTrue('/special/foo' in global_file_ents)
 
     # On write operations, the memcache version number is increased and the
     # local cache evicted.
@@ -78,7 +74,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.assertEqual(1, memcache.get('version', namespace=namespace))
     self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
 
-    files.Read('/special/foo')
+    files.Get('/special/foo')
     self.assertEqual(1, memcache.get('version', namespace=namespace))
     self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
     files.Touch('/special/foo', 'foo')
@@ -86,7 +82,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.assertEqual(2, int(os.environ.get('MEMORY_FILES_VERSION')))
     self.assertFalse('/special/foo' in global_file_ents)
 
-    files.Read('/special/foo')
+    files.Get('/special/foo')
     self.assertEqual(2, memcache.get('version', namespace=namespace))
     self.assertEqual(2, int(os.environ.get('MEMORY_FILES_VERSION')))
     files.Delete('/special/foo')
@@ -95,7 +91,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.assertFalse('/special/foo' in global_file_ents)
 
     # Writing a non-special file shouldn't change the version number.
-    files.Read('/foo')
+    files.Get('/foo')
     files.Touch('/foo')
     self.assertEqual(3, memcache.get('version', namespace=namespace))
     self.assertEqual(3, int(os.environ.get('MEMORY_FILES_VERSION')))

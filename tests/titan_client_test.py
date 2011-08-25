@@ -122,7 +122,7 @@ class TitanCommandsTest(testing.BaseTestCase):
     self.assertFalse(files.Exists('/tests/single/foo.txt'))
     self.commands.RunCommand('upload', args=args, flags=self.flags)
     self.assertTrue(files.Exists('/tests/single/foo.txt'))
-    self.assertEqual('foo', files.Read('/tests/single/foo.txt'))
+    self.assertEqual('foo', files.Get('/tests/single/foo.txt').content)
 
     # Verify multiple file upload.
     args = [file1, file2]

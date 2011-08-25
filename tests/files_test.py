@@ -156,45 +156,47 @@ class FileTestCase(testing.BaseTestCase):
                          files.Get('/foo/bar.html').Serialize(full=True))
 
     # Batch get.
-    # Get() should always return non-lazy, pre-populated File objects to avoid
-    # multiple fetches, and should error if any file does not exist.
+    # Get() should always return a dictionary of non-lazy, pre-populated File
+    # objects to avoid multiple fetches. Non-existent files will be missing
+    # from the dict.
     files.Touch(['/foo/bar.html', '/foo/bar/baz', '/qux'])
-    file_objs = files.Get(['/foo/bar.html', '/foo/bar/baz', '/qux'])
-    self.assertEqual(3, len(file_objs))
-    self.assertTrue(all([f.exists for f in file_objs]))
-    self.assertEqual((), files.Get([]))
+    file_objs = files.Get(['/foo/bar.html', '/foo/bar/baz', '/qux', '/fake'])
+    expected = {
+        '/foo/bar.html': files.File('/foo/bar.html'),
+        '/foo/bar/baz': files.File('/foo/bar/baz'),
+        '/qux': files.File('/qux'),
+    }
+    self.assertDictEqual(expected, file_objs)
+    self.assertTrue(all([f.exists for f in file_objs.values()]))
+    self.assertEqual({}, files.Get([]))
 
-    # Error handling.
-    self.assertRaises(files.BadFileError, files.Get, '/fake.html')
-    self.assertRaises(files.BadFileError, files.Get, ['/foo/bar.html', '/fake'])
-
-  @testing.DisableCaching
-  def testRead(self):
     # Reading File contents from datastore.
     files.Write('/foo/bar.html', content='Test')
-    self.assertEqual('Test', files.Read('/foo/bar.html'))
+    self.assertEqual('Test', files.Get('/foo/bar.html').content)
     files.Write('/foo/bar.html', content='')
-    self.assertEqual('', files.Read('/foo/bar.html'))
+    self.assertEqual('', files.Get('/foo/bar.html').content)
 
     # Reading File contents from blobstore.
     # Also, writing with blobs should nullify content.
     files.Write('/foo/bar.html', blobs=[self.blob_key])
-    self.assertEqual(self.blob_reader.read(), files.Read('/foo/bar.html'))
+    blob_content = self.blob_reader.read()
+    self.assertEqual(blob_content, files.Get('/foo/bar.html').content)
 
     # Returned content should maintain its encoding.
     # Byte string:
     files.Write('/foo/bar.html', content='Test')
-    content = files.Read('/foo/bar.html')
+    content = files.Get('/foo/bar.html').content
     self.assertTrue(isinstance(content, str))
-    self.assertEqual('Test', files.Read('/foo/bar.html'))
+    self.assertEqual('Test', files.Get('/foo/bar.html').content)
     # Unicode string:
     files.Write('/foo/bar.html', content=u'Test')
-    content = files.Read('/foo/bar.html')
+    content = files.Get('/foo/bar.html').content
     self.assertTrue(isinstance(content, unicode))
-    self.assertEqual(u'Test', files.Read('/foo/bar.html'))
+    self.assertEqual(u'Test', files.Get('/foo/bar.html').content)
 
-    # Error handling.
-    self.assertRaises(files.BadFileError, files.Read, '/fake.html')
+    # Gets return None or an empty dict for non-existent files.
+    self.assertEqual(None, files.Get('/fake.html'))
+    self.assertEqual({}, files.Get(['/fake']))
 
   @testing.DisableCaching
   def testWrite(self):
@@ -287,7 +289,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(1, len(blob_keys))
     self.assertEqual(LARGE_FILE_CONTENT, file_obj.content)
     self.assertEqual(None, file_obj._file_ent.content)
-    self.assertEqual(LARGE_FILE_CONTENT, files.Read('/foo/bar.html'))
+    self.assertEqual(LARGE_FILE_CONTENT, files.Get('/foo/bar.html').content)
     # Make sure the blobs are deleted with the file:
     file_obj.Delete()
     self.assertEqual([None], blobstore.get(blob_keys))
@@ -367,8 +369,10 @@ class FileTestCase(testing.BaseTestCase):
     keys = files.Touch(paths)
     self.assertEqual(len(keys), 3)
     file_objs = files.Get(paths)
-    self.assertEqual(file_objs[0].modified, file_objs[1].modified)
-    self.assertEqual(file_objs[1].modified, file_objs[2].modified)
+    modified_datetime = file_objs['/foo/bar.html'].modified
+    self.assertEqual(modified_datetime, file_objs['/foo/bar.html'].modified)
+    self.assertEqual(modified_datetime, file_objs['/foo/bar/baz'].modified)
+    self.assertEqual(modified_datetime, file_objs['/qux'].modified)
 
     # Error handling.
     self.assertRaises(ValueError, files.Touch, '')
@@ -506,13 +510,6 @@ class FileTestCase(testing.BaseTestCase):
     cache_item = memcache.get('/foo', namespace=namespace)
     self.assertEntityEqual(file_obj._file, cache_item)
 
-    # Read: should rely on Get behavior.
-    memcache.flush_all()
-    self.assertEqual(None, memcache.get('/foo'))
-    content = files.Read('/foo')
-    cache_item = memcache.get('/foo', namespace=namespace)
-    self.assertEqual(content, cache_item.content)
-
     # Write of new file: should add to memcache.
     memcache.flush_all()
     file_obj = files.File('/foo/bar')
@@ -570,7 +567,7 @@ class FileTestCase(testing.BaseTestCase):
     files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
     cache_item = memcache.get('/foo/bar.html',
                               namespace=sharded_cache.NAMESPACE)
-    blob_content = files.Read('/foo/bar.html')
+    blob_content = files.Get('/foo/bar.html').content
     self.assertEqual(LARGE_FILE_CONTENT, blob_content)
     blob_content = files.files_cache.GetBlob('/foo/bar.html')
     self.assertEqual(LARGE_FILE_CONTENT, blob_content)

@@ -52,19 +52,15 @@ class GetHandler(BaseHandler):
   def get(self):
     paths = self.request.get_all('path')
     full = bool(self.request.get('full'))
-    try:
-      self.WriteJsonResponse(files.Get(paths), full=full)
-    except files.BadFileError:
-      self.error(404)
+    self.WriteJsonResponse(files.Get(paths), full=full)
 
 class ReadHandler(BaseHandler):
   """Handler to return contents of a file."""
 
   def get(self):
     path = self.request.get('path')
-    try:
-      file_obj = files.Get(path)
-    except files.BadFileError:
+    file_obj = files.Get(path)
+    if not file_obj:
       self.error(404)
       return
     self.response.headers['Content-Type'] = file_obj.mime_type

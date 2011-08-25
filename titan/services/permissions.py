@@ -38,7 +38,6 @@ def RegisterService():
   # TODO(user): Add allow_override=False functionality to service layer
   # hooks. Until then, don't expose services_override in handlers.py.
   hooks.RegisterHook(SERVICE_NAME, 'file-get', hook_class=HookForGet)
-  hooks.RegisterHook(SERVICE_NAME, 'file-read', hook_class=HookForRead)
   hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
   hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)
   hooks.RegisterHook(SERVICE_NAME, 'file-delete', hook_class=HookForDelete)
@@ -62,21 +61,6 @@ class HookForGet(hooks.Hook):
     """For every File returned, verify that the user has read permissions."""
     _VerifyPermissions(file_objs, user=self.user, read=True)
     return file_objs
-
-class HookForRead(hooks.Hook):
-  """Hook for files.Read()."""
-
-  def Pre(self, user=None, **kwargs):
-    """Pre hook to verify that a user has read permissions over a file."""
-    # Verify that the user has read permissions.
-    path = files.ValidatePaths(kwargs['path'])
-    file_ent = kwargs['file_ent']
-    if not file_ent:
-      file_ent, _ = files._GetFiles(path)
-    _VerifyPermissions(file_ent, user=user, read=True)
-
-    # Pass the file entity to the next layer to avoid duplicate RPCs.
-    return {'file_ent': file_ent}
 
 class HookForWrite(hooks.Hook):
   """Hook for files.Write()."""

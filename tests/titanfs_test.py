@@ -108,13 +108,13 @@ class TitanFilesystemCommandsTest(testing.BaseTestCase):
 
     # Test process_IN_CREATE.
     handler.process_IN_CREATE(event_mock)
-    self.assertEqual('Test', files.Read('/foo'))
+    self.assertEqual('Test', files.Get('/foo').content)
 
     # Test process_IN_MODIFY.
     with open(event_mock.pathname, 'w') as fp:
       fp.write('New content')
     handler.process_IN_MODIFY(event_mock)
-    self.assertEqual('New content', files.Read('/foo'))
+    self.assertEqual('New content', files.Get('/foo').content)
 
     # Test process_IN_DELETE.
     handler.process_IN_DELETE(event_mock)
