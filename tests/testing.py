@@ -183,3 +183,7 @@ class ServicesTestCase(BaseTestCase):
   def EnableServices(self, services):
     """Let tests define a custom set of TITAN_SERVICES."""
     hooks.LoadServices(services)
+
+  def SetServiceConfig(self, service_name, config):
+    """Proxy to set a config object for a given service."""
+    hooks.SetServiceConfig(service_name, config)

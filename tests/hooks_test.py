@@ -67,6 +67,43 @@ class HooksTest(testing.ServicesTestCase):
 
     self.mox.VerifyAll()
 
+  def testTitanMethodResult(self):
+    """Verify that TitanMethodResult correctly short circuits hook responses."""
+    bar_foo_hook = self.mox.CreateMockAnything()
+    baz_foo_hook = self.mox.CreateMockAnything()
+
+    def Foo():
+      return 0
+
+    # Call stack for the wrapped Foo method:
+    # Baz pre hook --> Bar pre hook --> Foo --> Bar post hook --> Baz post hook
+    #
+    # First time through, the Baz pre hook returns a TitanMethodResult.
+    baz_foo_hook().AndReturn(baz_foo_hook)
+    baz_foo_hook.Pre().AndReturn(hooks.TitanMethodResult('first-result'))
+
+    # Second time through, the Bar post hook returns a TitanMethodResult.
+    baz_foo_hook().AndReturn(baz_foo_hook)
+    baz_foo_hook.Pre().AndReturn(None)
+    bar_foo_hook().AndReturn(bar_foo_hook)
+    bar_foo_hook.Pre().AndReturn(None)
+    # The core titan method will be called here.
+    bar_foo_hook.Post(0).AndReturn(hooks.TitanMethodResult('second-result'))
+
+    self.mox.ReplayAll()
+
+    # First, the baz and bar services register.
+    hooks.RegisterHook('baz', 'foo-hook', hook_class=baz_foo_hook)
+    hooks.RegisterHook('bar', 'foo-hook', hook_class=bar_foo_hook)
+
+    # Then, the decorated and wrapped Foo() method is called twice.
+    decorator = hooks.ProvideHook('foo-hook')
+    decorated_foo = decorator(Foo)
+    self.assertEqual('first-result', decorated_foo())
+    self.assertEqual('second-result', decorated_foo())
+
+    self.mox.VerifyAll()
+
   def testComposeArguments(self):
 
     def Method(foo, bar=None, baz=False):

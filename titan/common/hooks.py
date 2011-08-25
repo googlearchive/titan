@@ -30,12 +30,17 @@ import sys
 #
 # Data structure:
 #   _global_hooks = {'<hook name>': <HookContainer object>}
+#   _global_service_configs = {'<service name>': <config object>}
 #   _global_services_order = ['<service name>']
 #
 # The order of the names in _global_services_order is determined by the order
 # that they were registered (specified by appengine_config.TITAN_SERVICES).
 _global_hooks = {}
+_global_service_configs = {}
 _global_services_order = []
+
+class ConfigError(KeyError):
+  pass
 
 def LoadServices(services):
   """Import and initialize the given service modules strings.
@@ -56,6 +61,16 @@ def LoadServices(services):
           'This method is required for all service modules.'
           % service_module_str)
     service_module.RegisterService()
+
+def SetServiceConfig(service_name, config):
+  """Save an arbitrary config object for a particular service."""
+  _global_service_configs[service_name] = config
+
+def GetServiceConfig(service_name):
+  """Returns the config object stored for a service."""
+  if not service_name in _global_service_configs:
+    raise ConfigError('No configuration provided for service "%s".')
+  return _global_service_configs[service_name]
 
 class ProvideHook(object):
   """Decorator for wrapping a function to execute pre and post hooks."""
@@ -133,6 +148,12 @@ class Hook(object):
   """A base hook object. Subclasses should define Pre and/or Post methods."""
   # For all hooks to inherit, to support future needs.
 
+class TitanMethodResult(object):
+  """Wrapper for short circuiting responses from a Hook's Pre() or Post()."""
+
+  def __init__(self, result):
+    self.actual_result = result
+
 class HookContainer(object):
   """A container for all callbacks at a specific hook point."""
 
@@ -168,17 +189,29 @@ class HookRunner(object):
   def Run(self, func, core_args, composite_kwargs):
     """Run pre hooks --> func --> post hooks."""
     # 1. Execute all service pre hooks, returning the final arguments dict.
-    new_core_kwargs = self._ExecutePreHooks(core_args, composite_kwargs)
+    result_or_kwargs, is_final_result = self._ExecutePreHooks(core_args,
+                                                              composite_kwargs)
+    if is_final_result:
+      # The Pre() hook has short-circuited the response. Stop and return it.
+      return result_or_kwargs.actual_result
 
     # 2. Call the lowest-level Titan function using the arguments which have
     # gone through all service layers.
-    data = func(**new_core_kwargs)
+    data = func(**result_or_kwargs)
 
     # 3. Execute post hooks (in reverse order), possibly changing the results.
     return self._ExecutePostHooks(data)
 
   def _ExecutePreHooks(self, core_args, composite_kwargs):
-    """In order of the global services, execute pre hooks."""
+    """In order of the global services, execute pre hooks.
+
+    Args:
+      core_args: A list of strings of args accepted by the core method.
+      composite_kwargs: A dictionary of all given arguments.
+    Returns:
+      A two-tuple of (<object>, is_final_result). This can be one of two forms:
+      (<dictionary of new core args>, False) or (<final result obj>, True)
+    """
     new_core_kwargs = composite_kwargs.copy()
     for service_name in _global_services_order:
       service_is_enabled = (self.services_override is None
@@ -191,16 +224,20 @@ class HookRunner(object):
         if not hasattr(self._hooks[service_name], 'Pre'):
           continue
 
-        # Service layers return None, or a dict of which core args to modify.
+        # Service layers return None, or a dict of which core args to modify,
+        # or a TitanMethodResult object which short circuits the response.
         args_to_change = self._hooks[service_name].Pre(**new_core_kwargs)
-        if args_to_change:
+        if args_to_change and isinstance(args_to_change, TitanMethodResult):
+          # Short-circuit the response by returning this TitanMethodResult.
+          return args_to_change, True
+        elif args_to_change:
           new_core_kwargs.update(args_to_change)
 
     # Remove non-core arguments which were consumed by service layers.
     core_kwargs = {}
     for core_arg in core_args:
       core_kwargs[core_arg] = new_core_kwargs[core_arg]
-    return core_kwargs
+    return core_kwargs, False
 
   def _ExecutePostHooks(self, data):
     """In reverse order of the global services, execute post hooks.
@@ -221,4 +258,9 @@ class HookRunner(object):
         # Each post hook is given the result of the command that just ran and
         # can modify the result, then must return it.
         data = self._hooks[service_name].Post(data)
+
+        # Post hooks can return a TitanMethodResult to short circuit the return.
+        if data and isinstance(data, TitanMethodResult):
+          return data.actual_result
+
     return data
