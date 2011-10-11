@@ -188,12 +188,14 @@ class TitanFilesystemCommands(titan_client.TitanCommands):
     # Passing True to the default arg of .get doesn't work, so set it directly:
     recursive = True if self.flags.get('recursive') is None else False
 
-    self.ValidateAuth()
+    titan_rpc_client = self._GetTitanClient()
+    self.ValidateAuth(titan_rpc_client)
+
     watch_manager = pyinotify.WatchManager()
     local_file_handler = LocalFileEventHandler(
         base_dir=base_dir,
         target_path=target_path,
-        titan_rpc_client=self.titan_rpc_client,
+        titan_rpc_client=titan_rpc_client,
         excluded_filenames_regex=excluded_filenames_regex)
 
     logging.info('Starting directory watcher, please wait...')

@@ -19,36 +19,46 @@ This may be useful for relatively small blobstore entities which need to
 be read into app memory often, but can't be cached due to size limits.
 
 This module should not be used with very large objects, keeping in mind the
-32 MB limit of memcache.set_multi. Also, this module is capable of caching
-objects smaller than 1MB, but it is less efficient at it.
+32 MB limit of memcache.set_multi.
 """
 
 import cPickle as pickle
 import logging
 from google.appengine.api import memcache
 
-NAMESPACE = 'sharded'
+# Pseudo namespace for memcache values.
+MEMCACHE_PREFIX = 'sharded:'
 
 # The default amount of time to cache data.
 # Setting a default expiration on all data will automatically cleanup shards
 # which have been orphaned (such as by eviction of the shard_map, a Set() with
 # smaller content that gets fewer shards, etc.).
-DEFAULT_EXPIRATION_SECONDS = 24 * 60 * 60
+DEFAULT_EXPIRATION_SECONDS = 24 * 60 * 60  # 1 day
 
-def Get(key, namespace=None):
+# Cutoff for when content will be sharded into multiple memcache entries.
+# Content less than this size will be stored with the shard_map dictionary and
+# only use a single memcache item total. This value needs to leave room for the
+# max number of bytes of the pickled shard_map dict (without content).
+MIN_SHARDING_SIZE = memcache.MAX_VALUE_SIZE - 1000  # 999 KB
+
+def Get(key):
   """Get a memcache entry, or None."""
-  namespace = NAMESPACE + (namespace or '')
-  shard_map = memcache.get(key, namespace=namespace)
+  key = MEMCACHE_PREFIX + key
+  shard_map = memcache.get(key)
   if not shard_map:
     # The shard_map was evicted or never set.
     return
 
+  # If zero shards, the content was small enough and stored in the shard_map.
   num_shards = shard_map['num_shards']
+  if num_shards == 0:
+    return pickle.loads(shard_map['content'])
+
   keys = ['%s%d' % (key, i) for i in range(num_shards)]
-  shards = memcache.get_multi(keys, namespace=namespace)
+  shards = memcache.get_multi(keys)
   if len(shards) != num_shards:
     # One or more content shards were evicted, delete map and content shards.
-    memcache.delete_multi([key] + keys, namespace=namespace)
+    memcache.delete_multi([key] + keys)
     return
 
   # All shards present, stitch contents back together and unpickle.
@@ -57,9 +67,9 @@ def Get(key, namespace=None):
   value = pickle.loads(value % shards)
   return value
 
-def Set(key, value, time=DEFAULT_EXPIRATION_SECONDS, namespace=None):
+def Set(key, value, time=DEFAULT_EXPIRATION_SECONDS):
   """Set a memcache entry."""
-  namespace = NAMESPACE + (namespace or '')
+  key = MEMCACHE_PREFIX + key
   value = pickle.dumps(value)
 
   # The original key is used as the shard map.
@@ -73,20 +83,27 @@ def Set(key, value, time=DEFAULT_EXPIRATION_SECONDS, namespace=None):
     end_slice = begin_slice + memcache.MAX_VALUE_SIZE
     content_map[key + str(i)] = value[begin_slice:end_slice]
 
+  # Optimization: for small content, store the content in the shard_map
+  # dictionary directly instead of actually sharding.
+  if num_shards == 1 and len(value) < MIN_SHARDING_SIZE:
+    content_map[key]['num_shards'] = num_shards = 0
+    content_map[key]['content'] = value
+    del content_map[key + '0']
+
   # Set the shard map and all content shards.
-  failed_keys = memcache.set_multi(content_map, time=time, namespace=namespace)
+  failed_keys = memcache.set_multi(content_map, time=time)
   if failed_keys:
     logging.error('Sharded cache set_multi failed. Keys: %r', failed_keys)
-    if not memcache.delete_multi(failed_keys, namespace=namespace):
+    if not memcache.delete_multi(failed_keys):
       logging.error('Sharded cache delete_multi failed, Keys: %r', failed_keys)
-  return bool(failed_keys)
+  return not bool(failed_keys)
 
-def Delete(key, seconds=0, namespace=None):
+def Delete(key, seconds=0):
   """Delete a memcache entry."""
-  namespace = NAMESPACE + (namespace or '')
-  shard_map = memcache.get(key, namespace=namespace)
+  key = MEMCACHE_PREFIX + key
+  shard_map = memcache.get(key)
   if not shard_map:
     # The shard_map was evicted or never set.
     return memcache.DELETE_ITEM_MISSING
   keys = [key] + ['%s%d' % (key, i) for i in range(shard_map['num_shards'])]
-  return memcache.delete_multi(keys, seconds=seconds, namespace=namespace)
+  return memcache.delete_multi(keys, seconds=seconds)

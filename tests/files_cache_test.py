@@ -25,12 +25,10 @@ from titan.files import files
 
 class FileCacheTestCase(testing.BaseTestCase):
 
-  namespace = files_cache.DEFAULT_NAMESPACE
-
   def testGetFiles(self):
     # Fake cache eviction:
     files.Write('/foo/bar', 'Bar')
-    memcache.delete('/foo/bar', namespace=self.namespace)
+    memcache.delete(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
 
     # Cache miss: any path doesn't exist in memcache.
     # Single non-cached path.
@@ -64,7 +62,7 @@ class FileCacheTestCase(testing.BaseTestCase):
     file_ent = files._File.get(key)
     result = files_cache.StoreFiles(file_ent)
     self.assertTrue(result)
-    cache_item = memcache.get('/foo/bar', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_ent, cache_item)
 
     # Store multiple _File entities.
@@ -73,9 +71,9 @@ class FileCacheTestCase(testing.BaseTestCase):
     file_ents = files._File.get_by_key_name(['/foo/bar', '/foo/bar/baz'])
     result = files_cache.StoreFiles(file_ents)
     self.assertEqual([], result)
-    cache_item = memcache.get('/foo/bar', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_ents[0], cache_item)
-    cache_item = memcache.get('/foo/bar/baz', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar/baz')
     self.assertEntityEqual(file_ents[1], cache_item)
 
   def testStoreAll(self):
@@ -88,32 +86,34 @@ class FileCacheTestCase(testing.BaseTestCase):
     }
     result = files_cache.StoreAll(data)
     self.assertEqual([], result)
-    cache_item = memcache.get('/foo', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(files_cache._NO_FILE_FLAG, cache_item)
-    cache_item = memcache.get('/foo/bar', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_ent, cache_item)
 
   def testSetFileDoesNotExist(self):
     # Set single path.
     files_cache.SetFileDoesNotExist('/foo/bar')
-    cache_item = memcache.get('/foo/bar', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEqual(files_cache._NO_FILE_FLAG, cache_item)
 
     # Set multiple paths.
     paths = ['/foo/bar', '/foo/bar/baz']
+    cache_keys = [files_cache.FILE_MEMCACHE_PREFIX + path for path in paths]
     files_cache.SetFileDoesNotExist(paths)
-    cache_items = memcache.get_multi(paths, namespace=self.namespace)
-    self.assertEqual(False, cache_items['/foo/bar'])
-    self.assertEqual(False, cache_items['/foo/bar/baz'])
+    cache_items = memcache.get_multi(cache_keys)
+    for key in cache_keys:
+      self.assertEqual(files_cache._NO_FILE_FLAG, cache_items[key])
 
   def testGetBlob(self):
-    sharded_cache.Set('/foo.html', 'Test')
+    sharded_cache.Set(files_cache.BLOB_MEMCACHE_PREFIX + '/foo.html', 'Test')
     self.assertEqual('Test', files_cache.GetBlob('/foo.html'))
 
-  def testSetBlob(self):
-    sharded_cache.Set('/foo.html', 'Test')
-    cache_item = memcache.get('/foo.html', namespace=sharded_cache.NAMESPACE)
-    self.assertTrue(cache_item)
+  def testStoreBlob(self):
+    result = files_cache.StoreBlob('/foo.html', 'Test')
+    self.assertTrue(result)
+    self.assertEqual('Test', sharded_cache.Get(
+        files_cache.BLOB_MEMCACHE_PREFIX + '/foo.html'))
 
   def testClearBlobsForFiles(self):
     key = files.Touch('/foo.html')
@@ -122,34 +122,34 @@ class FileCacheTestCase(testing.BaseTestCase):
     # Clear single file.
     sharded_cache.Set('/foo.html', 'Test')
     files_cache.ClearBlobsForFiles(file_ent)
-    cache_item = memcache.get('/foo.html', namespace=sharded_cache.NAMESPACE)
+    cache_item = memcache.get('/foo.html')
     self.assertEqual(None, cache_item)
 
     # Clear multiple files.
     memcache.flush_all()
     sharded_cache.Set('/foo.html', 'Test')
     files_cache.ClearBlobsForFiles([file_ent])
-    cache_item = memcache.get('/foo.html', namespace=sharded_cache.NAMESPACE)
+    cache_item = memcache.get('/foo.html')
     self.assertEqual(None, cache_item)
 
   def testStoreSubdirs(self):
-    memcache.set('dir:/', {'old_key': 1}, namespace=self.namespace)
+    memcache.set(files_cache.DIR_MEMCACHE_PREFIX + '/', {'old_key': 1})
 
     # Store new subdirs lists.
     files_cache.StoreSubdirs({
         '/': ['foo'],
         '/foo': set([]),
     })
-    cache_item = memcache.get('dir:/', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['foo']), cache_item['subdirs'])
     # Verify that other cached dir data is not touched.
     self.assertTrue(cache_item['old_key'])
-    cache_item = memcache.get('dir:/foo', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(set([]), cache_item['subdirs'])
 
     # Update subdirs (should overwrite).
     files_cache.StoreSubdirs({'/': ['new_dir']})
-    cache_item = memcache.get('dir:/', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['new_dir']), cache_item['subdirs'])
 
   def testGetSubdirs(self):
@@ -172,36 +172,38 @@ class FileCacheTestCase(testing.BaseTestCase):
 
     # Cleanup the dir caches for testing.
     preset_data = {'old_key': 1, 'subdirs': set([])}
-    memcache.set('dir:/', preset_data, namespace=self.namespace)
-    memcache.set('dir:/foo', preset_data, namespace=self.namespace)
+    memcache.set(files_cache.DIR_MEMCACHE_PREFIX + '/', preset_data)
+    memcache.set(files_cache.DIR_MEMCACHE_PREFIX + '/foo', preset_data)
 
     # Update single subdir set.
     files_cache.UpdateSubdirsForFiles(file_ent)
-    cache_item = memcache.get('dir:/', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['foo']), cache_item['subdirs'])
     self.assertTrue(cache_item['old_key'])
-    cache_item = memcache.get('dir:/foo', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(set(['bar']), cache_item['subdirs'])
 
     # Update multiple subdir sets.
     keys.append(files.Touch('/foo/qux/foo.html'))
     file_ents = files._File.get([keys[0], keys[1]])
     files_cache.UpdateSubdirsForFiles(file_ents)
-    cache_item = memcache.get('dir:/', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['foo']), cache_item['subdirs'])
     self.assertTrue(cache_item['old_key'])
-    cache_item = memcache.get('dir:/foo', namespace=self.namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(set(['bar', 'qux']), cache_item['subdirs'])
 
   def testClearSubdirsForFiles(self):
     keys = [files.Touch('/foo/bar/baz.html'), files.Touch('/foo/qux/foo.html')]
     files.ListDir('/')
     file_ents = files._File.get(keys)
-    self.assertTrue(memcache.get('dir:/', namespace=self.namespace))
-    self.assertTrue(memcache.get('dir:/foo', namespace=self.namespace))
+    self.assertTrue(memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/'))
+    self.assertTrue(memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo'))
     files_cache.ClearSubdirsForFiles(file_ents)
-    self.assertDictEqual({}, memcache.get('dir:/', namespace=self.namespace))
-    self.assertDictEqual({}, memcache.get('dir:/foo', namespace=self.namespace))
+    self.assertDictEqual(
+        {}, memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/'))
+    self.assertDictEqual(
+        {}, memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo'))
 
 if __name__ == '__main__':
   basetest.main()

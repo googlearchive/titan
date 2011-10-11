@@ -101,7 +101,9 @@ class BaseTestCase(MockableTestCase):
         user_email='titanuser@example.com',
         user_id='1',
         overwrite=True,
+        http_host='localhost:8080',
     )
+    self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
     super(BaseTestCase, self).setUp()
 
   def tearDown(self):

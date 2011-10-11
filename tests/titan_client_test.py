@@ -33,6 +33,9 @@ from titan.utils import titan_client
 FLAGS = flags.FLAGS
 TEST_TMPDIR = os.path.join(FLAGS.test_tmpdir, 'testdata')
 
+# Content larger than the direct to blobstore cutoff.
+LARGE_CONTENT = 'a' * (titan_client.DIRECT_TO_BLOBSTORE_SIZE + 1)
+
 class TitanCommandsTest(testing.BaseTestCase):
 
   def setUp(self):
@@ -46,9 +49,11 @@ class TitanCommandsTest(testing.BaseTestCase):
         'secure': False,
     }
     self.flags = self.commands.flags.copy()
-    titan_client_stub = client_test.TitanClientStub(
-        'testserver', lambda: ('testuser', 'testpass'), 'useragent', 'source')
-    self.stubs.SmartSet(self.commands, 'titan_rpc_client', titan_client_stub)
+    self.titan_client_stub = client_test.TitanClientStub(
+        'testserver', lambda: ('testuser', 'testpass'), 'useragent', 'source',
+        extra_headers={'Cookie': 'test-cookie'})
+    self.stubs.Set(self.commands, '_GetTitanClient',
+                   lambda: self.titan_client_stub)
     if not os.path.exists(TEST_TMPDIR):
       # Make some temporary testing directories.
       os.mkdir(TEST_TMPDIR)
@@ -106,6 +111,10 @@ class TitanCommandsTest(testing.BaseTestCase):
     with open(file2, 'w') as fp:
       fp.write('bar')
 
+    large_file = os.path.join(TEST_TMPDIR, 'large_file.txt')
+    with open(os.path.join(TEST_TMPDIR, 'large_file.txt'), 'w') as fp:
+      fp.write(LARGE_CONTENT)
+
     # Verify checks for required flags.
     self.commands.args = []
     self.commands.flags = {}
@@ -147,6 +156,17 @@ class TitanCommandsTest(testing.BaseTestCase):
     self.commands.RunCommand('upload', args=args, flags=self.flags)
     self.assertTrue(files.Exists('/tests/dir/testdata/foo.txt'))
     self.assertTrue(files.Exists('/tests/dir/testdata/bar.txt'))
+
+    # Verify single, large file upload that should go directly to blobstore.
+    # --
+    # This is unfortunately just a test of code execution. We can't assert
+    # that /large_file.txt exists because the testing stubs don't handle
+    # POSTs to URLs by blobstore.create_upload_url, though they don't error.
+    # TODO(user): create an integration test to verify correct behavior,
+    # or figure out a way to make the stubs handle blob upload URLs.
+    args = [large_file]
+    self.flags['target_path'] = '/'
+    self.commands.RunCommand('upload', args=args, flags=self.flags)
 
   def testUploadTty(self):
     """Verifies upload confirmation flow from a TTY terminal."""

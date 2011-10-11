@@ -366,17 +366,44 @@ class FileTestCase(testing.BaseTestCase):
 
     # Batch touch.
     paths = ['/foo/bar.html', '/foo/bar/baz', '/qux']
-    keys = files.Touch(paths)
+    keys = files.Touch(paths, meta={'color': 'blue'})
     self.assertEqual(len(keys), 3)
     file_objs = files.Get(paths)
     modified_datetime = file_objs['/foo/bar.html'].modified
     self.assertEqual(modified_datetime, file_objs['/foo/bar.html'].modified)
     self.assertEqual(modified_datetime, file_objs['/foo/bar/baz'].modified)
     self.assertEqual(modified_datetime, file_objs['/qux'].modified)
+    self.assertEqual('blue', file_objs['/foo/bar.html'].color)
+    self.assertEqual('blue', file_objs['/foo/bar/baz'].color)
+    self.assertEqual('blue', file_objs['/qux'].color)
 
     # Error handling.
     self.assertRaises(ValueError, files.Touch, '')
     self.assertRaises(ValueError, files.Touch, 'root-file')
+
+  @testing.DisableCaching
+  def testCopy(self):
+    files.Write('/foo.html', 'Test', mime_type='test/mimetype',
+                meta={'color': 'blue'})
+    files.Copy('/foo.html', '/bar/qux.html')
+    file_obj = files.Get('/bar/qux.html')
+    self.assertEqual('/bar/qux.html', file_obj.path)
+    self.assertEqual(['/', '/bar'], file_obj.paths)
+    self.assertEqual('test/mimetype', file_obj.mime_type)
+    self.assertEqual('Test', file_obj.content)
+    self.assertEqual('blue', file_obj.color)
+
+    # Blobs instead of content.
+    files.Delete('/foo.html')
+    files.Write('/foo.html', blobs=[self.blob_key], meta={'flag': False})
+    files.Copy('/foo.html', '/bar/qux.html')
+    file_obj = files.Get('/bar/qux.html')
+    blob_content = self.blob_reader.read()
+    self.assertEqual(blob_content, file_obj.content)
+    self.assertEqual('text/html', file_obj.mime_type)
+    self.assertEqual(False, file_obj.flag)
+    # Copy should overwrite previous versions and their properties.
+    self.assertRaises(AttributeError, lambda: file_obj.color)
 
   @testing.DisableCaching
   def testListFiles(self):
@@ -500,14 +527,13 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.DirExists, '/..')
 
   def testCaching(self):
-    namespace = files_cache.DEFAULT_NAMESPACE
     files.Write('/foo', 'Test')
 
     # Get: should store in memcache after first fetch.
     memcache.flush_all()
     self.assertEqual(None, memcache.get('/foo'))
     file_obj = files.Get('/foo')
-    cache_item = memcache.get('/foo', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo')
     self.assertEntityEqual(file_obj._file, cache_item)
 
     # Write of new file: should add to memcache.
@@ -515,14 +541,14 @@ class FileTestCase(testing.BaseTestCase):
     file_obj = files.File('/foo/bar')
     self.assertEqual(None, memcache.get('/foo/bar'))
     file_obj.Write('Test')
-    cache_item = memcache.get('/foo/bar', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_obj._file, cache_item)
 
     # Write with changes: should update memcache.
     file_obj = files.File('/foo/bar')
     self.assertEqual(None, memcache.get('/foo/bar'))
     file_obj.Write('New content')
-    cache_item = memcache.get('/foo/bar', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_obj._file, cache_item)
     self.assertEqual('New content', cache_item.content)
 
@@ -530,17 +556,17 @@ class FileTestCase(testing.BaseTestCase):
     memcache.flush_all()
     files.Touch(['/foo', '/bar'])
     files.Delete(['/foo', '/bar'])
-    cache_item = memcache.get('/foo', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(files_cache._NO_FILE_FLAG, cache_item)
-    cache_item = memcache.get('/bar', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/bar')
     self.assertEqual(files_cache._NO_FILE_FLAG, cache_item)
 
     # Touch: should update file memcache.
     memcache.flush_all()
     files.Touch(['/foo', '/bar'])
-    cache_item = memcache.get('/foo', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo')
     self.assertEntityEqual(files.File('/foo')._file, cache_item)
-    cache_item = memcache.get('/bar', namespace=namespace)
+    cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/bar')
     self.assertEntityEqual(files.File('/bar')._file, cache_item)
 
     # ListDir: should set subdir caches for entire subtree.
@@ -548,25 +574,25 @@ class FileTestCase(testing.BaseTestCase):
     # After ListDir, subdir caches should be populated.
     files.Touch('/foo/bar/baz.html')
     files.ListDir('/foo')
-    self.assertEqual(None, memcache.get('dir:/', namespace=namespace))
-    self.assertEqual(None, memcache.get('dir:/foo/bar', namespace=namespace))
-    cache_item = memcache.get('dir:/foo', namespace=namespace)
+    self.assertIsNone(memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/'))
+    self.assertIsNone(
+        memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo/bar'))
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(set(['bar']), cache_item['subdirs'])
     files.ListDir('/')
-    cache_item = memcache.get('dir:/', namespace=namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['foo']), cache_item['subdirs'])
 
     # Write: subdir caches should be updated.
     memcache.flush_all()
     files.Touch('/foo/bar/baz.html')
     files.ListDir('/')
-    cache_item = memcache.get('dir:/foo', namespace=namespace)
+    cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(set(['bar']), cache_item['subdirs'])
 
     # Write blobs: should store in sharded cache.
     files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
-    cache_item = memcache.get('/foo/bar.html',
-                              namespace=sharded_cache.NAMESPACE)
+    cache_item = memcache.get(sharded_cache.MEMCACHE_PREFIX + '/foo/bar.html')
     blob_content = files.Get('/foo/bar.html').content
     self.assertEqual(LARGE_FILE_CONTENT, blob_content)
     blob_content = files.files_cache.GetBlob('/foo/bar.html')
@@ -574,17 +600,16 @@ class FileTestCase(testing.BaseTestCase):
 
     # Delete: should delete blobs from sharded cache.
     files.Delete('/foo/bar.html')
-    cache_item = memcache.get('/foo/bar.html',
-                              namespace=sharded_cache.NAMESPACE)
-    self.assertEqual(None, cache_item)
+    cache_item = memcache.get(sharded_cache.MEMCACHE_PREFIX + '/foo/bar.html')
+    self.assertIsNone(cache_item)
 
     # Delete: should clear each subdir cache for the file's paths.
     memcache.flush_all()
     files.Touch('/foo/bar/baz.html')
     files.ListDir('/')
     files.Delete('/foo/bar/baz.html', update_subdir_caches=True)
-    self.assertEqual({}, memcache.get('dir:/foo', namespace=namespace))
-    self.assertEqual({}, memcache.get('dir:/', namespace=namespace))
+    self.assertEqual({}, memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo'))
+    self.assertEqual({}, memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/'))
     files.Touch('/foo/bar/baz.html')
     files.Delete([files.File('/foo/bar/baz.html')], update_subdir_caches=True)
 

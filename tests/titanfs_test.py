@@ -41,9 +41,10 @@ class TitanFilesystemCommandsTest(testing.BaseTestCase):
         'username': 'titanuser@example.com',
     }
     self.titan_client_stub = client_test.TitanClientStub(
-        'testserver', lambda: ('testuser', 'testpass'), 'useragent', 'source')
-    self.stubs.SmartSet(self.commands, 'titan_rpc_client',
-                        self.titan_client_stub)
+        'testserver', lambda: ('testuser', 'testpass'), 'useragent', 'source',
+        extra_headers={'Cookie': 'test-cookie'})
+    self.stubs.Set(self.commands, '_GetTitanClient',
+                   lambda: self.titan_client_stub)
 
   def testExcludedFilenamesRegex(self):
     regex = titanfs.EXCLUDED_FILENAMES_REGEX

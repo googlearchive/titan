@@ -23,10 +23,14 @@ except ImportError:
   import simplejson
 import time
 import urllib
-from tests import webapp_testing
+from google.appengine.api import blobstore
 from titan.common.lib.google.apputils import basetest
+from tests import webapp_testing
 from titan.files import files
 from titan.files import handlers
+
+# Content which will be stored in blobstore.
+LARGE_FILE_CONTENT = 'a' * (files.MAX_CONTENT_SIZE + 1)
 
 class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
 
@@ -56,10 +60,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'path': self.valid_path,
     })
     self.assertEqual('true', response.out.getvalue())
-
-    # Verify that POST requests return 405 (method not allowed) status.
-    response = self.Post(handlers.ExistsHandler)
-    self.assertEqual(405, response.status)
 
     # Verify that errors return a 500 response status.
     self.mox.StubOutWithMock(files, 'Exists')
@@ -99,11 +99,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertEqual('application/json', response.headers['Content-Type'])
     self.assertSameElements(expected_result,
                             simplejson.loads(response.out.getvalue()))
-
-    # Verify that POST requests return 405 (method not allowed) status.
-    response = self.Post(handlers.GetHandler)
-    self.assertEqual(405, response.status)
-
     response = self.Get(handlers.GetHandler, params={
         'path': self.error_path,
     })
@@ -122,9 +117,15 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertEqual('text/plain', response.headers['Content-Type'])
     self.assertEqual(file_content, response.out.getvalue())
 
-    # Verify that POST requests return 405 (method not allowed) status.
-    response = self.Post(handlers.ReadHandler)
-    self.assertEqual(405, response.status)
+    # Verify blob handling.
+    files.Write('/foo', LARGE_FILE_CONTENT, mime_type='custom/mimetype')
+    response = self.Get(handlers.ReadHandler, params={
+        'path': '/foo',
+    })
+    self.assertEqual(200, response.status)
+    self.assertEqual('custom/mimetype', response.headers['Content-Type'])
+    self.assertTrue('X-AppEngine-BlobKey' in response.headers)
+    self.assertEqual('', response.out.getvalue())
 
     # Verify that requests with BadFileError return a 404 status.
     response = self.Get(handlers.ReadHandler, params={
@@ -133,7 +134,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertEqual(404, response.status)
 
   def testWriteHandler(self):
-    # Verify that successful POST requests return a 200 status.
+    # Verify successful POST request.
     self.assertFalse(files.Exists(self.valid_path))
     file_content = 'foobar'
     payload = urllib.urlencode({
@@ -180,10 +181,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     file_obj = files.Get(self.valid_path)
     self.assertEqual('xyz', file_obj.mime_type)
 
-    # Verify that GET requests return 405 (method not allowed) status.
-    response = self.Get(handlers.WriteHandler)
-    self.assertEqual(405, response.status)
-
     # Verify that requests with BadFileError return a 404 status.
     payload = urllib.urlencode({
         'path': self.error_path,
@@ -192,8 +189,36 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Post(handlers.WriteHandler, payload=payload)
     self.assertEqual(404, response.status)
 
+  def testWriteBlob(self):
+    # Verify getting a new blob upload URL.
+    response = self.Get(handlers.NewBlobHandler, params={
+        'path': '/foo/some-blob',
+    })
+    self.assertEqual(200, response.status)
+    upload_url = response.out.getvalue()
+    self.assertIn('http://testbed.example.com:80/_ah/upload/', upload_url)
+
+    # Verify blob uploads via the blob upload URL. After hitting the created
+    # upload URL, the remaining params are automatically passed to WriteHandler.
+    # This full trail is not easily unit testable, so we fake the handler into
+    # this state so that the blob key handling is tested.
+    self.mox.StubOutWithMock(handlers.WriteHandler, 'get_uploads')
+    mock_blob_info = self.mox.CreateMockAnything()
+    mock_blob_info.key().AndReturn(blobstore.BlobKey('fake-blob-key'))
+    handlers.WriteHandler.get_uploads('file').AndReturn([mock_blob_info])
+    self.mox.ReplayAll()
+    response = self.Post(handlers.WriteHandler, params={
+        'path': self.valid_path,
+        'meta': simplejson.dumps({'color': 'blue'}),
+    })
+    # Blob uploads must return redirect responses:
+    self.assertEqual(302, response.status)
+    file_obj = files.Get(self.valid_path)
+    self.assertEqual('fake-blob-key', str(file_obj.blobs[0]))
+    self.assertTrue('blue', file_obj.color)
+    self.mox.VerifyAll()
+
   def testDeleteHandler(self):
-    # Verify that POST requests return a 200 status.
     files.Touch(self.valid_path)
     self.assertTrue(files.Exists(self.valid_path))
     payload = urllib.urlencode({
@@ -202,10 +227,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Post(handlers.DeleteHandler, payload=payload)
     self.assertEqual(200, response.status)
     self.assertFalse(files.Exists(self.valid_path))
-
-    # Verify that GET requests return 405 (method not allowed) status.
-    response = self.Get(handlers.DeleteHandler)
-    self.assertEqual(405, response.status)
 
     # Verify that requests with BadFileError return a 404 status.
     self.mox.StubOutWithMock(files, 'Delete')
@@ -227,10 +248,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Post(handlers.TouchHandler, payload=payload)
     self.assertEqual(200, response.status)
     self.assertTrue(files.Exists(self.valid_path))
-
-    # Verify that GET requests return 405 (method not allowed) status.
-    response = self.Get(handlers.TouchHandler)
-    self.assertEqual(405, response.status)
 
     # Verify that errors return a 500 response status.
     self.mox.StubOutWithMock(files, 'Touch')
@@ -257,10 +274,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertSameElements(
         expected, [file_obj['path'] for file_obj in file_objs])
 
-    # Verify POST requests return 405 (method not allowed) status.
-    response = self.Post(handlers.ListFilesHandler)
-    self.assertEqual(405, response.status)
-
   def testListDir(self):
     # Verify GET requests return 200 with a list of file paths.
     files.Touch('/foo/bar.txt')
@@ -276,10 +289,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertSameElements(
         expected_files, [file_obj['path'] for file_obj in file_objs])
 
-    # Verify POST requests return 405 (method not allowed) status.
-    response = self.Post(handlers.ListDirHandler)
-    self.assertEqual(405, response.status)
-
   def testDirExists(self):
     # Verify GET requests return 200 with a true or false.
     files.Touch('/foo/bar/baz/qux')
@@ -289,10 +298,6 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Get(handlers.DirExistsHandler, params={'path': '/fake'})
     self.assertEqual(200, response.status)
     self.assertFalse(simplejson.loads(response.out.getvalue()))
-
-    # Verify POST requests return 405 (method not allowed) status.
-    response = self.Post(handlers.DirExistsHandler)
-    self.assertEqual(405, response.status)
 
 if __name__ == '__main__':
   basetest.main()

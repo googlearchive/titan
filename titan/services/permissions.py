@@ -16,7 +16,7 @@
 """Basic file permissions layer.
 
 Documentation:
-  http://code.google.com/p/titan-files/wiki/Services#Permissions_service
+  http://code.google.com/p/titan-files/wiki/PermissionsService
 
 Usage:
   permissions = permissions.Permissions(read_users=['bob@example.com'],
@@ -35,8 +35,8 @@ class PermissionsError(IOError):
 
 # The "RegisterService" method is required for all Titan service plugins.
 def RegisterService():
-  # TODO(user): Add allow_override=False functionality to service layer
-  # hooks. Until then, don't expose services_override in handlers.py.
+  # TODO(user): Add allow_disabled=False functionality to service layer
+  # hooks. Until then, don't expose disabled_services in handlers.py.
   hooks.RegisterHook(SERVICE_NAME, 'file-get', hook_class=HookForGet)
   hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
   hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)

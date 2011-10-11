@@ -19,6 +19,7 @@ For a list of available commands, run:
   titan_client help [command]
 """
 
+import copy
 import errno
 import functools
 import getpass
@@ -35,6 +36,9 @@ from titan.common.lib.google.apputils import app
 from titan.files import client
 
 DEFAULT_NUM_THREADS = 30
+
+# The cutoff size of when to upload a local file directly to blobstore.
+DIRECT_TO_BLOBSTORE_SIZE = 1 << 21  # 2 MiB
 
 class RequireFlags(object):
   """Decorator that ensures all of the required flags are provided.
@@ -77,17 +81,11 @@ class TitanCommands(object):
     self.flags = None
     self._password = None
     self._thread_pool = None
-    self._titan_rpc_client = None
+    self.__original_titan_rpc_client = None
 
     self.ResetCommands()
     self.RegisterCommand('upload', self.Upload)
     self.RegisterCommand('download', self.Download)
-
-  @property
-  def titan_rpc_client(self):
-    if not self._titan_rpc_client:
-      self._titan_rpc_client = self._GetTitanClient()
-    return self._titan_rpc_client
 
   @property
   def host(self):
@@ -161,11 +159,17 @@ class TitanCommands(object):
         raise CommandValueError('Upload aborted.')
 
     # Verify the auth function is valid before making requests.
-    self.ValidateAuth()
+    titan_rpc_client = self._GetTitanClient()
+    self.ValidateAuth(titan_rpc_client)
 
     def UploadFile(path, target):
-      content = open(path).read()
-      self.titan_rpc_client.Write(target, content)
+      # Ensure thread-safety by instantiating a new titan_rpc_client:
+      titan_rpc_client = self._GetTitanClient()
+
+      if os.path.getsize(path) > DIRECT_TO_BLOBSTORE_SIZE:
+        titan_rpc_client.Write(target, fp=open(path))
+      else:
+        titan_rpc_client.Write(target, content=open(path).read())
       logging.info('Uploaded %s to %s', path, target)
 
     # Start upload of files.
@@ -227,13 +231,14 @@ class TitanCommands(object):
       raise CommandValueError('Not a directory: %s' % target_dir)
 
     # Verify the auth function is valid before making requests.
-    self.ValidateAuth()
+    titan_rpc_client = self._GetTitanClient()
+    self.ValidateAuth(titan_rpc_client)
 
     # Create a mapping of remote_path => local_path.
     path_map = []
 
     for path in file_paths:
-      if not self.titan_rpc_client.Exists(path):
+      if not titan_rpc_client.Exists(path):
         raise CommandValueError('%s does not exist.' % path)
 
       filename = os.path.split(path)[1]
@@ -241,10 +246,10 @@ class TitanCommands(object):
       path_map.append([path, target])
 
     for dir_path in dir_paths:
-      if not self.titan_rpc_client.DirExists(dir_path):
+      if not titan_rpc_client.DirExists(dir_path):
         raise CommandValueError('%s does not exist.' % dir_path)
 
-      files = self.titan_rpc_client.ListFiles(dir_path, recursive=True)
+      files = titan_rpc_client.ListFiles(dir_path, recursive=True)
       paths = [fp['path'] for fp in files]
       if dir_path.endswith('/'):
         dir_path = dir_path[:-1]
@@ -266,8 +271,11 @@ class TitanCommands(object):
       # Ensure the directory exists.
       MakeDirs(os.path.dirname(os.path.abspath(target)))
 
+      # Ensure thread-safety by instantiating a new titan_rpc_client:
+      titan_rpc_client = self._GetTitanClient()
+
       # Write the content to the file.
-      content = self.titan_rpc_client.Read(path)
+      content = titan_rpc_client.Read(path)
       fp = open(target, 'w')
       try:
         fp.write(content)
@@ -361,7 +369,7 @@ class TitanCommands(object):
     except CommandValueError, e:
       sys.exit(e)
 
-  def ValidateAuth(self):
+  def ValidateAuth(self, titan_rpc_client):
     """Get the user's password and verify it is valid for future requests."""
     # Password already set.
     if self._password is not None:
@@ -376,7 +384,7 @@ class TitanCommands(object):
       else:
         self._password = ''
       # Try given credentials, may raise appengine_rpc.ClientLoginError.
-      self.titan_rpc_client.ValidateClientAuth()
+      titan_rpc_client.ValidateClientAuth()
     except client.AuthenticationError, e:
       raise CommandValueError(e)
 
@@ -432,14 +440,23 @@ class TitanCommands(object):
 
   def _GetTitanClient(self):
     """Returns a client.TitanClient object."""
-    return client.TitanClient(
+    # Allow a new titan client to be init'd without need to re-authenticate.
+    if self.__original_titan_rpc_client:
+      titan_rpc_client = copy.copy(self.__original_titan_rpc_client)
+      # For thread-safety, we need to make sure that the extra_headers dict
+      # isn't shared among TitanClient objects.
+      titan_rpc_client.extra_headers = titan_rpc_client.extra_headers.copy()
+      return titan_rpc_client
+
+    self.__original_titan_rpc_client = client.TitanClient(
         self.host, self._AuthFunc, user_agent='TitanClient/1.0', source='-',
         secure=self.flags['secure'])
+    return self._GetTitanClient()
 
 class ThreadPool(object):
   """A light convenience wrapper around multiprocessing.pool.ThreadPool."""
 
-  def __init__(self, num_threads=1):
+  def __init__(self, num_threads=DEFAULT_NUM_THREADS):
     self._thread_pool = pool.ThreadPool(num_threads)
     self.async_results = []
 

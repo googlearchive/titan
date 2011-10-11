@@ -28,8 +28,12 @@ try:
 except ImportError:
   import simplejson
 import datetime
+import httplib
 import urllib
 import urllib2
+import urlparse
+from poster import encode
+from poster import streaminghttp
 from google.appengine.tools import appengine_rpc
 
 class AuthenticationError(Exception):
@@ -88,7 +92,8 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         raise BadFileError(e)
       raise
 
-  def Write(self, path, content=None, blobs=None, mime_type=None, meta=None):
+  def Write(self, path, content=None, blobs=None, fp=None,
+            mime_type=None, meta=None):
     """Writes contents to a file.
 
     Args:
@@ -96,6 +101,10 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       content: A byte string representing the contents of the file.
       blobs: If content is not provided, a list of BlobKey strings
           comprising the file.
+      fp: If no content and no blobs, pass an already-open file pointer.
+          This file will be uploaded as multipart data directly to the
+          blobstore and this File's blob keys will be automatically populated.
+          This arg must be used instead of content for files over ~10 MB.
       meta: A dict of meta key-value pairs.
       mime_type: The MIME type of the file. If not provided, then the MIME type
           will be guessed based on the filename.
@@ -113,8 +122,22 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       params.append(('meta', simplejson.dumps(meta)))
     if mime_type is not None:
       params.append(('mime_type', mime_type))
+
     try:
-      self._Post('/_titan/write', params)
+      if fp:
+        # If given a file pointer, create a multipart encoded request.
+        write_blob_url = self._Get('/_titan/newblob')
+        # self._Post only expects the path part of the URL:
+        write_blob_url = urlparse.urlparse(write_blob_url).path
+        params.append(('file', fp))
+        content_generator, headers = encode.multipart_encode(params)
+        extra_headers = self.extra_headers.copy() if self.extra_headers else {}
+        extra_headers['Content-Length'] = headers['Content-Length']
+        self._Post(write_blob_url, payload=content_generator,
+                   content_type=headers['Content-Type'],
+                   extra_headers=extra_headers)
+      else:
+        self._Post('/_titan/write', params=params)
     except urllib2.HTTPError, e:
       if e.code == 404:
         raise BadFileError(e)
@@ -158,6 +181,8 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         return
       credentials = self.auth_function()
       self._GetAuthToken(credentials[0], credentials[1])
+      # Valid credentials, call _Authenticate to populate self state.
+      self._Authenticate()
     except appengine_rpc.ClientLoginError, e:
       error = ('Error %d: %s %s' %
                (e.code, e.reason, e.info or e.msg or '')).strip()
@@ -167,13 +192,39 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     """Makes a GET request to the API service and returns the response body."""
     if params is None:
       params = {}
-    url = '%s?%s' % (url_path, urllib.urlencode(params))
+    url = '%s?%s' % (url_path, urllib.urlencode(params)) if params else url_path
     return self.Send(url, payload=None)
 
-  def _Post(self, url_path, params):
-    """Makes a POST request to the API service and returns the response body."""
-    return self.Send(url_path, payload=urllib.urlencode(params),
-                     content_type='application/x-www-form-urlencoded')
+  def _Post(self, url_path, params=None, payload=None, content_type=None,
+            extra_headers=None):
+    """Makes a POST request to the API service and returns the response body.
+
+    Args:
+      url_path: The URL string to POST to.
+      params: A list or dictionary of urllib request params.
+      payload: If no params, an already-encoded payload string.
+      content_type: Content-Type of the request.
+      extra_headers: A dictionary of extra headers to put in the request.
+    Returns:
+      The response body of the post.
+    """
+    payload = payload or urllib.urlencode(params)
+    if not content_type:
+      content_type = 'application/x-www-form-urlencoded'
+    if extra_headers:
+      # This is an attribute of AbstractRpcServer, used in self._CreateRequest.
+      self.extra_headers = extra_headers
+    return self.Send(url_path, payload=payload, content_type=content_type)
+
+  def _GetOpener(self):
+    """Overwrite opener to support multipart POST requests."""
+    opener = super(TitanClient, self)._GetOpener()
+    if self.scheme == 'http':
+      opener.add_handler(streaminghttp.StreamingHTTPHandler())
+      opener.add_handler(streaminghttp.StreamingHTTPRedirectHandler())
+    elif hasattr(httplib, 'HTTPS'):
+        opener.add_handler(streaminghttp.StreamingHTTPSHandler())
+    return opener
 
   def _HostIsDevAppServer(self):
     """Make a single GET / request to see if the server is a dev_appserver."""

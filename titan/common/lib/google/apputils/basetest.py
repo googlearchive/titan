@@ -24,6 +24,7 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 import commands
 import difflib
 import getpass
+import itertools
 import os
 import pprint
 import re
@@ -33,7 +34,6 @@ import tempfile
 import types
 import unittest
 
-import itertools
 
 from titan.common.lib.google.apputils import app
 import gflags as flags

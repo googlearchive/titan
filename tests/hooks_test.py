@@ -30,12 +30,6 @@ class HooksTest(testing.ServicesTestCase):
     bar_foo_hook = self.mox.CreateMockAnything()
     baz_foo_hook = self.mox.CreateMockAnything()
 
-    # "Foo" is a core Titan function and requires "base_arg".
-    # The "bar" service requires "bar_arg", similarly for the "baz" service.
-    def Foo(base_arg):
-      self.assertTrue(base_arg)
-      return 0
-
     # Order is important here...it's an onion. The pre hooks are called in the
     # _global_services_order and the post hooks are called in reverse.
     #
@@ -60,9 +54,14 @@ class HooksTest(testing.ServicesTestCase):
     hooks.RegisterHook('bar', 'foo-hook', hook_class=bar_foo_hook)
 
     # Then, the decorated and wrapped Foo() method is called.
-    decorator = hooks.ProvideHook('foo-hook')
-    decorated_foo = decorator(Foo)
-    result = decorated_foo(base_arg=False, bar_arg=False, baz_arg=False)
+    # "Foo" is a core Titan function and requires "base_arg".
+    # The "bar" service requires "bar_arg", similarly for the "baz" service.
+    @hooks.ProvideHook('foo-hook')
+    def Foo(base_arg):
+      self.assertTrue(base_arg)
+      return 0
+
+    result = Foo(base_arg=False, bar_arg=False, baz_arg=False)
     self.assertEqual(2, result)
 
     self.mox.VerifyAll()
@@ -71,9 +70,6 @@ class HooksTest(testing.ServicesTestCase):
     """Verify that TitanMethodResult correctly short circuits hook responses."""
     bar_foo_hook = self.mox.CreateMockAnything()
     baz_foo_hook = self.mox.CreateMockAnything()
-
-    def Foo():
-      return 0
 
     # Call stack for the wrapped Foo method:
     # Baz pre hook --> Bar pre hook --> Foo --> Bar post hook --> Baz post hook
@@ -92,15 +88,20 @@ class HooksTest(testing.ServicesTestCase):
 
     self.mox.ReplayAll()
 
+    # Then, the decorated and wrapped Foo() method is called twice.
+    @hooks.ProvideHook('foo-hook')
+    def Foo():
+      return 0
+
     # First, the baz and bar services register.
     hooks.RegisterHook('baz', 'foo-hook', hook_class=baz_foo_hook)
     hooks.RegisterHook('bar', 'foo-hook', hook_class=bar_foo_hook)
+    # Also, throw in an arbitrary service and disable it in the calls below
+    # to test the disabled_services path.
+    hooks.RegisterHook('disabled', 'foo-hook', hook_class=bar_foo_hook)
 
-    # Then, the decorated and wrapped Foo() method is called twice.
-    decorator = hooks.ProvideHook('foo-hook')
-    decorated_foo = decorator(Foo)
-    self.assertEqual('first-result', decorated_foo())
-    self.assertEqual('second-result', decorated_foo())
+    self.assertEqual('first-result', Foo(disabled_services=['disabled']))
+    self.assertEqual('second-result', Foo(disabled_services=['disabled']))
 
     self.mox.VerifyAll()
 
@@ -135,6 +136,31 @@ class HooksTest(testing.ServicesTestCase):
     self.EnableServices(services)
     self.assertIn('file-write', hooks._global_hooks)
     self.assertEqual(['versions'], hooks._global_services_order)
+
+  def testOnError(self):
+
+    class FooError(Exception):
+      pass
+
+    # Set up a mock hook.
+    mock_hook_class = self.mox.CreateMockAnything()
+    mock_hook = self.mox.CreateMockAnything()
+    mock_hook_class().AndReturn(mock_hook)
+    # Raise an error when Pre() hook is called.
+    mock_hook.Pre().AndRaise(FooError)
+    # Verify that the OnError method is called.
+    mock_hook.OnError(testing.mox.IsA(FooError))
+    self.mox.ReplayAll()
+
+    hooks.RegisterHook('foo', 'foo-hook', hook_class=mock_hook_class)
+
+    @hooks.ProvideHook('foo-hook')
+    def Foo():
+      return 0
+
+    self.assertRaises(FooError, Foo)
+
+    self.mox.VerifyAll()
 
 if __name__ == '__main__':
   basetest.main()

@@ -169,11 +169,12 @@ def _ValidateGlobalCache():
     if not memory_files_version:
       return False
 
+  global _global_memory_files_version
+
   if memory_files_version != _global_memory_files_version:
     # This appserver has a stale global cache. Evict all the entities!
     _global_file_ents.clear()
 
-  global _global_memory_files_version
   _global_memory_files_version = memory_files_version
   os.environ['MEMORY_FILES_VERSION'] = str(memory_files_version)
 

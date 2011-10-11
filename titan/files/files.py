@@ -26,6 +26,7 @@ Usage:
   files.Write('/some/file.html', content='Hello')
   files.Delete('/some/file.html')
   files.Touch('/some/file.html')
+  files.Copy('/some/file.html', '/other/file.html')
   files.ListFiles('/')
   files.ListDir('/')
   files.DirExists('/some/dir')
@@ -100,11 +101,11 @@ class File(object):
     self._file_ent = file_ent
     self._exists = None
 
-  def __eq__(self, other):
-    return isinstance(other, File) and self.path == other.path
+  def __eq__(self, other_file):
+    return isinstance(other_file, File) and self._path == other_file._path
 
   def __repr__(self):
-    return '<File: %s>' % self.path
+    return '<File: %s>' % self._path
 
   def __getattr__(self, name):
     """Attempt to pull from a File's stored meta data."""
@@ -125,7 +126,7 @@ class File(object):
     if self._file_ent:
       return self._file_ent
     # Haven't initialized a File object yet.
-    self._file_ent, _ = _GetFilesOrDie(self.path)
+    self._file_ent, _ = _GetFilesOrDie(self._path)
     return self._file_ent
 
   @property
@@ -134,6 +135,8 @@ class File(object):
 
   @property
   def path(self):
+    # NOTE: All internal methods should use ._path directly so that this
+    # property can be overridden in subclasses without interference.
     return self._path
 
   @property
@@ -154,7 +157,7 @@ class File(object):
 
   @property
   def content(self):
-    return _ReadContentOrBlobs(self.path, file_ent=self._file)
+    return _ReadContentOrBlobs(self._path, file_ent=self._file)
 
   @property
   def blobs(self):
@@ -164,7 +167,7 @@ class File(object):
   def exists(self):
     if self._exists is not None:
       return self._exists
-    return Exists(self.path)
+    return Exists(self._path)
 
   def read(self):
     return self.content
@@ -175,18 +178,18 @@ class File(object):
   def Write(self, *args, **kwargs):
     self._file_ent = None
     self._exists = True
-    return Write(self.path, *args, **kwargs)
+    return Write(self._path, *args, **kwargs)
   write = Write
 
   def Delete(self, async=False):
     self._file_ent = None
     self._exists = False
-    return Delete(self.path, async=async)
+    return Delete(self._path, async=async)
 
   def Touch(self, async=False):
     self._file_ent = None
     self._exists = True
-    return Touch(self.path, async=async)
+    return Touch(self._path, async=async)
 
   def Serialize(self, full=False):
     """Serialize the File object to native Python types.
@@ -200,7 +203,7 @@ class File(object):
     """
     result = {
         'name': self.name,
-        'path': self.path,
+        'path': self._path,
         'paths': self.paths,
         'mime_type': self.mime_type,
         'created': self.created,
@@ -304,7 +307,7 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
         to blobstore and passing the resulting BlobKeys to the blobs argument.
     blobs: If content is not provided, takes BlobKeys comprising the file.
     mime_type: Content type of the file; will be guessed if not given.
-    meta: A dictionary of attributes to be added to the File Expando object.
+    meta: A dictionary of properties to be added to the file.
     async: Whether or not to perform put() operations asynchronously.
     file_ent: A file entity, usually provided by an internal service plugin to
         avoid a duplicate RPC for the same file entity.
@@ -475,13 +478,14 @@ def Delete(paths, async=False, file_ents=None, update_subdir_caches=False):
   return rpc if async else rpc.get_result()
 
 @hooks.ProvideHook('file-touch')
-def Touch(paths, async=False, file_ents=None):
+def Touch(paths, meta=None, async=False, file_ents=None):
   """Create or update File objects by updating modified times.
 
   Supports batch and asynchronous touches.
 
   Args:
     paths: Absolute filename or iterable of absolute filenames.
+    meta: A dictionary of properties to be added to the file.
     async: Whether or not to do asynchronous touches.
     file_ents: File entities, usually provided by an internal service plugin to
         avoid duplicate RPCs for the same file entities.
@@ -496,12 +500,20 @@ def Touch(paths, async=False, file_ents=None):
   files_list = file_ents if is_multiple else [file_ents]
   paths_list = paths if is_multiple else [paths]
   for i, file_ent in enumerate(files_list):
-    if not file_ent:
+    if file_ent and meta is not None:
+      # File exists, update meta information if given.
+      for key, value in meta.iteritems():
+        if not hasattr(file_ent, key) or getattr(file_ent, key) != value:
+          setattr(file_ent, key, value)
+    elif not file_ent:
       # File doesn't exist, touch it.
-      # We disable Write hooks by passing services_override=[] because we assume
-      # that all hook behavior/manipulation is done around Touch() itself.
-      file_ent = _File.get(Write(paths_list[i], content='',
-                                 services_override=[]))
+      # We disable Write() hooks by passing disabled_services=True since we
+      # assume that all hook behavior/manipulation is done around Touch()
+      # itself. We trust that the arguments passed here to Touch() have already
+      # been through any necessary modifications and the service hooks shouldn't
+      # be called again.
+      file_ent = _File.get(Write(paths_list[i], content='', meta=meta,
+                                 disabled_services=True))
       # Inject new _File entity back into the object that will be put().
       if is_multiple:
         file_ents[i] = file_ent
@@ -515,6 +527,51 @@ def Touch(paths, async=False, file_ents=None):
   files_cache.UpdateSubdirsForFiles(file_ents)
 
   return rpc if async else rpc.get_result()
+
+@hooks.ProvideHook('file-copy')
+def Copy(source_path, destination_path, async=False, file_ent=None):
+  """Copy a File and all of its properties to a different path.
+
+  Args:
+    source_path: An absolute filename. Ignored if file_ent is given.
+    destination_path: An absolute filename where the file will be copied.
+    async: Whether or not to perform put() operations asynchronously.
+    file_ent: The source file entity, usually only provided by an internal
+       service plugin to avoid a duplicate RPC for the same file entity.
+  Raises:
+    BadFileError: If the source_path doesn't exist.
+  Returns:
+    The result of the Write() call to the destination path.
+  """
+  if file_ent:
+    destination_path = ValidatePaths(destination_path)
+  else:
+    source_path, destination_path = ValidatePaths([source_path,
+                                                   destination_path])
+
+  # Delete the file if it currently exists so old properties don't persist.
+  try:
+    delete_rpc = Delete(destination_path, async=True, disabled_services=True)
+  except BadFileError:
+    delete_rpc = None
+
+  # Copy all source file properties.
+  source_file_ent, _ = _GetFiles(file_ent or source_path)
+  content = source_file_ent.content
+  blobs = source_file_ent.blobs
+  mime_type = source_file_ent.mime_type
+  meta = {}
+  for key in source_file_ent.dynamic_properties():
+    meta[key] = getattr(source_file_ent, key)
+
+  if delete_rpc:
+    delete_rpc.wait()
+
+  # Write the file.
+  result = Write(destination_path, content=content, blobs=blobs,
+                 mime_type=mime_type, meta=meta, async=async,
+                 disabled_services=True)
+  return result
 
 @hooks.ProvideHook('list-files')
 def ListFiles(dir_path, recursive=False, depth=None):

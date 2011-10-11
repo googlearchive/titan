@@ -25,8 +25,10 @@ try:
 except ImportError:
   import simplejson
 import time
+import urllib
 from google.appengine.api import blobstore
 from google.appengine.ext import webapp
+from google.appengine.ext.webapp import blobstore_handlers
 from google.appengine.ext.webapp import util
 from titan.files import files
 
@@ -54,7 +56,7 @@ class GetHandler(BaseHandler):
     full = bool(self.request.get('full'))
     self.WriteJsonResponse(files.Get(paths), full=full)
 
-class ReadHandler(BaseHandler):
+class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
   """Handler to return contents of a file."""
 
   def get(self):
@@ -64,9 +66,14 @@ class ReadHandler(BaseHandler):
       self.error(404)
       return
     self.response.headers['Content-Type'] = file_obj.mime_type
-    self.response.out.write(file_obj.content)
 
-class WriteHandler(BaseHandler):
+    if file_obj.blobs:
+      blob_key = file_obj.blobs[0]  # For now, only support a single blob key.
+      self.send_blob(blob_key, content_type=file_obj.mime_type)
+    else:
+      self.response.out.write(file_obj.content)
+
+class WriteHandler(blobstore_handlers.BlobstoreUploadHandler):
   """Handler to write to a file."""
 
   def post(self):
@@ -74,11 +81,18 @@ class WriteHandler(BaseHandler):
     # Must use str_POST here to preserve the original encoding of the string.
     content = self.request.str_POST.get('content')
     blobs = self.request.get('blobs', None)
-    if blobs is not None:
+
+    uploads = self.get_uploads('file')
+    if uploads:
+      # If a multipart POST request is made, the file contents have already been
+      # uploaded to blobstore. We can associate the blob keys automatically.
+      blobs = [uploads[0].key()]
+    elif blobs is not None:
       blobs = self.request.get_all('blobs')
       # Convert any string keys to BlobKey instances.
       blobs = [blobstore.BlobKey(key) if isinstance(key, basestring) else key
                for key in blobs]
+
     meta = self.request.get('meta', None)
     if meta:
       meta = simplejson.loads(meta)
@@ -86,8 +100,18 @@ class WriteHandler(BaseHandler):
     try:
       files.Write(path, content=content, blobs=blobs, mime_type=mime_type,
                   meta=meta)
+      if uploads:
+        # BlobstoreUploadHandlers must return redirects.
+        self.redirect('/_titan/get?%s' % urllib.urlencode({'path': path}))
     except files.BadFileError:
       self.error(404)
+
+class NewBlobHandler(BaseHandler):
+  """Handler to get a blob upload URL."""
+
+  def get(self):
+    upload_url = blobstore.create_upload_url('/_titan/write')
+    self.response.out.write(upload_url)
 
 class DeleteHandler(BaseHandler):
   """Handler to delete a file."""
@@ -153,6 +177,7 @@ URL_MAP = (
     ('/_titan/get', GetHandler),
     ('/_titan/read', ReadHandler),
     ('/_titan/write', WriteHandler),
+    ('/_titan/newblob', NewBlobHandler),
     ('/_titan/delete', DeleteHandler),
     ('/_titan/touch', TouchHandler),
     ('/_titan/listfiles', ListFilesHandler),

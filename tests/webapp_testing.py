@@ -102,6 +102,7 @@ class WebAppTestCase(basetest.TestCase):
     Args:
       handler_class: A webapp handler class which defines a get() method.
       params: A dictionary or iterable of two-tuples to be urlencoded.
+      content_type: The value of the Content-Type header for the request.
     Returns:
       A response object processed by the handler's get() method.
     """
@@ -118,7 +119,8 @@ class WebAppTestCase(basetest.TestCase):
       handler.handle_exception(e, False)
     return handler.response
 
-  def Post(self, handler_class, payload=None, params=None, *args, **kwargs):
+  def Post(self, handler_class, payload=None, params=None, extra_headers=None,
+           *args, **kwargs):
     """Makes a POST request on a handler and returns the response object.
 
     Args:
@@ -126,16 +128,22 @@ class WebAppTestCase(basetest.TestCase):
       payload: A urlencoded data payload.
       params: If provided, will be urlencoded and sent as the payload.
           This is a convenience arg to allow passing a dictionary of query args.
+      extra_headers: A mapping of headers like 'Content-Type' to string values.
     Returns:
       A response object processed by the handler's post() method.
     """
     environ = self.GetDefaultEnvironment()
     environ['REQUEST_METHOD'] = 'POST'
-    if payload or params:
+    if payload is None and params is None:
+      payload = ''
+    if payload is not None or params:
       if params:
         payload = urllib.urlencode(params)
       environ['wsgi.input'] = cStringIO.StringIO(payload)
       environ['CONTENT_LENGTH'] = len(payload)
+    if extra_headers:
+      for key, value in extra_headers.iteritems():
+        environ[key.upper().replace('-', '_')] = str(value)
 
     handler = self.CreateRequestHandler(
         handler_factory=handler_class, env=environ)

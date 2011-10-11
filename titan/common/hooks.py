@@ -21,7 +21,9 @@ Documentation:
 
 import functools
 import inspect
+import logging
 import sys
+import traceback
 
 # For now, store registered services in global variables. These vars are
 # populated when files.py is imported and runs LoadServices(). Because
@@ -69,7 +71,8 @@ def SetServiceConfig(service_name, config):
 def GetServiceConfig(service_name):
   """Returns the config object stored for a service."""
   if not service_name in _global_service_configs:
-    raise ConfigError('No configuration provided for service "%s".')
+    raise ConfigError('No configuration provided for service "%s".'
+                      % service_name)
   return _global_service_configs[service_name]
 
 class ProvideHook(object):
@@ -111,16 +114,17 @@ class ProvideHook(object):
   @staticmethod
   def _HandleHookedCall(hook_name, func, core_args, composite_kwargs):
     """Executing pre and post hooks around the given function."""
-    # Pull out the services_override var before executing hooks.
-    services_override = composite_kwargs.get('services_override')
-    if services_override is not None:
-      del composite_kwargs['services_override']
+    # Pull out the disabled_services var before executing hooks. This argument
+    # is consumed by the hooks system and shouldn't be passed to core methods.
+    disabled_services = composite_kwargs.get('disabled_services')
+    if disabled_services is not None:
+      del composite_kwargs['disabled_services']
 
     # Get the current hooks if any exist.
     hooks = _global_hooks.get(hook_name)
-    if hooks:
+    if hooks and disabled_services is not True:
       result = hooks.RunWithHooks(
-          services_override, func, core_args, composite_kwargs)
+          disabled_services, func, core_args, composite_kwargs)
     else:
       result = func(**composite_kwargs)
     return result
@@ -163,44 +167,49 @@ class HookContainer(object):
   def RegisterHook(self, service_name, hook_class):
     self._hook_classes[service_name] = hook_class
 
-  def RunWithHooks(self, services_override, func, core_args, composite_kwargs):
+  def RunWithHooks(self, disabled_services, func, core_args, composite_kwargs):
     """Run the given method and arguments with any registered hooks.
 
     Args:
-      services_override: A list of the enabled service names, or None if all
-          services are enabled.
+      disabled_services: A list of the service names to disable, None if all
+          services are enabled, True if all services are disabled.
       func: The low-level Titan method to call with **composite_kwargs.
       core_args: A list of strings of args accepted by the core method.
       composite_kwargs: A dictionary of all given arguments.
     Returns:
       The result of running func wrapped in the service layers.
     """
-    hook_runner = HookRunner(self._hook_classes, services_override)
+    hook_runner = HookRunner(self._hook_classes, disabled_services)
     return hook_runner.Run(func, core_args, composite_kwargs)
 
 class HookRunner(object):
   """A one-time-use object to run a set of hooks around a core titan method."""
 
-  def __init__(self, hook_classes, services_override=None):
+  def __init__(self, hook_classes, disabled_services=None):
     self._hooks = {}
     self._hook_classes = hook_classes
-    self.services_override = services_override
+    self.disabled_services = disabled_services
 
   def Run(self, func, core_args, composite_kwargs):
     """Run pre hooks --> func --> post hooks."""
-    # 1. Execute all service pre hooks, returning the final arguments dict.
-    result_or_kwargs, is_final_result = self._ExecutePreHooks(core_args,
-                                                              composite_kwargs)
-    if is_final_result:
-      # The Pre() hook has short-circuited the response. Stop and return it.
-      return result_or_kwargs.actual_result
+    try:
+      # 1. Execute all service pre hooks, returning the final arguments dict.
+      result_or_kwargs, is_final_result = self._ExecutePreHooks(
+          core_args, composite_kwargs)
+      if is_final_result:
+        # The Pre() hook has short-circuited the response. Stop and return it.
+        return result_or_kwargs.actual_result
 
-    # 2. Call the lowest-level Titan function using the arguments which have
-    # gone through all service layers.
-    data = func(**result_or_kwargs)
+      # 2. Call the lowest-level Titan function using the arguments which have
+      # gone through all service layers.
+      data = func(**result_or_kwargs)
 
-    # 3. Execute post hooks (in reverse order), possibly changing the results.
-    return self._ExecutePostHooks(data)
+      # 3. Execute post hooks (in reverse order), possibly changing the results.
+      return self._ExecutePostHooks(data)
+    except Exception, e:
+      self._ExecuteErrorHandlers(e)
+      logging.exception('Error while calling %s:', func.__name__)
+      raise
 
   def _ExecutePreHooks(self, core_args, composite_kwargs):
     """In order of the global services, execute pre hooks.
@@ -214,8 +223,8 @@ class HookRunner(object):
     """
     new_core_kwargs = composite_kwargs.copy()
     for service_name in _global_services_order:
-      service_is_enabled = (self.services_override is None
-                            or service_name in self.services_override)
+      service_is_enabled = (self.disabled_services is None
+                            or service_name not in self.disabled_services)
       if service_is_enabled and service_name in self._hook_classes:
         # Populate the hooks dictionary, which are also used by the post hooks.
         self._hooks[service_name] = self._hook_classes[service_name]()
@@ -227,10 +236,16 @@ class HookRunner(object):
         # Service layers return None, or a dict of which core args to modify,
         # or a TitanMethodResult object which short circuits the response.
         args_to_change = self._hooks[service_name].Pre(**new_core_kwargs)
+
         if args_to_change and isinstance(args_to_change, TitanMethodResult):
           # Short-circuit the response by returning this TitanMethodResult.
           return args_to_change, True
         elif args_to_change:
+          # Pre-hooks can modify future disabled_services in their call stack.
+          if 'disabled_services' in args_to_change:
+            self.disabled_services = self.disabled_services or []
+            self.disabled_services += args_to_change['disabled_services']
+            del args_to_change['disabled_services']
           new_core_kwargs.update(args_to_change)
 
     # Remove non-core arguments which were consumed by service layers.
@@ -248,10 +263,10 @@ class HookRunner(object):
       The result data, possibly modified by post hooks.
     """
     for service_name in reversed(_global_services_order):
-      service_is_enabled = (self.services_override is None
-                            or service_name in self.services_override)
+      service_is_enabled = (self.disabled_services is None
+                            or service_name not in self.disabled_services)
       if service_is_enabled and service_name in self._hooks:
-        # Only call hooks which define the Pre() handler.
+        # Only call hooks which define the Post() handler.
         if not hasattr(self._hooks[service_name], 'Post'):
           continue
 
@@ -264,3 +279,26 @@ class HookRunner(object):
           return data.actual_result
 
     return data
+
+  def _ExecuteErrorHandlers(self, error):
+    """In order of the global services, execute on error hooks.
+
+    Args:
+      error: The Exception object that was raised.
+    """
+    for service_name in _global_services_order:
+      service_is_enabled = (self.disabled_services is None
+                            or service_name not in self.disabled_services)
+      if service_is_enabled and service_name in self._hooks:
+        # Only call hooks which define the OnError() handler.
+        if not hasattr(self._hooks[service_name], 'OnError'):
+          continue
+
+        try:
+          self._hooks[service_name].OnError(error)
+        except Exception, e:
+          # Since the original error will be re-raised in the hook runner,
+          # ignore Exceptions that occur in the OnError methods and simply log
+          # the error and traceback.
+          logging.error('Exception while executing %s.OnError():\n%s\n%s',
+                        service_name, e, traceback.format_exc())

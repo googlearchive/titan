@@ -23,7 +23,7 @@ from titan.common import sharded_cache
 
 MAX_VALUE_SIZE = memcache.MAX_VALUE_SIZE
 
-# 1KB -- Should be in 1 shard.
+# 1KB -- Should be packed with the shard_map entry and use 0 real shards.
 SMALL_CONTENT = 'a' * 1000
 
 # 2MB -- Will be slightly >2MB when pickled, so should be in 3 shards.
@@ -54,65 +54,69 @@ class ShardedCacheTest(basetest.TestCase):
 
     # Shard map was evicted.
     sharded_cache.Set('foo', LARGE_CONTENT)
-    memcache.delete('foo', namespace=sharded_cache.NAMESPACE)
+    memcache.delete(sharded_cache.MEMCACHE_PREFIX + 'foo')
     self.assertEqual(None, sharded_cache.Get('foo'))
 
     # 1 content shard was evicted.
     sharded_cache.Set('foo', LARGE_CONTENT)
-    memcache.delete('foo1', namespace=sharded_cache.NAMESPACE)
+    memcache.delete(sharded_cache.MEMCACHE_PREFIX + 'foo1')
     self.assertEqual(None, sharded_cache.Get('foo'))
     # The shard map and unevicted shards should be deleted.
     cache_keys = ['foo', 'foo0', 'foo1', 'foo2', 'foo3']
-    content = memcache.get_multi(cache_keys, namespace=sharded_cache.NAMESPACE)
+    memcache_keys = [sharded_cache.MEMCACHE_PREFIX + key for key in cache_keys]
+    content = memcache.get_multi(memcache_keys)
     self.assertFalse(any(content))
 
     # All content shards were evicted.
     sharded_cache.Set('foo', LARGE_CONTENT)
-    memcache.delete_multi(['foo0', 'foo1', 'foo2'],
-                          namespace=sharded_cache.NAMESPACE)
+    cache_keys = ['foo0', 'foo1', 'foo2']
+    memcache_keys = [sharded_cache.MEMCACHE_PREFIX + key for key in cache_keys]
+    memcache.delete_multi(memcache_keys)
     self.assertEqual(None, sharded_cache.Get('foo'))
 
   def testSet(self):
     # Set object smaller than 1MB.
     sharded_cache.Set('foo', SMALL_CONTENT)
-    shard_map = memcache.get('foo', namespace=sharded_cache.NAMESPACE)
-    content = memcache.get('foo0', namespace=sharded_cache.NAMESPACE)
-    self.assertEqual(1, shard_map['num_shards'])
-    self.assertEqual(SMALL_CONTENT, pickle.loads(content))
+    shard_map = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo')
+    self.assertEqual(0, shard_map['num_shards'])
+    self.assertEqual(SMALL_CONTENT, pickle.loads(shard_map['content']))
+    first_shard = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo0')
+    self.assertEqual(None, first_shard)
 
     # Set object larger than 1MB.
     sharded_cache.Set('foo', LARGE_CONTENT)
-    shard_map = memcache.get('foo', namespace=sharded_cache.NAMESPACE)
+    shard_map = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo')
     cache_keys = ['foo0', 'foo1', 'foo2']
-    content = memcache.get_multi(cache_keys, namespace=sharded_cache.NAMESPACE)
+    memcache_keys = [sharded_cache.MEMCACHE_PREFIX + key for key in cache_keys]
+    content = memcache.get_multi(memcache_keys)
     self.assertEqual(3, shard_map['num_shards'])
+    keys = ['%sfoo%d' % (sharded_cache.MEMCACHE_PREFIX, i) for i in xrange(3)]
     expected_content_shards = {
         # 0 to 1MB.
-        'foo0': LARGE_CONTENT_PICKLED[0:MAX_VALUE_SIZE],
+        keys[0]: LARGE_CONTENT_PICKLED[0:MAX_VALUE_SIZE],
         # 1MB to 2MB.
-        'foo1': LARGE_CONTENT_PICKLED[MAX_VALUE_SIZE:MAX_VALUE_SIZE * 2],
+        keys[1]: LARGE_CONTENT_PICKLED[MAX_VALUE_SIZE:MAX_VALUE_SIZE * 2],
         # 2MB to end.
-        'foo2': LARGE_CONTENT_PICKLED[MAX_VALUE_SIZE * 2:],
+        keys[2]: LARGE_CONTENT_PICKLED[MAX_VALUE_SIZE * 2:],
     }
     self.assertDictEqual(expected_content_shards, content)
-    next_shard = memcache.get('foo3', namespace=sharded_cache.NAMESPACE)
+    next_shard = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo3')
     self.assertEqual(None, next_shard)
 
   def testDelete(self):
-    # Delete content stored in single shard.
+    # Delete small content with no sharding.
     sharded_cache.Set('foo', SMALL_CONTENT)
     sharded_cache.Delete('foo')
-    shard_map = memcache.get('foo', namespace=sharded_cache.NAMESPACE)
-    content = memcache.get('foo0', namespace=sharded_cache.NAMESPACE)
+    shard_map = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo')
     self.assertEqual(None, shard_map)
-    self.assertEqual(None, content)
 
     # Delete content stored in multiple shards.
     sharded_cache.Set('foo', LARGE_CONTENT)
     sharded_cache.Delete('foo')
-    shard_map = memcache.get('foo', namespace=sharded_cache.NAMESPACE)
+    shard_map = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo')
     cache_keys = ['foo0', 'foo1', 'foo2']
-    content = memcache.get_multi(cache_keys, namespace=sharded_cache.NAMESPACE)
+    memcache_keys = [sharded_cache.MEMCACHE_PREFIX + key for key in cache_keys]
+    content = memcache.get_multi(memcache_keys)
     self.assertEqual(None, shard_map)
     self.assertEqual(None, sharded_cache.Get('foo'))
     self.assertDictEqual({}, content)

@@ -238,7 +238,8 @@ class Cmd(object):
     Raises:
       AppCommandsError: Always as in must be overwitten
     """
-    raise AppCommandsError(type(self) + '.Run() is not implemented')
+    raise AppCommandsError('%s.%s.Run() is not implemented' % (
+        type(self).__module__, type(self).__name__))
 
   def CommandRun(self, argv):
     """Execute the command with given arguments.

@@ -77,7 +77,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     files.Get('/special/foo')
     self.assertEqual(1, memcache.get('version', namespace=namespace))
     self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
-    files.Touch('/special/foo', 'foo')
+    files.Touch('/special/foo')
     self.assertEqual(2, memcache.get('version', namespace=namespace))
     self.assertEqual(2, int(os.environ.get('MEMORY_FILES_VERSION')))
     self.assertFalse('/special/foo' in global_file_ents)
