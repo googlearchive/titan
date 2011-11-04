@@ -38,7 +38,8 @@ from titan.files import client
 DEFAULT_NUM_THREADS = 30
 
 # The cutoff size of when to upload a local file directly to blobstore.
-DIRECT_TO_BLOBSTORE_SIZE = 1 << 21  # 2 MiB
+# This value should match files.MAX_CONTENT_SIZE.
+DIRECT_TO_BLOBSTORE_SIZE = 1 << 19  # 500 KiB
 
 class RequireFlags(object):
   """Decorator that ensures all of the required flags are provided.
@@ -301,10 +302,10 @@ class TitanCommands(object):
     """Prints the help message.
 
     Basic usage:
-      titan help
+      <binary> help
 
     Help with a specific command:
-      titan help <command>
+      <binary> help <command>
 
     Args:
       method: The function pointer whose docstring will be parsed.
@@ -320,7 +321,7 @@ class TitanCommands(object):
     else:
       helpdoc = [
           'Basic usage:',
-          '  titan <command> [--flags] [args]',
+          '  %s <command> [--flags] [args]' % sys.argv[0],
           '\nAvailable commands:',
       ]
       for command in self._GetAvailableCommands():
@@ -328,7 +329,7 @@ class TitanCommands(object):
                                      command['description']))
 
       helpdoc.append('\nFor help with a specific command:')
-      helpdoc.append('  titan help <command>')
+      helpdoc.append('  %s help <command>' % sys.argv[0])
       helpdoc = '\n'.join(helpdoc)
 
     # Remove internal docstring comments (anything after Args, Returns, etc.)

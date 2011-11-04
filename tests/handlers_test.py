@@ -87,6 +87,8 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'content': 'foobar',
         'blobs': [],
         'exists': True,
+        'created_by': 'titanuser@example.com',
+        'modified_by': 'titanuser@example.com',
     }
     expected_result = {
         self.valid_path: expected_file_obj,

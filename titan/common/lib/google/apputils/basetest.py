@@ -800,7 +800,8 @@ class TestCase(unittest.TestCase):
     regex = '(?:%s)' % ')|(?:'.join(regexes)
 
     if not re.search(regex, actual_str, re.MULTILINE):
-      self.fail(message or ('Regexes not found.: %s' % regexes))
+      self.fail(message or ('String "%s" does not contain any of these '
+                            'regexes: %s.' % (actual_str, regexes)))
 
   def assertCommandSucceeds(self, command, regexes=[''], env=None,
                             close_fds=True):

@@ -17,16 +17,12 @@
 
 from tests import testing
 
-import cStringIO
-import urlparse
 import mox
 from google.appengine.tools import appengine_rpc
-from tests import appengine_rpc_test_util
 from titan.common.lib.google.apputils import basetest
-from tests import webapp_testing
+from tests import testing
 from titan.files import client
 from titan.files import files
-from titan.files import handlers
 
 SERVER = 'testserver'
 AUTH_FUNCTION = lambda: ('testuser', 'testpass')
@@ -37,7 +33,8 @@ class ClientTest(testing.BaseTestCase):
 
   def setUp(self):
     super(ClientTest, self).setUp()
-    self.titan = TitanClientStub(SERVER, AUTH_FUNCTION, USERAGENT, SOURCE)
+    self.titan = testing.TitanClientStub(
+        SERVER, AUTH_FUNCTION, USERAGENT, SOURCE)
     self.file_path = '/foo/bar.html'
 
   def testExists(self):
@@ -154,59 +151,6 @@ class ClientTest(testing.BaseTestCase):
     self.assertTrue(self.titan._HostIsDevAppServer())
     self.assertFalse(self.titan._HostIsDevAppServer())
     self.mox.VerifyAll()
-
-class TitanClientStub(appengine_rpc_test_util.TestRpcServer,
-                      client.TitanClient):
-  """Mocks out RPC openers for Titan."""
-
-  def __init__(self, *args, **kwargs):
-    super(client.TitanClient, self).__init__(*args, **kwargs)
-    self.handlers = dict(handlers.URL_MAP)  # {'/path': Handler}
-    for url_path in self.handlers:
-      self.opener.AddResponse(
-          'https://%s%s' % (args[0], url_path), self.HandleRequest)
-
-  def ValidateClientAuth(self, test=False):
-    # Mocked out entirely, but testable by calling with test=True.
-    if test:
-      super(TitanClientStub, self).ValidateClientAuth()
-
-  def HandleRequest(self, request):
-    """Handles Titan requests by passing to the appropriate webapp handler.
-
-    Args:
-      request: A urllib2.Request object.
-    Returns:
-      A appengine_rpc_test_util.TestRpcServer.MockResponse object.
-    """
-    url = urlparse.urlparse(request.get_full_url())
-    environ = webapp_testing.WebAppTestCase.GetDefaultEnvironment()
-    method = request.get_method()
-
-    if method == 'GET':
-      environ['QUERY_STRING'] = url.query
-    elif method == 'POST':
-      environ['REQUEST_METHOD'] = 'POST'
-      post_data = request.get_data()
-      environ['wsgi.input'] = cStringIO.StringIO(post_data)
-      environ['CONTENT_LENGTH'] = len(post_data)
-
-    handler_class = self.handlers.get(url.path)
-    if not handler_class:
-      return self.MockResponse('Not found: %s' % url.path, code=404)
-
-    handler = webapp_testing.WebAppTestCase.CreateRequestHandler(
-        handler_factory=handler_class, env=environ)
-    if method == 'GET':
-      handler.get()
-    elif method == 'POST':
-      handler.post()
-    else:
-      raise NotImplementedError('%s method is not supported' % method)
-    result = self.MockResponse(handler.response.out.getvalue(),
-                               code=handler.response.status,
-                               headers=handler.response.headers)
-    return result
 
 if __name__ == '__main__':
   basetest.main()

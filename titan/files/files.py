@@ -55,6 +55,7 @@ from titan.common import hooks
 from titan.files import files_cache
 
 # Arbitrary cutoff for when content will be stored in blobstore.
+# This value should be mirrored by titan_client.DIRECT_TO_BLOBSTORE_SIZE.
 MAX_CONTENT_SIZE = 1 << 19  # 500 KiB
 
 BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19 # 500 KiB
@@ -85,6 +86,8 @@ class File(object):
         check for 'blobs' and use webapp's send_blob() to avoid loading the
         content blob into app memory.
     exists: Boolean of if the file exists.
+    created_by: A users.User object of who first created the file, or None.
+    modified_by: A users.User object of who last modified the file, or None.
     [meta]: File objects also expose meta data as object attrs. Use the Write()
         method to update meta information.
 
@@ -96,7 +99,7 @@ class File(object):
 
   def __init__(self, path, file_ent=None):
     self._path = ValidatePaths(path)
-    self._name = os.path.split(self._path)[1]
+    self._name = os.path.basename(self._path)
     self._meta = None
     self._file_ent = file_ent
     self._exists = None
@@ -169,6 +172,14 @@ class File(object):
       return self._exists
     return Exists(self._path)
 
+  @property
+  def created_by(self):
+    return self._file.created_by
+
+  @property
+  def modified_by(self):
+    return self._file.modified_by
+
   def read(self):
     return self.content
 
@@ -210,6 +221,8 @@ class File(object):
         'blobs': [str(blob_key) for blob_key in self.blobs],
         'modified': self.modified,
         'exists': self.exists,
+        'created_by': str(self.created_by) if self.created_by else None,
+        'modified_by': str(self.modified_by) if self.modified_by else None,
     }
     if full:
       result['content'] = self.content
@@ -226,6 +239,7 @@ class _File(db.Expando):
 
   Attributes:
     key_name: Full filename and path. Example: /path/to/some/file.html
+    name: Filename without path. Example: file.html
     dir_path: Full path string. Example: /path/to/some
     paths: A list of containing directories.
         Example: ['/', '/path', '/path/to', '/path/to/some']
@@ -238,7 +252,10 @@ class _File(db.Expando):
     content: Byte string of the file's contents.
     blobs: If content is null, a list of BlobKeys comprising the file.
         Right now this is only ever one key, allowing up to the 2GB limit.
+    created_by: A users.User object of who first created the file, or None.
+    modified_by: A users.User object of who last modified the file, or None.
   """
+  name = db.StringProperty()
   dir_path = db.StringProperty()
   paths = db.StringListProperty()
   depth = db.IntegerProperty()
@@ -248,6 +265,8 @@ class _File(db.Expando):
   modified = db.DateTimeProperty()
   content = db.BlobProperty()
   blobs = db.ListProperty(blobstore.BlobKey)
+  created_by = db.UserProperty(auto_current_user_add=True)
+  modified_by = db.UserProperty(auto_current_user=True)
 
   @property
   def path(self):
@@ -373,6 +392,7 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     paths = _MakePaths(path)
     file_ent = _File(
         key_name=path,
+        name=os.path.basename(path),
         dir_path=paths[-1],
         paths=paths,
         # Root files are at depth 0.
@@ -544,10 +564,12 @@ def Copy(source_path, destination_path, async=False, file_ent=None):
     The result of the Write() call to the destination path.
   """
   if file_ent:
+    source_path = file_ent.key().name()
     destination_path = ValidatePaths(destination_path)
   else:
     source_path, destination_path = ValidatePaths([source_path,
                                                    destination_path])
+  logging.info('Copying Titan file: %s --> %s', source_path, destination_path)
 
   # Delete the file if it currently exists so old properties don't persist.
   try:
@@ -629,13 +651,13 @@ def ListDir(dir_path):
   # Return immediately if subdir list is cached.
   dirs = files_cache.GetSubdirs(dir_path)
   if dirs is not None:
-    return list(dirs), ListFiles(dir_path)
+    return list(dirs), ListFiles(dir_path, disabled_services=True)
 
   # Since Titan doesn't represent directories, recursively find files inside
   # of dir_path and see if any returned files have a longer path. To avoid
   # datastore fetches, we simply count path slashes, pull out dir strings,
   # and avoid any properties which will cause the lazy File object to evaluate.
-  file_objs = ListFiles(dir_path, recursive=True)
+  file_objs = ListFiles(dir_path, recursive=True, disabled_services=True)
   dir_level = 0 if is_root_dir else dir_path.count('/')
   all_subdirs = collections.defaultdict(set)
   first_level_files = []

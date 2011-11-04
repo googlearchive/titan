@@ -133,7 +133,7 @@ class AppCommandsError(Exception):
   pass
 
 
-_cmd_argv = None        # remaning arguments with index 0 = sys.argv[0]
+_cmd_argv = None        # remaining arguments with index 0 = sys.argv[0]
 _cmd_list = {}          # list of commands index by name (_Cmd instances)
 _cmd_alias_list = {}    # list of command_names index by command_alias
 
@@ -236,7 +236,7 @@ class Cmd(object):
       Alternatively you may return None (or not use a return statement at all).
 
     Raises:
-      AppCommandsError: Always as in must be overwitten
+      AppCommandsError: Always as in must be overwritten
     """
     raise AppCommandsError('%s.%s.Run() is not implemented' % (
         type(self).__module__, type(self).__name__))
@@ -431,7 +431,7 @@ def _CheckCmdName(name_or_alias):
                       '_'.
   """
   if name_or_alias in GetCommandAliasList():
-    raise AppCommandsError("Command or Alias '%s' already definded" %
+    raise AppCommandsError("Command or Alias '%s' already defined" %
                            name_or_alias)
   if not isinstance(name_or_alias, str) or len(name_or_alias) <= 1:
     raise AppCommandsError("Command '%s' not a string or too short"
@@ -701,7 +701,7 @@ def GetCommand(command_required):
 
   Returns:
     command or None, if command_required is True then return value is a valid
-    command or the program will exit. The program also exits if a comamnd was
+    command or the program will exit. The program also exits if a command was
     specified but that command does not exist.
   """
   # Update the global commands.
@@ -710,7 +710,7 @@ def GetCommand(command_required):
   _cmd_argv = ParseFlagsWithUsage(_cmd_argv)
   if len(_cmd_argv) < 2:
     if command_required:
-      ShortHelpAndExit('FATAL Command expectd but none given')
+      ShortHelpAndExit('FATAL Command expected but none given')
     return None
   command = GetCommandByName(_cmd_argv[1])
   if command is None:

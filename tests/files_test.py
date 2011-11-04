@@ -21,6 +21,7 @@ import copy
 import datetime
 from google.appengine.api import files as blobstore_files
 from google.appengine.api import memcache
+from google.appengine.api import users
 from google.appengine.ext import blobstore
 from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
@@ -109,7 +110,8 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(u'/foo/bar/baz', rpc.get_result().name())
     self.assertNotEqual(old_modified, file_obj.modified)
 
-    # Properties: paths, mime_type, created, modified, and blobs.
+    # Properties: paths, mime_type, created, modified, blobs, created_by,
+    # and modified_by.
     file_obj = files.File('/foo/bar/baz.html')
     file_obj.Touch()
     self.assertEqual(file_obj.paths, ['/', '/foo', '/foo/bar'])
@@ -117,6 +119,8 @@ class FileTestCase(testing.BaseTestCase):
     self.assertTrue(isinstance(file_obj.created, datetime.datetime))
     self.assertTrue(isinstance(file_obj.modified, datetime.datetime))
     self.assertEqual(file_obj.blobs, [])
+    self.assertEqual(file_obj.created_by, users.User('titanuser@example.com'))
+    self.assertEqual(file_obj.modified_by, users.User('titanuser@example.com'))
 
     # read() and content property.
     self.assertEqual(file_obj.content, file_obj.read())
@@ -146,6 +150,8 @@ class FileTestCase(testing.BaseTestCase):
         'modified': actual_file.modified,
         'blobs': [],
         'exists': True,
+        'created_by': 'titanuser@example.com',
+        'modified_by': 'titanuser@example.com',
         # meta attributes:
         'color': u'blue',
         'flag': False,
@@ -202,11 +208,14 @@ class FileTestCase(testing.BaseTestCase):
   def testWrite(self):
     expected_file = files._File(
         key_name='/foo/bar.html',
+        name='bar.html',
         content='Test',
         dir_path='/foo',
         paths=[u'/', u'/foo'],
         depth=1,
         mime_type=u'text/html',
+        created_by=users.User('titanuser@example.com'),
+        modified_by=users.User('titanuser@example.com'),
         # Arbitrary meta data for expando:
         color=u'blue',
         flag=False,

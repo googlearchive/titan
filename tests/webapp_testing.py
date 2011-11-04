@@ -102,7 +102,6 @@ class WebAppTestCase(basetest.TestCase):
     Args:
       handler_class: A webapp handler class which defines a get() method.
       params: A dictionary or iterable of two-tuples to be urlencoded.
-      content_type: The value of the Content-Type header for the request.
     Returns:
       A response object processed by the handler's get() method.
     """

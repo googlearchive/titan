@@ -199,10 +199,11 @@ class HookRunner(object):
       if is_final_result:
         # The Pre() hook has short-circuited the response. Stop and return it.
         return result_or_kwargs.actual_result
+      kwargs = result_or_kwargs
 
       # 2. Call the lowest-level Titan function using the arguments which have
       # gone through all service layers.
-      data = func(**result_or_kwargs)
+      data = func(**kwargs)
 
       # 3. Execute post hooks (in reverse order), possibly changing the results.
       return self._ExecutePostHooks(data)
@@ -235,7 +236,15 @@ class HookRunner(object):
 
         # Service layers return None, or a dict of which core args to modify,
         # or a TitanMethodResult object which short circuits the response.
-        args_to_change = self._hooks[service_name].Pre(**new_core_kwargs)
+        try:
+          args_to_change = self._hooks[service_name].Pre(**new_core_kwargs)
+        except TypeError:
+          # Likely missing a method argument required by a hook.
+          logging.error('Called %s.%s().Pre(**%s)',
+                        self._hooks[service_name].__class__.__module__,
+                        self._hooks[service_name].__class__.__name__,
+                        new_core_kwargs)
+          raise
 
         if args_to_change and isinstance(args_to_change, TitanMethodResult):
           # Short-circuit the response by returning this TitanMethodResult.
@@ -272,7 +281,15 @@ class HookRunner(object):
 
         # Each post hook is given the result of the command that just ran and
         # can modify the result, then must return it.
-        data = self._hooks[service_name].Post(data)
+        try:
+          data = self._hooks[service_name].Post(data)
+        except TypeError:
+          # Likely missing a method argument required by a hook.
+          logging.error('Called %s.%s().Post(%s)',
+                        self._hooks[service_name].__class__.__module__,
+                        self._hooks[service_name].__class__.__name__,
+                        data)
+          raise
 
         # Post hooks can return a TitanMethodResult to short circuit the return.
         if data and isinstance(data, TitanMethodResult):

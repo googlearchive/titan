@@ -22,8 +22,10 @@ import shutil
 import sys
 import types
 import urllib
+import urlparse
 import mox
 from mox import stubout
+from tests import appengine_rpc_test_util
 from google.appengine.api import files as blobstore_files
 from google.appengine.api import memcache
 from google.appengine.ext import blobstore
@@ -33,8 +35,11 @@ from google.appengine.api import apiproxy_stub_map
 from google.appengine.api.blobstore import blobstore_stub
 from google.appengine.api.blobstore import file_blob_storage
 from google.appengine.api.files import file_service_stub
+from tests import webapp_testing
 from titan.common import hooks
+from titan.files import client
 from titan.files import files_cache
+from titan.files import handlers
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
 
@@ -95,7 +100,7 @@ class BaseTestCase(MockableTestCase):
     self.testbed.activate()
     self.testbed.init_datastore_v3_stub()
     self.testbed.init_memcache_stub()
-    self.testbed.init_taskqueue_stub()
+    self.testbed.init_taskqueue_stub(_all_queues_valid=True)
     self.testbed.setup_env(
         app_id='testbed-test',
         user_email='titanuser@example.com',
@@ -174,6 +179,59 @@ class BaseTestCase(MockableTestCase):
     for key in ent.properties():
       props[key] = ent.__dict__['_' + key]
     return props
+
+class TitanClientStub(appengine_rpc_test_util.TestRpcServer,
+                      client.TitanClient):
+  """Mocks out RPC openers for Titan."""
+
+  def __init__(self, *args, **kwargs):
+    super(client.TitanClient, self).__init__(*args, **kwargs)
+    self.handlers = dict(handlers.URL_MAP)  # {'/path': Handler}
+    for url_path in self.handlers:
+      self.opener.AddResponse(
+          'https://%s%s' % (args[0], url_path), self.HandleRequest)
+
+  def ValidateClientAuth(self, test=False):
+    # Mocked out entirely, but testable by calling with test=True.
+    if test:
+      super(TitanClientStub, self).ValidateClientAuth()
+
+  def HandleRequest(self, request):
+    """Handles Titan requests by passing to the appropriate webapp handler.
+
+    Args:
+      request: A urllib2.Request object.
+    Returns:
+      A appengine_rpc_test_util.TestRpcServer.MockResponse object.
+    """
+    url = urlparse.urlparse(request.get_full_url())
+    environ = webapp_testing.WebAppTestCase.GetDefaultEnvironment()
+    method = request.get_method()
+
+    if method == 'GET':
+      environ['QUERY_STRING'] = url.query
+    elif method == 'POST':
+      environ['REQUEST_METHOD'] = 'POST'
+      post_data = request.get_data()
+      environ['wsgi.input'] = cStringIO.StringIO(post_data)
+      environ['CONTENT_LENGTH'] = len(post_data)
+
+    handler_class = self.handlers.get(url.path)
+    if not handler_class:
+      return self.MockResponse('Not found: %s' % url.path, code=404)
+
+    handler = webapp_testing.WebAppTestCase.CreateRequestHandler(
+        handler_factory=handler_class, env=environ)
+    if method == 'GET':
+      handler.get()
+    elif method == 'POST':
+      handler.post()
+    else:
+      raise NotImplementedError('%s method is not supported' % method)
+    result = self.MockResponse(handler.response.out.getvalue(),
+                               code=handler.response.status,
+                               headers=handler.response.headers)
+    return result
 
 class ServicesTestCase(BaseTestCase):
   """Base test class for Titan service tests."""

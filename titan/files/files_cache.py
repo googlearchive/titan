@@ -16,6 +16,7 @@
 """A convenience wrapper for internal Titan memcache operations."""
 
 import collections
+import logging
 import os
 from google.appengine.api import memcache
 from titan.common import sharded_cache
@@ -40,7 +41,14 @@ def GetFiles(paths):
   is_multiple = hasattr(paths, '__iter__')
   if is_multiple:
     cache_keys = [FILE_MEMCACHE_PREFIX + path for path in paths]
-    file_ents = memcache.get_multi(cache_keys)
+
+    try:
+      file_ents = memcache.get_multi(cache_keys)
+    except AttributeError:
+      memcache.delete_multi(cache_keys)
+      logging.exception('Possibly corrupt memcache values (%r).', cache_keys)
+      return None, False
+
     # Cache miss: if less keys are returned than were sent.
     if len(file_ents) != len(paths):
       return None, False
@@ -48,7 +56,14 @@ def GetFiles(paths):
     # and replace files flagged as non-existent with None.
     file_ents = [file_ents[key] or None for key in cache_keys]
   else:
-    file_ents = memcache.get(FILE_MEMCACHE_PREFIX + paths)
+    cache_key = FILE_MEMCACHE_PREFIX + paths
+    try:
+      file_ents = memcache.get(cache_key)
+    except AttributeError:
+      memcache.delete(cache_key)
+      logging.exception('Possibly corrupt memcache value (%r).', cache_key)
+      return None, False
+
     # Cache miss:
     if file_ents is None:
       return None, False

@@ -26,7 +26,6 @@ import mox
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
 from tests import testing
-from tests import client_test
 from titan.files import files
 from titan.utils import titan_client
 
@@ -49,7 +48,7 @@ class TitanCommandsTest(testing.BaseTestCase):
         'secure': False,
     }
     self.flags = self.commands.flags.copy()
-    self.titan_client_stub = client_test.TitanClientStub(
+    self.titan_client_stub = testing.TitanClientStub(
         'testserver', lambda: ('testuser', 'testpass'), 'useragent', 'source',
         extra_headers={'Cookie': 'test-cookie'})
     self.stubs.Set(self.commands, '_GetTitanClient',

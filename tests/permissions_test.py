@@ -78,13 +78,7 @@ class PermissionsTest(testing.ServicesTestCase):
     files.Write('/bar', 'Test', permissions=perms)
     self.stubs.UnsetAll()
 
-    # Write without permissions specified. Should have no restrictions and
-    # (important) should never make an RPC for the current user.
-    self.stubs.Set(permissions.users, 'get_current_user',
-                   lambda: self.fail('get_current_user should not be called!'))
-    self.stubs.Set(permissions.users, 'is_current_user_admin',
-                   lambda: self.fail('is_current_user_admin should not '
-                                     'be called!'))
+    # Write without permissions specified; should be unrestricted.
     # With user arg:
     files.Write('/bar', content='Test', user='bob')
     # Without user arg, and test the Touch() code path:

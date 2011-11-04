@@ -21,7 +21,7 @@ import os
 import mox
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
-from tests import client_test
+from tests import testing
 from titan.files import files
 from titan.utils import titanfs
 
@@ -40,7 +40,7 @@ class TitanFilesystemCommandsTest(testing.BaseTestCase):
         'target_path': '/',
         'username': 'titanuser@example.com',
     }
-    self.titan_client_stub = client_test.TitanClientStub(
+    self.titan_client_stub = testing.TitanClientStub(
         'testserver', lambda: ('testuser', 'testpass'), 'useragent', 'source',
         extra_headers={'Cookie': 'test-cookie'})
     self.stubs.Set(self.commands, '_GetTitanClient',
