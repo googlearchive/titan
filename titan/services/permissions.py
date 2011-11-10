@@ -67,16 +67,13 @@ class HookForWrite(hooks.Hook):
 
   def Pre(self, user=None, permissions=None, **kwargs):
     """Pre hook for files.Write()."""
-    # Check write permissions.
-    path = files.ValidatePaths(kwargs['path'])
-    file_ent = kwargs['file_ent']
-    if not file_ent:
-      file_ent, _ = files._GetFiles(path)
-    _VerifyPermissions(file_ent, user, write=True)
+    file_obj = files.Get(kwargs['path'], disabled_services=[SERVICE_NAME])
+    _VerifyPermissions(file_obj, user, write=True)
 
     # Pass the file entity to the next layer to avoid duplicate RPCs.
     changed_kwargs = {}
-    changed_kwargs['file_ent'] = file_ent
+    if file_obj:
+      changed_kwargs['path'] = file_obj
 
     # If changing permissions, update the permission meta properties.
     if permissions:
@@ -92,15 +89,12 @@ class HookForDelete(hooks.Hook):
 
   def Pre(self, user=None, **kwargs):
     """Pre hook for files.Delete()."""
-    paths = kwargs['paths']
-    file_ents = kwargs['file_ents']
-
-    if not kwargs['file_ents']:
-      file_ents, _ = files._GetFilesOrDie(paths)
-    _VerifyPermissions(file_ents, user, write=True)
+    paths = files.ValidatePaths(kwargs['paths'])
+    file_objs = files.Get(paths, disabled_services=[SERVICE_NAME])
+    _VerifyPermissions(file_objs, user, write=True)
 
     # Pass the file entities to the next layer to avoid duplicate RPCs.
-    return {'file_ents': file_ents}
+    return {'paths': _FilesDictToList(paths, file_objs)}
 
 class HookForTouch(hooks.Hook):
   """Hook for files.Touch()."""
@@ -108,27 +102,33 @@ class HookForTouch(hooks.Hook):
   def Pre(self, user=None, **kwargs):
     """Pre hook for files.Touch()."""
     paths = files.ValidatePaths(kwargs['paths'])
-    file_ents = kwargs['file_ents']
-    if not file_ents:
-      file_ents, _ = files._GetFiles(paths)
-    _VerifyPermissions(file_ents, user, write=True)
+    file_objs = files.Get(paths, disabled_services=[SERVICE_NAME])
+    _VerifyPermissions(file_objs, user, write=True)
 
-    # Pass the file entities to the next layer to avoid duplicate RPCs.
-    return {'file_ents': file_ents}
+    # Pass the file objects to the next layer to avoid duplicate RPCs.
+    return {'paths': _FilesDictToList(paths, file_objs)}
 
-def _VerifyPermissions(file_ents, user, read=False, write=False):
-  """Check user access over file_ents, verifying ability read and/or write."""
-  if not hasattr(file_ents, '__iter__'):
-    file_ents = [file_ents]
+def _FilesDictToList(paths, file_objs):
+  """Given paths and a dict of paths to files, make a list of files or None."""
+  is_multiple = hasattr(paths, '__iter__')
+  if is_multiple:
+    # For each position, put the loaded File object or the path string.
+    return [file_objs.get(path, paths[i]) for i, path in enumerate(paths)]
+  return file_objs
+
+def _VerifyPermissions(file_objs, user, read=False, write=False):
+  """Check user access over file_objs, verifying ability read and/or write."""
+  if not hasattr(file_objs, '__iter__'):
+    file_objs = [file_objs]
 
   have_evaluated_user = False
-  for file_ent in file_ents:
-    if not file_ent:
+  for file_obj in file_objs:
+    if file_obj is None:
       # If a file entity doesn't exist, default permissions are open.
       continue
 
-    read_users = getattr(file_ent, 'permissions_read_users', None)
-    write_users = getattr(file_ent, 'permissions_write_users', None)
+    read_users = getattr(file_obj, 'permissions_read_users', None)
+    write_users = getattr(file_obj, 'permissions_write_users', None)
     if read_users and write_users:
       read_users = set(read_users).union(set(write_users))
 
@@ -145,8 +145,8 @@ def _VerifyPermissions(file_ents, user, read=False, write=False):
     if read and read_users and user not in read_users:
       raise PermissionsError(
           'Permission denied: "%s" to read Titan File "%s".'
-          % (user, file_ent.path))
+          % (user, file_obj.path))
     if write and write_users and user not in write_users:
       raise PermissionsError(
           'Permission denied: "%s" to write Titan File: "%s".'
-          % (user, file_ent.path))
+          % (user, file_obj.path))

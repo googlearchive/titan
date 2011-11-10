@@ -97,11 +97,18 @@ class File(object):
       when a File object is long-lived.
   """
 
-  def __init__(self, path, file_ent=None):
-    self._path = ValidatePaths(path)
+  def __init__(self, path, _file_ent=None):
+    """File object constructor.
+
+    Args:
+      path: An absolute filename.
+      _file_ent: An internal-only optimization argument which helps avoid
+          unnecessary RPCs.
+    """
+    self._path = ValidatePaths(path) if not _file_ent else _file_ent.path
     self._name = os.path.basename(self._path)
     self._meta = None
-    self._file_ent = file_ent
+    self._file_ent = _file_ent
     self._exists = None
 
   def __eq__(self, other_file):
@@ -129,8 +136,14 @@ class File(object):
     if self._file_ent:
       return self._file_ent
     # Haven't initialized a File object yet.
-    self._file_ent, _ = _GetFilesOrDie(self._path)
+    temp_file_obj, _ = _GetFilesOrDie(self._path)
+    self._file_ent = _GetFileEntities(temp_file_obj)
     return self._file_ent
+
+  @property
+  def is_loaded(self):
+    """Whether or not this lazy object has been evaluated."""
+    return bool(self._file_ent)
 
   @property
   def name(self):
@@ -160,7 +173,7 @@ class File(object):
 
   @property
   def content(self):
-    return _ReadContentOrBlobs(self._path, file_ent=self._file)
+    return _ReadContentOrBlobs(self)
 
   @property
   def blobs(self):
@@ -276,49 +289,53 @@ class _File(db.Expando):
     return '<_File: %s>' % self.path
 
 @hooks.ProvideHook('file-exists')
-def Exists(path, file_ent=None):
-  """Check if a File exists."""
-  ValidatePaths(path)
-  return bool(_GetFiles(file_ent or path)[0])
-
-@hooks.ProvideHook('file-get')
-def Get(paths, file_ents=None):
-  """Get a File, or batch get a list of File objects.
+def Exists(path):
+  """Check if a File exists.
 
   Args:
-    paths: Absolute filename or iterable of absolute filenames.
-    file_ents: File entities, usually provided by an internal service plugin to
-        avoid duplicate RPCs for the same file entities.
+    path: Absolute filename or File object.
+  Returns:
+    Boolean of whether or not the file exists.
+  """
+  ValidatePaths(path)
+  file_obj, _ = _GetFiles(path)
+  file_ent = _GetFileEntities(file_obj)
+  return bool(file_ent)
+
+@hooks.ProvideHook('file-get')
+def Get(paths):
+  """Get pre-loaded File objects.
+
+  Args:
+    paths: Absolute filename, iterable of absolute filenames, or File objects.
   Raises:
     BadFileError: If any given file paths don't exist.
   Returns:
     None: If given single path which didn't exist.
-    An evaluated File object: If given a single path which did exist.
-    Dict: When given multiple paths, returns a dict of paths --> evaluated File
+    A pre-loaded File object: If given a single path which did exist.
+    Dict: When given multiple paths, returns a dict of paths --> pre-loaded File
         objects. Non-existent file paths are not included in the result.
   """
-  file_ents, is_multiple = _GetFiles(file_ents or paths)
+  file_objs, is_multiple = _GetFiles(paths)
   if not is_multiple:
-    if file_ents:
-      return File(paths, file_ent=file_ents)
-    return
-
-  file_objs = {}
-  for i, file_ent in enumerate(file_ents):
-    if file_ent:
-      file_objs[paths[i]] = File(paths[i], file_ent=file_ent)
-  return file_objs
+    return file_objs if file_objs else None
+  # Transform from [<File>, None, ...] to {'file path': <File>, ...}.
+  file_objs_result = {}
+  for i, file_obj in enumerate(file_objs):
+    if file_obj:
+      file_objs_result[file_obj.path] = file_obj
+  return file_objs_result
 
 @hooks.ProvideHook('file-write')
 def Write(path, content=None, blobs=None, mime_type=None, meta=None,
-          async=False, file_ent=None):
+          async=False):
   """Write or update a File. Supports asynchronous writes.
 
   Updates: if the File already exists, Write will accept any of the given args
   and only perform an update of the given data, without affecting other attrs.
 
   Args:
-    path: An absolute filename.
+    path: An absolute filename or a File object.
     content: File contents, either as a str or unicode object.
         This will handle content greater than the 1MB limit by storing it in
         blobstore. However, this technique should only be used for relatively
@@ -328,8 +345,6 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     mime_type: Content type of the file; will be guessed if not given.
     meta: A dictionary of properties to be added to the file.
     async: Whether or not to perform put() operations asynchronously.
-    file_ent: A file entity, usually provided by an internal service plugin to
-        avoid a duplicate RPC for the same file entity.
   Raises:
     ValueError: If paths are invalid.
     TypeError: For missing arguments.
@@ -340,7 +355,8 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     None: if async is True and the file didn't change.
   """
   path = ValidatePaths(path)
-  file_ent, _ = _GetFiles(file_ent or path)
+  file_obj, _ = _GetFiles(path)
+  file_ent = _GetFileEntities(file_obj)
   logging.info('Writing Titan file: %s', path)
 
   # Argument sanity checks.
@@ -456,14 +472,12 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
   return rpc if async else rpc.get_result()
 
 @hooks.ProvideHook('file-delete')
-def Delete(paths, async=False, file_ents=None, update_subdir_caches=False):
+def Delete(paths, async=False, update_subdir_caches=False):
   """Delete a File. Supports asynchronous and batch deletes.
 
   Args:
-    paths: Absolute filename or iterable of absolute filenames.
+    paths: Absolute filename, iterable of absolute filenames, or File objects.
     async: Whether or not to do asynchronous deletes.
-    file_ents: File entities, usually provided by an internal service plugin to
-        avoid duplicate RPC for the same file entities.
     update_subdir_caches: Whether to defer a potentially expensive task that
         will repopulate the subdir caches by calling ListDir. If False, the
         dir caches will just be cleared and subsequent ListDirs may be slower.
@@ -475,40 +489,39 @@ def Delete(paths, async=False, file_ents=None, update_subdir_caches=False):
     Datastore RPC object: if async is True.
   """
   # With one RPC, delete any associated blobstore files for all paths.
-  file_ents, is_multiple = _GetFilesOrDie(file_ents or paths)
+  file_objs, is_multiple = _GetFilesOrDie(paths)
+  validated_paths = ValidatePaths(paths)
   blob_keys = []
-  files_list = file_ents if is_multiple else [file_ents]
-  for file_ent in files_list:
-    if file_ent.blobs:
-      blob_keys += file_ent.blobs
+  files_list = file_objs if is_multiple else [file_objs]
+  for file_obj in files_list:
+    if file_obj.blobs:
+      blob_keys += file_obj.blobs
   if blob_keys:
     blobstore.delete(blob_keys)
 
   # Flag these files in cache as non-existent, cleanup subdir and blob caches.
-  files_cache.SetFileDoesNotExist(paths)
+  file_ents = _GetFileEntities(file_objs)
+  files_cache.SetFileDoesNotExist(validated_paths)
   files_cache.ClearSubdirsForFiles(file_ents)
   files_cache.ClearBlobsForFiles(file_ents)
 
   if update_subdir_caches:
-    path_strings = ValidatePaths(paths)
-    path_strings = path_strings if is_multiple else [path_strings]
-    deferred.defer(ListDir, _GetCommonDir(path_strings))
+    validated_paths = validated_paths if is_multiple else [validated_paths]
+    deferred.defer(ListDir, _GetCommonDir(validated_paths))
 
   rpc = db.delete_async(file_ents)
   return rpc if async else rpc.get_result()
 
 @hooks.ProvideHook('file-touch')
-def Touch(paths, meta=None, async=False, file_ents=None):
+def Touch(paths, meta=None, async=False):
   """Create or update File objects by updating modified times.
 
   Supports batch and asynchronous touches.
 
   Args:
-    paths: Absolute filename or iterable of absolute filenames.
+    paths: Absolute filename, iterable of absolute filenames, or File objects.
     meta: A dictionary of properties to be added to the file.
     async: Whether or not to do asynchronous touches.
-    file_ents: File entities, usually provided by an internal service plugin to
-        avoid duplicate RPCs for the same file entities.
   Returns:
     db.Key: if only one path is given and async is False.
     List of db.Key objects: if multiple paths given and async is False.
@@ -516,7 +529,8 @@ def Touch(paths, meta=None, async=False, file_ents=None):
   """
   now = datetime.datetime.now()
   paths = ValidatePaths(paths)
-  file_ents, is_multiple = _GetFiles(file_ents or paths)
+  file_objs, is_multiple = _GetFiles(paths)
+  file_ents = _GetFileEntities(file_objs)
   files_list = file_ents if is_multiple else [file_ents]
   paths_list = paths if is_multiple else [paths]
   for i, file_ent in enumerate(files_list):
@@ -549,26 +563,29 @@ def Touch(paths, meta=None, async=False, file_ents=None):
   return rpc if async else rpc.get_result()
 
 @hooks.ProvideHook('file-copy')
-def Copy(source_path, destination_path, async=False, file_ent=None):
+def Copy(source_path, destination_path, async=False):
   """Copy a File and all of its properties to a different path.
 
   Args:
-    source_path: An absolute filename. Ignored if file_ent is given.
-    destination_path: An absolute filename where the file will be copied.
+    source_path: An absolute filename or File object.
+    destination_path: An absolute filename or File object indicating where
+        the file will be copied.
     async: Whether or not to perform put() operations asynchronously.
-    file_ent: The source file entity, usually only provided by an internal
-       service plugin to avoid a duplicate RPC for the same file entity.
   Raises:
     BadFileError: If the source_path doesn't exist.
   Returns:
     The result of the Write() call to the destination path.
   """
-  if file_ent:
-    source_path = file_ent.key().name()
-    destination_path = ValidatePaths(destination_path)
-  else:
-    source_path, destination_path = ValidatePaths([source_path,
-                                                   destination_path])
+  # First _GetFiles (in order to accept pre-loaded File objects and avoid RPCs),
+  # then ValidatePaths to overwrite the paths.
+  file_objs, _ = _GetFiles([source_path, destination_path])
+  source_path, destination_path = ValidatePaths([source_path, destination_path])
+
+  source_file_obj, destination_file_obj = file_objs
+  source_file_ent, destination_file_ent = _GetFileEntities(file_objs)
+  if not source_file_ent:
+    raise BadFileError('Copy failed, source file does not exist: %s'
+                       % source_path)
   logging.info('Copying Titan file: %s --> %s', source_path, destination_path)
 
   # Delete the file if it currently exists so old properties don't persist.
@@ -578,7 +595,6 @@ def Copy(source_path, destination_path, async=False, file_ent=None):
     delete_rpc = None
 
   # Copy all source file properties.
-  source_file_ent, _ = _GetFiles(file_ent or source_path)
   content = source_file_ent.content
   blobs = source_file_ent.blobs
   mime_type = source_file_ent.mime_type
@@ -687,6 +703,7 @@ def ListDir(dir_path):
 @hooks.ProvideHook('dir-exists')
 def DirExists(dir_path):
   """Returns True if any files exist within the given directory path."""
+  # TODO(user): optimize this to pull from cache.
   dir_path = ValidatePaths(dir_path)
   # Strip trailing slash.
   if dir_path != '/' and dir_path.endswith('/'):
@@ -708,10 +725,13 @@ def ValidatePaths(paths):
   is_multiple = hasattr(paths, '__iter__')
   if not is_multiple:
     paths = [paths]
-  elif not paths:
-    return []
+  else:
+    if not paths:
+      return []
+    # Make a copy of the paths list since we manipulate it in-place below.
+    paths = paths[:]
 
-  for i, path in enumerate(paths[:]):
+  for i, path in enumerate(paths):
     # Support _File and File objects by pulling out the path.
     if isinstance(path, File) or isinstance(path, _File):
       path = paths[i] = path.path
@@ -728,23 +748,26 @@ def ValidatePaths(paths):
 
 # ------------------------------------------------------------------------------
 
-def _GetFiles(paths):
-  """Get a _File entity or a list of _File entities."""
-  ValidatePaths(paths)
-  is_multiple = hasattr(paths, '__iter__')
+def _GetFiles(paths_or_file_objs):
+  """Get a non-lazy File object or a list of non-lazy File objects, or None."""
+  is_multiple = hasattr(paths_or_file_objs, '__iter__')
 
-  # Slightly magical: if already given file entities (usually by a service
-  # plugin), return them immediately and avoid any more RPCs.
-  paths_list = paths if is_multiple else [paths]
-  all_file_entities = True
-  for possible_file_ent in paths_list:
-    if not isinstance(possible_file_ent, _File):
-      all_file_entities = False
+  # Slightly magical optimizations: if given all loaded file objects (usually by
+  # a service plugin), return them immediately and avoid any more RPCs.
+  paths_list = paths_or_file_objs if is_multiple else [paths_or_file_objs]
+  is_all_file_objs = True
+  for maybe_file_obj in paths_list:
+    is_loaded_file_obj = getattr(maybe_file_obj, 'is_loaded', False)
+    if not is_loaded_file_obj:
+      # At least one of the given objects was not a File object, break and
+      # follow the non-optimized path.
+      is_all_file_objs = False
       break
-  if all_file_entities:
-    return paths, is_multiple
+  if is_all_file_objs:
+    return paths_or_file_objs, is_multiple
 
   # Get the file entities from cache or from the datastore.
+  paths = ValidatePaths(paths_or_file_objs)
   file_ents, cache_hit = files_cache.GetFiles(paths)
   if not cache_hit:
     file_ents = _File.get_by_key_name(paths)
@@ -754,32 +777,48 @@ def _GetFiles(paths):
     else:
       data = {paths: file_ents}
     files_cache.StoreAll(data)
-  return file_ents, is_multiple
 
-def _GetFilesOrDie(paths):
-  """Get a _File entity or a list of _File entities if all paths exist."""
-  file_ents, is_multiple = _GetFiles(paths)
+  # Wrap all the _File entities in <File> objects.
+  file_objs = []
+  for f in file_ents if is_multiple else [file_ents]:
+    file_objs.append(File(f.path, _file_ent=f) if f else None)
+  return file_objs if is_multiple else file_objs[0], is_multiple
+
+def _GetFileEntities(file_objs):
+  """Get _File entities from File objects; use sparingly."""
+  # This function should be the only place we access the protected _file attr
+  # on File objects. This centralizes the high coupling to one location.
+  is_multiple = hasattr(file_objs, '__iter__')
+  if not is_multiple:
+    return file_objs._file if file_objs else None
+  file_ents = []
+  for file_obj in file_objs:
+    file_ents.append(file_obj._file if file_obj else None)
+  return file_ents
+
+def _GetFilesOrDie(paths_or_file_objs):
+  """Same as _GetFiles, but raises BadFileError if a path doesn't exist."""
+  file_objs, is_multiple = _GetFiles(paths_or_file_objs)
   if not is_multiple:
     # Single path argument.
-    if not file_ents:
-      raise BadFileError('File does not exist: %s' % paths)
+    if file_objs is None:
+      raise BadFileError('File does not exist: %s' % paths_or_file_objs)
   else:
     # Multiple paths.
-    for i, file_ent in enumerate(file_ents):
-      if not file_ent:
-        raise BadFileError('File does not exist: %s' % paths[i])
-  return file_ents, is_multiple
+    for i, file_obj in enumerate(file_objs):
+      if file_obj is None:
+        raise BadFileError('File does not exist: %s' % paths_or_file_objs[i])
+  return file_objs, is_multiple
 
-def _ReadContentOrBlobs(path, file_ent=None):
-  if not file_ent:
-    file_ent, _ = _GetFilesOrDie(path)
+def _ReadContentOrBlobs(file_obj):
+  file_ent = _GetFileEntities(file_obj)
   if file_ent.content is not None:
     content = file_ent.content
   else:
-    content = files_cache.GetBlob(path)
+    content = files_cache.GetBlob(file_ent.path)
     if content is None:
       content = blobstore.BlobReader(file_ent.blobs[0]).read()
-      files_cache.StoreBlob(path, content)
+      files_cache.StoreBlob(file_ent.path, content)
   if file_ent.encoding == 'utf-8':
     return content.decode('utf-8')
   return content

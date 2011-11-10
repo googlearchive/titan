@@ -17,22 +17,6 @@
 
 Documentation:
   http://code.google.com/p/titan-files/wiki/VersionsService
-
-Usage:
-  # Create a new changeset.
-  self.vcs = versions.VersionControlService()
-  changeset = self.vcs.NewChangeset()
-
-  # Add/edit/delete files within the changeset.
-  files.Write('/new/file.html', 'content', changeset=changeset)
-  files.Write('/other/new/file.html', 'content', changeset=changeset)
-  files.Write('/deleted/file.html', delete=True, changeset=changeset)
-  # Revert a file, removing it from the changeset.
-  files.Delete('/other/new/file.html', changeset=changeset)
-
-  # Commit the changeset. Any subsequent Get() will immediately return the
-  # newly versioned files.
-  self.vcs.Commit(changeset)
 """
 
 # TODO(user): Add caching of all top-level entities, primarily _Changesets.
@@ -111,56 +95,7 @@ class VersionedFile(files.File):
 # and return specific result structures. See here for more info:
 # http://code.google.com/p/titan-files/wiki/Services
 
-class BaseVersionsHook(hooks.Hook):
-  """Parent of all hooks below."""
-
-  def _CopyFilesFromRoot(self, root_paths, versioned_paths, changeset):
-    """Copy current root files to their versioned file paths.
-  
-    Args:
-      root_paths: An absolute filename or iterable of absolute filenames.
-      versioned_paths: An absolute filename or iterable of absolute filenames.
-      changeset: A Changeset object.
-    Returns:
-      For single paths: None if no versioned file exists, or the VersionedFile
-          object.
-      For multiple paths: A dictionary of existing root paths to VersionedFile
-          objects.
-    """
-    is_multiple = hasattr(root_paths, '__iter__')
-  
-    root_files = files.Get(root_paths)
-    versioned_files = files.Get(root_paths, changeset=changeset)
-  
-    if not root_files:
-      return {} if is_multiple else None
-  
-    # For each path, check if we should copy a root file to the versioned path.
-    for i, root_path in enumerate(root_paths if is_multiple else [root_paths]):
-      if is_multiple:
-        root_file = root_files.get(root_path)
-        if not root_file:
-          # If nothing to copy from root, skip.
-          continue
-        versioned_file = versioned_files.get(root_file.path)
-        versioned_path = versioned_paths[i]
-      else:
-        root_file = root_files
-        if not root_file:
-          # If nothing to copy from root, skip.
-          continue
-        versioned_file = versioned_files
-        versioned_path = versioned_paths
-
-      # The first time a versioned file is created (or un-deleted), we copy
-      # all content and properties from the current root file version.
-      if not versioned_file or versioned_file.status == FILE_DELETED:
-        files.Copy(source_path='',  # ignored since file_ent is used.
-                   destination_path=versioned_path,
-                   file_ent=root_file._file)
-    return files.Get(root_paths, changeset=changeset)
-
-class HookForExists(BaseVersionsHook):
+class HookForExists(hooks.Hook):
   """A hook for files.Exists()."""
 
   def Pre(self, changeset=None, **kwargs):
@@ -177,7 +112,7 @@ class HookForExists(BaseVersionsHook):
     path, _ = _MakeVersionedPaths(kwargs['path'], self.changeset)
     return {'path': path}
 
-class HookForGet(BaseVersionsHook):
+class HookForGet(hooks.Hook):
   """A hook for files.Get()."""
 
   def Pre(self, changeset=None, **kwargs):
@@ -217,7 +152,7 @@ class HookForGet(BaseVersionsHook):
         new_file_objs[nonversioned_path] = VersionedFile(file_objs[path])
     return new_file_objs
 
-class HookForWrite(BaseVersionsHook):
+class HookForWrite(hooks.Hook):
   """A hook for files.Write()."""
 
   def Pre(self, changeset, delete=False, **kwargs):
@@ -238,16 +173,12 @@ class HookForWrite(BaseVersionsHook):
     else:
       # The first time the versioned file is created (or un-deleted), we have
       # to branch all content and properties from the current root file version.
-      versioned_file = self._CopyFilesFromRoot(root_path, versioned_path,
-                                               changeset)
-      # Avoid duplicate RPC for the versioned file:
-      if versioned_file:
-        changed_kwargs['file_ent'] = versioned_file._file
+      versioned_file = _CopyFilesFromRoot(root_path, versioned_path, changeset)
       changed_kwargs['meta']['status'] = FILE_EDITED
 
     return changed_kwargs
 
-class HookForTouch(BaseVersionsHook):
+class HookForTouch(hooks.Hook):
   """A hook for files.Touch()."""
 
   def Pre(self, changeset, **kwargs):
@@ -259,29 +190,16 @@ class HookForTouch(BaseVersionsHook):
     root_paths = files.ValidatePaths(kwargs['paths'])
     is_multiple = hasattr(root_paths, '__iter__')
     versioned_paths, _ = _MakeVersionedPaths(root_paths, changeset)
+    changed_kwargs['paths'] = versioned_paths
 
-    versioned_files = self._CopyFilesFromRoot(root_paths, versioned_paths,
-                                              changeset)
-    # Avoid duplicate RPC for versioned files which already exist.
-    # At this point, versioned_files is fully populated for every root
-    # path that existed and was copied to the versioned path.
-    if versioned_files:
-      if not is_multiple:
-        changed_kwargs['file_ents'] = versioned_files._file
-      else:
-        # Can only avoid the extra RPCs if we have _all_ of the file_ents,
-        # due to a how the files._GetFiles internal path validation works.
-        if len(root_paths) == len(versioned_files):
-          versioned_file_ents = [versioned_files[p]._file for p in root_paths]
-          changed_kwargs['file_ents'] = versioned_file_ents
+    versioned_files = _CopyFilesFromRoot(root_paths, versioned_paths, changeset)
 
     # Update meta data.
     changed_kwargs['meta'] = kwargs.get('meta') or {}
     changed_kwargs['meta']['status'] = FILE_EDITED
-    changed_kwargs['paths'] = versioned_paths
     return changed_kwargs
 
-class HookForDelete(BaseVersionsHook):
+class HookForDelete(hooks.Hook):
   """A hook for files.Delete().
 
   A delete in the files world is a revert in the versions world.
@@ -295,7 +213,7 @@ class HookForDelete(BaseVersionsHook):
     paths, _ = _MakeVersionedPaths(paths, changeset)
     return {'paths': paths}
 
-class HookForListFiles(BaseVersionsHook):
+class HookForListFiles(hooks.Hook):
   """A hook for files.ListFiles()."""
 
   def Pre(self, changeset=None, **kwargs):
@@ -778,3 +696,53 @@ def _VerifyIsNewChangeset(changeset):
   if changeset.status != CHANGESET_NEW:
     raise ChangesetError('Cannot write files in a "%s" changeset.'
                          % changeset.status)
+
+def _CopyFilesFromRoot(root_paths, versioned_paths, changeset):
+  """Copy current root files to their versioned file paths.
+
+  Args:
+    root_paths: An absolute filename or iterable of absolute filenames.
+    versioned_paths: An absolute filename or iterable of absolute filenames.
+    changeset: A Changeset object.
+  Returns:
+    For single paths: None if no versioned file exists, or the VersionedFile
+        object.
+    For multiple paths: A dictionary of existing root paths to VersionedFile
+        objects.
+  """
+  is_multiple = hasattr(root_paths, '__iter__')
+
+  root_files = files.Get(root_paths)
+  versioned_files = files.Get(root_paths, changeset=changeset)
+
+  if not root_files:
+    return {} if is_multiple else None
+
+  # For each existing root file, copy it to the versioned path (only if the
+  # versioned file doesn't exist or is being un-deleted).
+  for i, root_path in enumerate(root_paths if is_multiple else [root_paths]):
+    if is_multiple:
+      root_file = root_files.get(root_path)
+      if not root_file:
+        # If nothing to copy from root, skip.
+        continue
+      versioned_file = versioned_files.get(root_file.path)
+      versioned_path = versioned_paths[i]
+    else:
+      root_file = root_files
+      if not root_file:
+        # If nothing to copy from root, skip.
+        continue
+      versioned_file = versioned_files
+      versioned_path = versioned_paths
+
+    # The first time a versioned file is created (or un-deleted) in a changeset,
+    # we copy all content and properties from the current root file version.
+    if not versioned_file or versioned_file.status == FILE_DELETED:
+      # Unfortunate high-coupling to the microversions service: use a file
+      # object's versioned_path, but microversions actually come from the root
+      # tree so we fallback to the root_file itself if no versioned_path exists.
+      source_path = getattr(root_file, 'versioned_path', root_file)
+      files.Copy(source_path=source_path,
+                 destination_path=versioned_path)
+  return files.Get(root_paths, changeset=changeset)

@@ -63,14 +63,16 @@ class FileTestCase(testing.BaseTestCase):
 
     # Init with path only, verify lazy-loading properties.
     file_obj = files.File('/foo/bar.html')
-    self.assertEqual(None, file_obj._file_ent)
+    self.assertFalse(file_obj.is_loaded)
+    self.assertIsNone(file_obj._file_ent)
     _ = file_obj.mime_type
     self.assertNotEqual(None, file_obj._file_ent)
 
     # Init with a _File entity.
-    file_obj = files.File('/foo/bar.html', file_ent=file_ent)
+    file_obj = files.File('/foo/bar.html', _file_ent=file_ent)
     self.assertEqual('/foo/bar.html', file_obj.path)
     self.assertEqual('bar.html', file_obj.name)
+    self.assertTrue(file_obj.is_loaded)
     self.assertNotEqual(None, file_obj._file_ent)
 
     # Write() and write().
@@ -85,10 +87,10 @@ class FileTestCase(testing.BaseTestCase):
     self.assertTrue(file_obj.exists)
     file_obj.Delete()
     self.assertFalse(file_obj.exists)
-    self.assertEqual(None, file_obj._file_ent)
+    self.assertIsNone(file_obj._file_ent)
     key = files.Write('/foo/bar.html', content='Test', meta=meta)
     rpc = file_obj.Delete(async=True)
-    self.assertEqual(None, rpc.get_result())
+    self.assertIsNone(rpc.get_result())
 
     # The exists property should be memoized, so that it only makes one RPC.
     file_obj = files.File('/foo/bar/baz')
@@ -126,7 +128,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(file_obj.content, file_obj.read())
 
     # close().
-    self.assertEqual(None, file_obj.close())
+    self.assertIsNone(file_obj.close())
 
     # Error handling: init with non-existent path.
     file_obj = files.File('/foo/fake.html')
@@ -201,7 +203,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(u'Test', files.Get('/foo/bar.html').content)
 
     # Gets return None or an empty dict for non-existent files.
-    self.assertEqual(None, files.Get('/fake.html'))
+    self.assertIsNone(files.Get('/fake.html'))
     self.assertEqual({}, files.Get(['/fake']))
 
   @testing.DisableCaching
@@ -278,7 +280,7 @@ class FileTestCase(testing.BaseTestCase):
     # Asynchronous update without changes.
     old_modified = actual_file.modified
     result = files.Write('/foo/bar.html', content='Test', meta=meta, async=True)
-    self.assertEqual(None, result)
+    self.assertIsNone(result)
     actual_file = files._File.get_by_key_name('/foo/bar.html')
     self.assertEntityEqual(expected_file, actual_file, ignore=dates)
     self.assertEqual(old_modified, actual_file.modified)
@@ -297,7 +299,7 @@ class FileTestCase(testing.BaseTestCase):
     blob_keys = file_obj.blobs
     self.assertEqual(1, len(blob_keys))
     self.assertEqual(LARGE_FILE_CONTENT, file_obj.content)
-    self.assertEqual(None, file_obj._file_ent.content)
+    self.assertIsNone(file_obj._file_ent.content)
     self.assertEqual(LARGE_FILE_CONTENT, files.Get('/foo/bar.html').content)
     # Make sure the blobs are deleted with the file:
     file_obj.Delete()
@@ -340,24 +342,41 @@ class FileTestCase(testing.BaseTestCase):
   def testDelete(self):
     # Synchronous delete.
     files.Touch('/foo/bar.html')
-    self.assertEqual(None, files.Delete('/foo/bar.html'))
-    self.assertEqual(None, files._File.get_by_key_name('/foo/bar.html'))
+    self.assertIsNone(files.Delete('/foo/bar.html'))
+    self.assertIsNone(files._File.get_by_key_name('/foo/bar.html'))
 
     # Asynchronous delete.
     files.Touch('/foo/bar.html')
     rpc = files.Delete('/foo/bar.html', async=True)
-    self.assertEqual(None, rpc.get_result())
-    self.assertEqual(None, files._File.get_by_key_name('/foo/bar.html'))
+    self.assertIsNone(rpc.get_result())
+    self.assertIsNone(files._File.get_by_key_name('/foo/bar.html'))
 
     # Batch delete.
     files.Touch('/foo/bar.html')
     files.Touch('/foo/bar/baz')
     files.Touch('/qux')
     result = files.Delete(['/foo/bar.html', '/foo/bar/baz', '/qux'])
-    self.assertEqual(None, result)
+    self.assertIsNone(result)
+
+    # Support of lazy, unevaluated File objects.
+    files.Touch('/foo/bar.html')
+    files.Delete(files.File('/foo/bar.html'))
+    self.assertIsNone(files._File.get_by_key_name('/foo/bar.html'))
+    files.Touch('/foo/bar.html')
+    files.Delete([files.File('/foo/bar.html')])
+    self.assertIsNone(files._File.get_by_key_name('/foo/bar.html'))
+
+    # Support of evaluated File objects.
+    files.Touch('/foo/bar.html')
+    files.Delete(files.Get('/foo/bar.html'))
+    self.assertIsNone(files._File.get_by_key_name('/foo/bar.html'))
+    files.Touch('/foo/bar.html')
+    files.Delete(files.Get(['/foo/bar.html']).values())
+    self.assertIsNone(files._File.get_by_key_name('/foo/bar.html'))
 
     # Error handling.
     self.assertRaises(files.BadFileError, files.Delete, '/fake.html')
+    self.assertRaises(files.BadFileError, files.Delete, ['/fake.html'])
 
   @testing.DisableCaching
   def testTouch(self):
@@ -540,7 +559,7 @@ class FileTestCase(testing.BaseTestCase):
 
     # Get: should store in memcache after first fetch.
     memcache.flush_all()
-    self.assertEqual(None, memcache.get('/foo'))
+    self.assertIsNone(memcache.get('/foo'))
     file_obj = files.Get('/foo')
     cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo')
     self.assertEntityEqual(file_obj._file, cache_item)
@@ -548,14 +567,14 @@ class FileTestCase(testing.BaseTestCase):
     # Write of new file: should add to memcache.
     memcache.flush_all()
     file_obj = files.File('/foo/bar')
-    self.assertEqual(None, memcache.get('/foo/bar'))
+    self.assertIsNone(memcache.get('/foo/bar'))
     file_obj.Write('Test')
     cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_obj._file, cache_item)
 
     # Write with changes: should update memcache.
     file_obj = files.File('/foo/bar')
-    self.assertEqual(None, memcache.get('/foo/bar'))
+    self.assertIsNone(memcache.get('/foo/bar'))
     file_obj.Write('New content')
     cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
     self.assertEntityEqual(file_obj._file, cache_item)

@@ -106,7 +106,8 @@ def SetFileDoesNotExist(paths):
   """Set a flag signifying that the given _File entities do not exist."""
   is_multiple = hasattr(paths, '__iter__')
   if is_multiple:
-    data = dict([(FILE_MEMCACHE_PREFIX + path, _NO_FILE_FLAG) for path in paths])
+    data = [(FILE_MEMCACHE_PREFIX + path, _NO_FILE_FLAG) for path in paths]
+    data = dict(data)
     return memcache.set_multi(data)
   else:
     cache_key = FILE_MEMCACHE_PREFIX + paths
