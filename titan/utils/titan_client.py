@@ -187,7 +187,8 @@ class TitanCommands(object):
     return path_map
 
   @RequireFlags('host')
-  def Download(self, dir_paths=None, target_dir=None, quiet=False):
+  def Download(self, dir_paths=None, file_paths=None, target_dir=None,
+               quiet=False):
     """Downloads files from a Titan file service to the local filesystem.
 
     Usage:
@@ -207,6 +208,7 @@ class TitanCommands(object):
 
     Args:
       dir_paths: A list of remote directories to download.
+      file_paths: A list of remote files to download.
       target_dir: The target local directory to upload to.
       quiet: Whether to show logging.
     Returns:
@@ -215,11 +217,11 @@ class TitanCommands(object):
       CommandValueError: If an invalid target dir was provided or if no files
           were provided to download.
     """
-    file_paths = self.flags.get('file_path', [])
-    force_download = self.flags.get('force')
-
     if dir_paths is None:
       dir_paths = self.flags.get('dir_path', [])
+    if file_paths is None:
+      file_paths = self.flags.get('file_path', [])
+    force_download = self.flags.get('force')
 
     if not file_paths and not dir_paths:
       raise CommandValueError('No files to download. Use --file_path and/or '

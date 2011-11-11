@@ -159,4 +159,9 @@ def _CommitMicroversion(created_by, write=False, touch=False, delete=False,
     del kwargs['paths']
     for path in paths if is_multiple else [paths]:
       files.Write(path=path, **kwargs)
+
+  # Indicate that this specific changeset object has been used for all file
+  # operations and can be trusted for strong consistency guarantees.
+  changeset.FinalizeAssociatedPaths()
+
   return vcs.Commit(changeset)

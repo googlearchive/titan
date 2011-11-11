@@ -18,6 +18,7 @@
 from tests import testing
 
 from google.appengine.api import users
+from google.appengine.datastore import datastore_stub_util
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.services import microversions
@@ -96,7 +97,10 @@ class MicroversionsTest(testing.ServicesTestCase):
     file_obj = files.Get('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('new foo', file_obj.content)
 
-    # Delete.
+    # Delete. In the real code path, the delete of the root file will often
+    # complete before the task is started, so we delete /foo to verify that
+    # deletes don't rely on presence of the root file.
+    files.Delete('/foo', disabled_services=True)
     final_changeset = microversions._CommitMicroversion(
         created_by=created_by, delete=True, paths='/foo')
     self.assertEqual(8, final_changeset.num)
@@ -131,11 +135,20 @@ class MicroversionsTest(testing.ServicesTestCase):
     self.assertEqual(versions.FILE_DELETED, file_objs['/foo'].status)
     self.assertEqual(versions.FILE_DELETED, file_objs['/bar'].status)
 
-    # Error handling.
-    file_obj = files.File('/foo')
-    final_changeset = self.assertRaises(
-        TypeError, microversions._CommitMicroversion,
-        created_by=created_by, write=True, path=file_obj, content='new foo')
+  def testStronglyConsistentCommits(self):
+    created_by = users.User('test@example.com')
+
+    # Microversions use FinalizeAssociatedPaths so the Commit() path should use
+    # the always strongly-consistent GetFiles(), rather than a query. Verify
+    # this behavior by simulating a never-consistent HR datastore.
+    policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=0)
+    self.testbed.init_datastore_v3_stub(consistency_policy=policy)
+
+    final_changeset = microversions._CommitMicroversion(
+        created_by=created_by, write=True, path='/foo', content='foo')
+    self.assertEqual(2, final_changeset.num)
+    file_obj = files.Get('/foo', changeset=final_changeset.linked_changeset)
+    self.assertEqual('foo', file_obj.content)
 
 if __name__ == '__main__':
   basetest.main()

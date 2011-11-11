@@ -160,8 +160,10 @@ class HookForWrite(hooks.Hook):
     _VerifyIsNewChangeset(changeset)
     changed_kwargs = {}
 
+    root_path = files.ValidatePaths(kwargs['path'])
+    changeset.AssociatePaths(root_path)
+
     # Modify where the file is written by prepending the versioned path.
-    root_path = kwargs['path']
     versioned_path, _ = _MakeVersionedPaths(root_path, changeset)
     changed_kwargs['path'] = versioned_path
 
@@ -186,8 +188,10 @@ class HookForTouch(hooks.Hook):
     _VerifyIsNewChangeset(changeset)
     changed_kwargs = {}
 
-    # Modify where the file is written by prepending the versioned path.
     root_paths = files.ValidatePaths(kwargs['paths'])
+    changeset.AssociatePaths(root_paths)
+
+    # Modify where the file is written by prepending the versioned path.
     is_multiple = hasattr(root_paths, '__iter__')
     versioned_paths, _ = _MakeVersionedPaths(root_paths, changeset)
     changed_kwargs['paths'] = versioned_paths
@@ -208,10 +212,13 @@ class HookForDelete(hooks.Hook):
   def Pre(self, changeset, **kwargs):
     """Pre-hook method."""
     _VerifyIsNewChangeset(changeset)
+
+    root_paths = files.ValidatePaths(kwargs['paths'])
+    changeset.AssociatePaths(root_paths)
+
     # Modify where the file is written by prepending the versioned path.
-    paths = files.ValidatePaths(kwargs['paths'])
-    paths, _ = _MakeVersionedPaths(paths, changeset)
-    return {'paths': paths}
+    versioned_paths, _ = _MakeVersionedPaths(root_paths, changeset)
+    return {'paths': versioned_paths}
 
 class HookForListFiles(hooks.Hook):
   """A hook for files.ListFiles()."""
@@ -257,6 +264,8 @@ class Changeset(object):
   def __init__(self, num, changeset_ent=None):
     self._changeset_ent = changeset_ent
     self._num = int(num)
+    self._associated_paths = []
+    self._finalized_paths = False
 
   def __eq__(self, other):
     """Compare equality of two Changeset objects."""
@@ -298,7 +307,31 @@ class Changeset(object):
     return self.changeset_ent.created_by
 
   def GetFiles(self):
-    """Perform a query and return VersionedFiles of the changeset file paths."""
+    """Get all files associated with this changeset.
+
+    Guarantees strong consistency, but requires that associated file paths
+    have been finalized on this specific Changeset instance.
+
+    Raises:
+      ChangesetError: If associated file paths have not been finalized.
+    Returns:
+      A dictionary mapping root file paths to VersionedFile objects.
+    """
+    if not self._finalized_paths:
+      raise ChangesetError(
+          'Cannot guarantee strong consistency when associated file paths '
+          'have not been finalized. Perhaps you want ListFiles?')
+    return files.Get(self._associated_paths, changeset=self)
+
+  def ListFiles(self):
+    """Perform a query and return VersionedFiles of the changeset file paths.
+
+    This method is always eventually consistent and may not contain recently
+    changed files.
+
+    Returns:
+      A dictionary mapping root file paths to VersionedFile objects.
+    """
     changeset = self
     if self.changeset_ent.status == CHANGESET_SUBMITTED:
       # The files stored for submitted changesets are actually stored under the
@@ -309,6 +342,34 @@ class Changeset(object):
     # Transform into a dictionary that maps non-versioned paths to the
     # VersionedFile objects.
     return dict([(file_obj.path, file_obj) for file_obj in versioned_file_objs])
+
+  def AssociatePaths(self, paths):
+    """Associate a path temporally to this changeset object before commit.
+
+    Args:
+      paths: Absolute file path or iterable of absolute file paths to associate.
+    """
+    paths = files.ValidatePaths(paths)
+    _VerifyRootPaths(paths)
+
+    is_multiple = hasattr(paths, '__iter__')
+    if is_multiple:
+      self._associated_paths.extend(paths)
+    else:
+      self._associated_paths.append(paths)
+    self._finalized_paths = False
+
+  def FinalizeAssociatedPaths(self):
+    """Indicate that this specific Changeset object was used for all operations.
+
+    This flag is used during commit to indicate if this object can be trusted
+    for strong consistency guarantees of which files paths will be committed.
+    Only call this method if you are sure that this same Changeset instance was
+    passed in for all file operations associated with this changeset.
+    """
+    if not self._associated_paths:
+      raise ChangesetError('Cannot finalize: associated paths is empty.')
+    self._finalized_paths = True
 
 class _Changeset(db.Model):
   """Model representing a changeset.
@@ -560,29 +621,33 @@ class VersionControlService(object):
     differ = diff_match_patch.diff_match_patch()
     return differ.diff_main(file_obj_before.content, file_obj_after.content)
 
-  def Commit(self, staged_changeset):
+  def Commit(self, staged_changeset, force=False):
     """Commit the given changeset.
 
     Args:
       staged_changeset: A Changeset object with a status of CHANGESET_NEW.
+      force: Commit a changeset even if using an eventually-consistent query.
+          This could cause files recently added to the changeset to be missed
+          on commit.
     Raises:
       CommitError: If a changeset contains no files or it is already committed.
     Returns:
       The final Changeset object.
     """
-    # NOTE(user): THIS IS EVENTUALLY CONSISTENT. Is there any way to
-    # mitigate the risk of missing a recent Write() when committing, without
-    # putting all _Files written in the same entity group?
-    # - Limited check: clients pass in the paths uploaded to the changeset? :/
-    # - Pull queue: all file writes add an item to a changelist-specific pull
-    # queue, which is consumed entirely on commit.
-    staged_file_objs = staged_changeset.GetFiles()
-    if not staged_file_objs:
-      raise CommitError('Changeset %d contains no file changes.'
-                        % staged_changeset.num)
     if staged_changeset.status != CHANGESET_NEW:
       raise CommitError('Cannot commit changeset with status "%s".'
                         % staged_changeset.status)
+
+    try:
+      staged_file_objs = staged_changeset.GetFiles()
+    except ChangesetError:
+      if not force:
+        raise
+      # Got force=True, get files with an eventually-consistent query.
+      staged_file_objs = staged_changeset.ListFiles()
+    if not staged_file_objs:
+      raise CommitError('Changeset %d contains no file changes.'
+                        % staged_changeset.num)
 
     # Can't nest transactions, so we get a unique final changeset number here.
     # This has the potential to orphan a changeset number (if this submit works
@@ -607,9 +672,11 @@ class VersionControlService(object):
   @staticmethod
   def _Commit(staged_changeset, final_changeset, staged_file_objs):
     """Commit a staged changeset."""
+    manifest = ['%s: %s' % (f.status, f.path)
+                for f in staged_file_objs.values()]
     logging.info('Submitting changeset %d as changeset %d with %d files:\n%s',
-                  staged_changeset.num, final_changeset.num,
-                  len(staged_file_objs), '\n  '.join(staged_file_objs.keys()))
+                 staged_changeset.num, final_changeset.num,
+                 len(staged_file_objs), '\n'.join(manifest))
 
     # Update status of the staging and final changesets.
     staged_changeset_ent = staged_changeset.changeset_ent
@@ -696,6 +763,13 @@ def _VerifyIsNewChangeset(changeset):
   if changeset.status != CHANGESET_NEW:
     raise ChangesetError('Cannot write files in a "%s" changeset.'
                          % changeset.status)
+
+def _VerifyRootPaths(paths):
+  """Make sure all given paths are not versioned paths."""
+  is_multiple = hasattr(paths, '__iter__')
+  for path in paths if is_multiple else [paths]:
+    if VERSIONS_PATH_BASE_REGEX.match(path):
+      raise ValueError('Not a root file path: %s' % path)
 
 def _CopyFilesFromRoot(root_paths, versioned_paths, changeset):
   """Copy current root files to their versioned file paths.

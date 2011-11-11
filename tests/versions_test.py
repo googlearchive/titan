@@ -50,6 +50,7 @@ class VersionsTest(testing.ServicesTestCase):
     files.Write('/foo', 'foo', changeset=changeset)
     files.Write('/bar', 'bar', changeset=changeset)
     files.Write('/qux', 'qux', changeset=changeset)
+    changeset.FinalizeAssociatedPaths()
     self.vcs.Commit(changeset)
     # For testing, move the submitted datetime to 31 days ago.
     changeset_ent = versions.Changeset(11).changeset_ent
@@ -63,6 +64,7 @@ class VersionsTest(testing.ServicesTestCase):
     files.Write('/bar', delete=True, changeset=changeset)  # delete
     files.Write('/baz', 'baz', changeset=changeset)  # create
     files.Write('/qux', 'qux2', changeset=changeset)  # edit
+    changeset.FinalizeAssociatedPaths()
     self.vcs.Commit(changeset)
 
     # Changset 15:
@@ -70,11 +72,13 @@ class VersionsTest(testing.ServicesTestCase):
     files.Write('/foo', delete=True, changeset=changeset)  # delete
     files.Write('/bar', delete=True, changeset=changeset)  # delete
     files.Write('/baz', 'baz2', changeset=changeset)  # edit
+    changeset.FinalizeAssociatedPaths()
     self.vcs.Commit(changeset)
 
     # Changset 17:
     changeset = self.vcs.NewStagingChangeset()
     files.Write('/foo', 'foo3', changeset=changeset)  # re-create
+    changeset.FinalizeAssociatedPaths()
     self.vcs.Commit(changeset)
 
   def testHooks(self):
@@ -127,6 +131,7 @@ class VersionsTest(testing.ServicesTestCase):
     self.assertFalse(files.Exists('/foo'))
     self.assertFalse(files.Exists('/foo', changeset=changeset))
 
+    changeset.FinalizeAssociatedPaths()
     self.vcs.Commit(changeset)
 
     # Exists() with a committed file path.
@@ -176,16 +181,24 @@ class VersionsTest(testing.ServicesTestCase):
     changeset = self.vcs.NewStagingChangeset(created_by=test_user)
 
     # Shouldn't be able to submit changesets with no changed files:
-    self.assertRaises(versions.CommitError, self.vcs.Commit, changeset)
+    self.assertRaises(versions.CommitError, self.vcs.Commit, changeset,
+                      force=True)
 
     # Verify that the auto_current_user_add property is overwritten.
     self.assertEqual('test@example.com', str(changeset.created_by))
 
+    # Before a changeset is committed, its associated paths must be finalized
+    # to indicate that the object's paths can be trusted for strong consistency.
+    files.Touch('/foo', changeset=changeset)
+    self.assertRaises(versions.ChangesetError, self.vcs.Commit, changeset)
+    self.assertListEqual(['/foo'], changeset._associated_paths)
+    # Test _VerifyRootPaths.
+    self.assertRaises(ValueError, changeset.AssociatePaths, '/_titan/ver/123/a')
+    changeset.FinalizeAssociatedPaths()
+    final_changeset = self.vcs.Commit(changeset)
     # When a changeset is committed, a new changeset is created (so that
     # changes are always sequential) with a created time. The old changeset
     # is marked as deleted by submit.
-    files.Touch('/foo', changeset=changeset)
-    final_changeset = self.vcs.Commit(changeset)
     staged_changeset = versions.Changeset(1)
     self.assertEqual(CHANGESET_DELETED_BY_SUBMIT, staged_changeset.status)
     self.assertEqual(CHANGESET_SUBMITTED, final_changeset.status)
@@ -215,12 +228,12 @@ class VersionsTest(testing.ServicesTestCase):
     # List files changed by a staged changeset and a final changeset.
     # NOTE: the status checks here are merely for testing purposes.
     # VersionedFile objects should never be trusted for canonical version info.
-    file_versions = versions.Changeset(12).GetFiles()
+    file_versions = versions.Changeset(12).ListFiles()
     self.assertEqual(file_versions['/foo'].status, FILE_EDITED)
     self.assertEqual(file_versions['/bar'].status, FILE_DELETED)
     self.assertEqual(file_versions['/baz'].status, FILE_EDITED)
     self.assertEqual(file_versions['/qux'].status, FILE_EDITED)
-    file_versions = versions.Changeset(13).GetFiles()
+    file_versions = versions.Changeset(13).ListFiles()
     self.assertEqual(file_versions['/foo'].status, FILE_EDITED)
     self.assertEqual(file_versions['/bar'].status, FILE_DELETED)
     self.assertEqual(file_versions['/baz'].status, FILE_EDITED)

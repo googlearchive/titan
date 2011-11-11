@@ -41,6 +41,10 @@ flags.DEFINE_boolean('run_with_profiling', 0,
                      'Set to true for profiling the script. '
                      'Execution will be slower, and the output format might '
                      'change over time.')
+flags.DEFINE_boolean('use_cprofile_for_profiling', True,
+                     'Use cProfile instead of the profile module for '
+                     'profiling. This has no effect unless '
+                     '--run_with_profiling is set.')
 
 # If main() exits via an abnormal exception, call into these
 # handlers before exiting.
@@ -185,8 +189,11 @@ def really_start(main=None):
       if FLAGS.run_with_profiling:
         # Avoid import overhead since most apps (including performance-sensitive
         # ones) won't be run with profiling.
-        import profile
         import atexit
+        if FLAGS.use_cprofile_for_profiling:
+          import cProfile as profile
+        else:
+          import profile
         profiler = profile.Profile()
         atexit.register(profiler.print_stats)
         retval = profiler.runcall(main, argv)
