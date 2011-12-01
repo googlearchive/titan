@@ -65,11 +65,11 @@ class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     if not file_obj:
       self.error(404)
       return
-    self.response.headers['Content-Type'] = file_obj.mime_type
+    self.response.headers['Content-Type'] = str(file_obj.mime_type)
 
     if file_obj.blobs:
       blob_key = file_obj.blobs[0]  # For now, only support a single blob key.
-      self.send_blob(blob_key, content_type=file_obj.mime_type)
+      self.send_blob(blob_key, content_type=str(file_obj.mime_type))
     else:
       self.response.out.write(file_obj.content)
 

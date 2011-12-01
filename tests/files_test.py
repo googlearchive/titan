@@ -138,6 +138,38 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(files.BadFileError, file_obj.Serialize)
 
   @testing.DisableCaching
+  def testSmartFileList(self):
+    # 256 File objects in a FileList which load in batches of 100.
+    file_objs = [files.File('/foo%s' % i) for i in range(256)]
+    files.Touch(file_objs)
+    file_list = files.SmartFileList(file_objs, batch_size=100)
+
+    # When iterating over a files list, file objects should evaluate in batches.
+    self.assertFalse(file_objs[0].is_loaded)
+    for i, file_obj in enumerate(file_list):
+      self.assertTrue(file_obj.is_loaded, 'not loaded: %s' % i)
+      # When rolling over each boundary, verify the correct batches were loaded.
+      if i == 99:
+        self.assertFalse(file_objs[100].is_loaded)
+      elif i == 100:
+        self.assertTrue(file_objs[199].is_loaded)
+      elif i == 199:
+        self.assertFalse(file_objs[200].is_loaded)
+      elif i == 200:
+        self.assertTrue(file_objs[255].is_loaded)
+
+    # Verify slicing.
+    file_objs = [files.File('/foo%s' % i) for i in range(10)]
+    file_list = files.SmartFileList(file_objs)
+    new_file_list = file_list[5:]
+    self.assertTrue(isinstance(new_file_list, files.SmartFileList))
+    self.assertTrue(new_file_list[0].path == '/foo5')
+    self.assertTrue(new_file_list[-1].path == '/foo9')
+
+    # Error handling.
+    self.assertRaises(IndexError, lambda: file_list[20])
+
+  @testing.DisableCaching
   def testGet(self):
     meta = {'color': 'blue', 'flag': False}
     key = files.Write('/foo/bar.html', content='Test', meta=meta)

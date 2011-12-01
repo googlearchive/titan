@@ -60,6 +60,8 @@ MAX_CONTENT_SIZE = 1 << 19  # 500 KiB
 
 BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19 # 500 KiB
 
+DEFAULT_BATCH_SIZE = 100
+
 class BadFileError(db.BadKeyError):
   pass
 
@@ -242,6 +244,39 @@ class File(object):
     for key in self._file_ent.dynamic_properties():
       result[key] = getattr(self._file_ent, key)
     return result
+
+class SmartFileList(object):
+  """Smart list of File objects to optimize RPCs by iterative batch loading."""
+
+  def __init__(self, file_objs, batch_size=DEFAULT_BATCH_SIZE):
+    # Make sure an iterable was given.
+    assert hasattr(file_objs, '__iter__')
+    self._file_objs = file_objs
+    self._batch_size = batch_size
+
+  def __iter__(self):
+    """Generator method which loads lazy File objects in batches."""
+    for i, file_obj in enumerate(self._file_objs):
+      if not i % self._batch_size:
+        # On a batch boundary, load the next set.
+        _LoadFiles(self._file_objs[i:i + DEFAULT_BATCH_SIZE])
+      yield file_obj
+
+  def __len__(self):
+    return len(self._file_objs)
+
+  def __getattr__(self, name):
+    # Support list methods like .sort(), etc.
+    return getattr(self._file_objs, name)
+
+  def __getitem__(self, i):
+    return self._file_objs[i]
+
+  def __getslice__(self, i, j):
+    return SmartFileList(self._file_objs[i:j])
+
+  def __repr__(self):
+    return repr(self._file_objs)
 
 class _File(db.Expando):
   """Model for representing a file; don't use directly outside of this module.
@@ -795,6 +830,15 @@ def _GetFileEntities(file_objs):
   for file_obj in file_objs:
     file_ents.append(file_obj._file if file_obj else None)
   return file_ents
+
+def _LoadFiles(file_objs):
+  """Given File objects, load all of them in-place and with batch RPCs."""
+  is_multiple = hasattr(file_objs, '__iter__')
+  loaded_file_objs = Get([f.path for f in file_objs if not f.is_loaded])
+  file_objs = file_objs if is_multiple else [file_objs]
+  for file_obj in file_objs:
+    if file_obj.path in loaded_file_objs:
+      file_obj._file_ent = loaded_file_objs[file_obj.path]._file_ent
 
 def _GetFilesOrDie(paths_or_file_objs):
   """Same as _GetFiles, but raises BadFileError if a path doesn't exist."""

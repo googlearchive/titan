@@ -30,6 +30,7 @@ import os
 import pdb
 import socket
 import stat
+import struct
 import sys
 import time
 import traceback

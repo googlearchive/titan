@@ -444,23 +444,25 @@ def _CheckCmdName(name_or_alias):
                            % name_or_alias)
 
 
-def AddCmd(command_name, cmd_class, **kargs):
-  """Add a command from a Cmd subclass.
+def AddCmd(command_name, cmd_factory, **kargs):
+  """Add a command from a Cmd subclass or factory.
 
   Args:
     command_name:    name of the command which will be used in argument parsing
-    cmd_class:       A class derived from Cmd that holds the command to register
+    cmd_factory:     A callable whose arguments match those of Cmd.__init__ and
+                     returns a Cmd. In the simplest case this is just a subclass
+                     of Cmd.
     command_aliases: A list of command aliases that the command can be run as.
 
   Raises:
-    AppCommandsError: if cmd_class is not a subclass of Cmd
+    AppCommandsError: if calling cmd_factory does not return an instance of Cmd.
   """
-  if not issubclass(cmd_class, Cmd):
+  cmd = cmd_factory(command_name, flags.FlagValues(), **kargs)
+
+  if not isinstance(cmd, Cmd):
     raise AppCommandsError('Command must be an instance of commands.Cmd')
 
-  _AddCmdInstance(command_name,
-                  cmd_class(command_name, flags.FlagValues(), **kargs),
-                  **kargs)
+  _AddCmdInstance(command_name, cmd, **kargs)
 
 
 def AddCmdFunc(command_name, cmd_func, command_aliases=None,
