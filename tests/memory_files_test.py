@@ -18,7 +18,6 @@
 from tests import testing
 
 import os
-import re
 from google.appengine.api import memcache
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
@@ -31,71 +30,56 @@ class MemoryFileTest(testing.ServicesTestCase):
     services = (
         'titan.services.memory_files',
     )
-    config = {
-        'path_regexes': [re.compile(r'^/special/.*')],
-    }
     self.EnableServices(services)
-    self.SetServiceConfig(memory_files.SERVICE_NAME, config)
 
   def testMemoryFile(self):
-    global_file_ents = memory_files._global_file_ents
-    namespace = memory_files.DEFAULT_MEMCACHE_NAMESPACE
+    global_file_objs = memory_files._global_file_objs
 
-    # Files not matching any regexes are not cached globally in-memory.
-    files.Write('/foo', 'foo')
-    self.assertTrue('/foo' not in global_file_ents)
+    # First request.
+    os.environ['REQUEST_ID_HASH'] = 'aaaa'
 
-    # On any read where the memcache version counter has been evicted, the local
-    # globals cache cannot be populated. Have to wait until a second Write().
-    files.Write('/special/foo', 'foo')
-    memcache.flush_all()
-    del os.environ['MEMORY_FILES_VERSION']
-    files.Get('/special/foo')
-    self.assertFalse('/special/foo' in global_file_ents)
-    self.assertEqual(None, os.environ.get('MEMORY_FILES_VERSION'))
-    self.assertEqual(None, memcache.get('version',
-                                        namespace=namespace))
+    # Verify getting uncached and non-existent files.
+    self.assertIsNone(files.Get('/foo'))
+    self.assertEqual({}, files.Get(['/bar']))
 
-    # On any read (after a Write has populated the memcache version counter),
-    # the globals cache is usable and should be populated.
-    files.Write('/special/foo', 'foo')
-    files.Get('/special/foo')
-    self.assertTrue('/special/foo' in global_file_ents)
-    self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
-    self.assertEqual(1, memcache.get('version',
-                                     namespace=namespace))
+    files.Write('/foo', 'bar', meta={'color': 'blue'})
+    self.assertFalse('/foo' in global_file_objs)
+    self.assertEqual('bar', files.Get('/foo').content)
+    self.assertEqual('blue', files.Get('/foo').color)
+    self.assertTrue('/foo' in global_file_objs)
 
-    # On write operations, the memcache version number is increased and the
-    # local cache evicted.
-    memory_files._EvictGlobalEntities(['/special/foo'])
-    memcache.flush_all()
-    files.Write('/special/foo', 'foo')
-    self.assertFalse('/special/foo' in global_file_ents)
-    self.assertEqual(1, memcache.get('version', namespace=namespace))
-    self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
+    # Writes should clear the cache for that path.
+    files.Write('/foo', meta={'color': 'red'})
+    self.assertFalse('/foo' in global_file_objs)
 
-    files.Get('/special/foo')
-    self.assertEqual(1, memcache.get('version', namespace=namespace))
-    self.assertEqual(1, int(os.environ.get('MEMORY_FILES_VERSION')))
-    files.Touch('/special/foo')
-    self.assertEqual(2, memcache.get('version', namespace=namespace))
-    self.assertEqual(2, int(os.environ.get('MEMORY_FILES_VERSION')))
-    self.assertFalse('/special/foo' in global_file_ents)
+    # Make sure that a memcache RPC isn't made when getting the file
+    # the second time.
+    files.Exists('/foo')
+    files.Exists('/qux')  # file doesn't exist, but populate globals cache.
+    self.stubs.Set(memcache, 'get', lambda x: self.fail('!'))
+    self.stubs.Set(memcache, 'get_multi', lambda x: self.fail('!'))
+    self.assertEqual('bar', files.Get('/foo').content)
+    self.assertEqual('red', files.Get('/foo').color)
+    self.assertEqual('bar', files.Get(['/foo']).values()[0].content)
+    # Non-existent files (touched above) should also not need to make RPCs:
+    self.assertIsNone(files.Get('/qux'))
+    self.assertEqual({}, files.Get(['/qux']))
+    self.stubs.UnsetAll()
 
-    files.Get('/special/foo')
-    self.assertEqual(2, memcache.get('version', namespace=namespace))
-    self.assertEqual(2, int(os.environ.get('MEMORY_FILES_VERSION')))
-    files.Delete('/special/foo')
-    self.assertEqual(3, memcache.get('version', namespace=namespace))
-    self.assertEqual(3, int(os.environ.get('MEMORY_FILES_VERSION')))
-    self.assertFalse('/special/foo' in global_file_ents)
-
-    # Writing a non-special file shouldn't change the version number.
+    # Second request; globals should be cleared after the first files.Get.
+    global_file_objs.clear()
+    files.Get(['/some', '/random', '/files'])
+    self.assertEqual(3, len(global_file_objs))
+    os.environ['REQUEST_ID_HASH'] = 'bbbb'
     files.Get('/foo')
-    files.Touch('/foo')
-    self.assertEqual(3, memcache.get('version', namespace=namespace))
-    self.assertEqual(3, int(os.environ.get('MEMORY_FILES_VERSION')))
-    self.assertFalse('/foo' in global_file_ents)
+    self.assertEqual(1, len(global_file_objs))
+    self.assertEqual('red', files.Get('/foo').color)
+
+    # Verify that filling the cache past its eviction limit works correctly.
+    paths = ['/foo%s' % i for i in range(memory_files.DEFAULT_MRU_SIZE + 10)]
+    files.Touch(paths)
+    files.Get(paths)
+    self.assertEqual(memory_files.DEFAULT_MRU_SIZE, len(global_file_objs))
 
 if __name__ == '__main__':
   basetest.main()

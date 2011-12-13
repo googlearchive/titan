@@ -127,17 +127,23 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       if fp:
         # If given a file pointer, create a multipart encoded request.
         write_blob_url = self._Get('/_titan/newblob')
-        # self._Post only expects the path part of the URL:
-        write_blob_url = urlparse.urlparse(write_blob_url).path
         params.append(('file', fp))
         content_generator, headers = encode.multipart_encode(params)
-        extra_headers = self.extra_headers.copy() if self.extra_headers else {}
-        extra_headers['Content-Length'] = headers['Content-Length']
-        self._Post(write_blob_url, payload=content_generator,
-                   content_type=headers['Content-Type'],
-                   extra_headers=extra_headers)
-      else:
-        self._Post('/_titan/write', params=params)
+        # Make custom opener to support multipart POST requests.
+        opener = urllib2.build_opener()
+        opener.add_handler(streaminghttp.StreamingHTTPSHandler())
+        # Upload directly to the blobstore URL, avoiding authentication.
+        request = urllib2.Request(write_blob_url, data=content_generator,
+                                  headers=headers)
+        response = opener.open(request)
+        # Pull the blobkey out of the query params and fall through
+        # to the call to /_titan/write.
+        url = response.geturl()
+        response_params = urlparse.parse_qs(urlparse.urlparse(url).query)
+        # Verify that blobs were not passed in.
+        assert not blobs
+        params.append(('blobs', response_params['blobs'][0]))
+      self._Post('/_titan/write', params=params)
     except urllib2.HTTPError, e:
       if e.code == 404:
         raise BadFileError(e)
@@ -215,16 +221,6 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       # This is an attribute of AbstractRpcServer, used in self._CreateRequest.
       self.extra_headers = extra_headers
     return self.Send(url_path, payload=payload, content_type=content_type)
-
-  def _GetOpener(self):
-    """Overwrite opener to support multipart POST requests."""
-    opener = super(TitanClient, self)._GetOpener()
-    if self.scheme == 'http':
-      opener.add_handler(streaminghttp.StreamingHTTPHandler())
-      opener.add_handler(streaminghttp.StreamingHTTPRedirectHandler())
-    elif hasattr(httplib, 'HTTPS'):
-        opener.add_handler(streaminghttp.StreamingHTTPSHandler())
-    return opener
 
   def _HostIsDevAppServer(self):
     """Make a single GET / request to see if the server is a dev_appserver."""

@@ -200,24 +200,19 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     upload_url = response.out.getvalue()
     self.assertIn('http://testbed.example.com:80/_ah/upload/', upload_url)
 
-    # Verify blob uploads via the blob upload URL. After hitting the created
-    # upload URL, the remaining params are automatically passed to WriteHandler.
-    # This full trail is not easily unit testable, so we fake the handler into
-    # this state so that the blob key handling is tested.
-    self.mox.StubOutWithMock(handlers.WriteHandler, 'get_uploads')
+    # Blob uploads must return redirect responses. In our case, the handler
+    # so also always include a special header:
+    self.mox.StubOutWithMock(handlers.FinalizeBlobHandler, 'get_uploads')
     mock_blob_info = self.mox.CreateMockAnything()
     mock_blob_info.key().AndReturn(blobstore.BlobKey('fake-blob-key'))
-    handlers.WriteHandler.get_uploads('file').AndReturn([mock_blob_info])
+    handlers.FinalizeBlobHandler.get_uploads('file').AndReturn([mock_blob_info])
+
     self.mox.ReplayAll()
-    response = self.Post(handlers.WriteHandler, params={
+    response = self.Post(handlers.FinalizeBlobHandler, params={
         'path': self.valid_path,
-        'meta': simplejson.dumps({'color': 'blue'}),
     })
-    # Blob uploads must return redirect responses:
     self.assertEqual(302, response.status)
-    file_obj = files.Get(self.valid_path)
-    self.assertEqual('fake-blob-key', str(file_obj.blobs[0]))
-    self.assertTrue('blue', file_obj.color)
+    self.assertIn('fake-blob-key', response.headers['Location'])
     self.mox.VerifyAll()
 
   def testDeleteHandler(self):

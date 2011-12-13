@@ -73,7 +73,7 @@ class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     else:
       self.response.out.write(file_obj.content)
 
-class WriteHandler(blobstore_handlers.BlobstoreUploadHandler):
+class WriteHandler(BaseHandler):
   """Handler to write to a file."""
 
   def post(self):
@@ -82,12 +82,7 @@ class WriteHandler(blobstore_handlers.BlobstoreUploadHandler):
     content = self.request.str_POST.get('content')
     blobs = self.request.get('blobs', None)
 
-    uploads = self.get_uploads('file')
-    if uploads:
-      # If a multipart POST request is made, the file contents have already been
-      # uploaded to blobstore. We can associate the blob keys automatically.
-      blobs = [uploads[0].key()]
-    elif blobs is not None:
+    if blobs is not None:
       blobs = self.request.get_all('blobs')
       # Convert any string keys to BlobKey instances.
       blobs = [blobstore.BlobKey(key) if isinstance(key, basestring) else key
@@ -98,11 +93,8 @@ class WriteHandler(blobstore_handlers.BlobstoreUploadHandler):
       meta = simplejson.loads(meta)
     mime_type = self.request.get('mime_type', None)
     try:
-      files.Write(path, content=content, blobs=blobs, mime_type=mime_type,
+      files.Write(path, content, blobs=blobs, mime_type=mime_type,
                   meta=meta)
-      if uploads:
-        # BlobstoreUploadHandlers must return redirects.
-        self.redirect('/_titan/get?%s' % urllib.urlencode({'path': path}))
     except files.BadFileError:
       self.error(404)
 
@@ -110,8 +102,25 @@ class NewBlobHandler(BaseHandler):
   """Handler to get a blob upload URL."""
 
   def get(self):
-    upload_url = blobstore.create_upload_url('/_titan/write')
+    upload_url = blobstore.create_upload_url('/_titan/finalizeblob')
     self.response.out.write(upload_url)
+
+class FinalizeBlobHandler(blobstore_handlers.BlobstoreUploadHandler):
+  """Handler to finalize a blob, returning the blobkey."""
+
+  def get(self):
+    # This is a noop, just here as an unauthenticated final endpoint for the
+    # internal-to-blobstore redirect below.
+    pass
+
+  def post(self):
+    uploads = self.get_uploads('file')
+    blobs = str(uploads[0].key())
+    # Magic: BlobstoreUploadHandlers must return redirects, so we pass the
+    # blobkey back as a query param. The client should followup with a call
+    # to Write() and include the blobkey.
+    params = urllib.urlencode({'blobs': blobs})
+    self.redirect('/_titan/finalizeblob?%s' % params)
 
 class DeleteHandler(BaseHandler):
   """Handler to delete a file."""
@@ -178,6 +187,7 @@ URL_MAP = (
     ('/_titan/read', ReadHandler),
     ('/_titan/write', WriteHandler),
     ('/_titan/newblob', NewBlobHandler),
+    ('/_titan/finalizeblob', FinalizeBlobHandler),
     ('/_titan/delete', DeleteHandler),
     ('/_titan/touch', TouchHandler),
     ('/_titan/listfiles', ListFilesHandler),

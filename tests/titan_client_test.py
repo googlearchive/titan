@@ -15,6 +15,7 @@
 
 """Tests for utils/titan_client.py."""
 
+import cStringIO
 import getpass
 import inspect
 import os
@@ -22,6 +23,7 @@ import random
 import shutil
 import sys
 import threading
+import urllib2
 import mox
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
@@ -110,10 +112,6 @@ class TitanCommandsTest(testing.BaseTestCase):
     with open(file2, 'w') as fp:
       fp.write('bar')
 
-    large_file = os.path.join(TEST_TMPDIR, 'large_file.txt')
-    with open(os.path.join(TEST_TMPDIR, 'large_file.txt'), 'w') as fp:
-      fp.write(LARGE_CONTENT)
-
     # Verify checks for required flags.
     self.commands.args = []
     self.commands.flags = {}
@@ -158,14 +156,27 @@ class TitanCommandsTest(testing.BaseTestCase):
 
     # Verify single, large file upload that should go directly to blobstore.
     # --
-    # This is unfortunately just a test of code execution. We can't assert
-    # that /large_file.txt exists because the testing stubs don't handle
-    # POSTs to URLs by blobstore.create_upload_url, though they don't error.
     # TODO(user): create an integration test to verify correct behavior,
     # or figure out a way to make the stubs handle blob upload URLs.
+    large_file = os.path.join(TEST_TMPDIR, 'large_file.txt')
+    with open(os.path.join(TEST_TMPDIR, 'large_file.txt'), 'w') as fp:
+      fp.write(LARGE_CONTENT)
     args = [large_file]
     self.flags['target_path'] = '/'
+
+    # Mock out opener.open() since we can't make actually make the request.
+    mock_opener = self.mox.CreateMockAnything()
+    mock_response = self.mox.CreateMockAnything()
+    mock_response.geturl().AndReturn(
+        'https://testserver/_titan/finalizeblob?blobs=fake-blob-key')
+    mock_opener.add_handler(mox.IgnoreArg())
+    mock_opener.open(mox.IgnoreArg()).AndReturn(mock_response)
+    self.mox.StubOutWithMock(titan_client.client.urllib2, 'build_opener')
+    titan_client.client.urllib2.build_opener().AndReturn(mock_opener)
+
+    self.mox.ReplayAll()
     self.commands.RunCommand('upload', args=args, flags=self.flags)
+    self.mox.VerifyAll()
 
   def testUploadTty(self):
     """Verifies upload confirmation flow from a TTY terminal."""

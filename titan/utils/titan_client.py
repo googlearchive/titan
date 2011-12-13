@@ -25,7 +25,6 @@ import functools
 import getpass
 import glob
 import inspect
-import logging
 from multiprocessing import pool
 import optparse
 import os
@@ -167,11 +166,12 @@ class TitanCommands(object):
       # Ensure thread-safety by instantiating a new titan_rpc_client:
       titan_rpc_client = self._GetTitanClient()
 
-      if os.path.getsize(path) > DIRECT_TO_BLOBSTORE_SIZE:
-        titan_rpc_client.Write(target, fp=open(path))
-      else:
-        titan_rpc_client.Write(target, content=open(path).read())
-      logging.info('Uploaded %s to %s', path, target)
+      with open(path) as fp:
+        if os.path.getsize(path) > DIRECT_TO_BLOBSTORE_SIZE:
+          titan_rpc_client.Write(target, fp=fp)
+        else:
+          titan_rpc_client.Write(target, content=fp.read())
+      print 'Uploaded %s to %s' % (path, target)
 
     # Start upload of files.
     thread_pool = ThreadPool(self.flags['num_threads'])
@@ -285,7 +285,7 @@ class TitanCommands(object):
       finally:
         fp.close()
       if not quiet:
-        logging.info('Downloaded %s to %s', path, target)
+        print 'Downloaded %s to %s' % (path, target)
 
     # Start the downloads.
     thread_pool = ThreadPool(self.flags['num_threads'])
@@ -395,7 +395,11 @@ class TitanCommands(object):
     """If errors, nicely print a list of exception strings and then exit."""
     if errors:
       for error in errors:
-        print 'Error occurred: %s' % error
+        if hasattr(error, 'code') and error.code == 302:
+          print 'Error occurred: %s: Location: %s' % (
+              error, error.headers.get('Location'))
+        else:
+          print 'Error occurred: %s' % error
       sys.exit('The operation failed.')
 
   def _AuthFunc(self):

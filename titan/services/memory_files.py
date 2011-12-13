@@ -19,163 +19,131 @@ Documentation:
   http://code.google.com/p/titan-files/wiki/MemoryFilesService
 """
 
-import logging
 import os
-from google.appengine.api import memcache
+from titan.common import datastructures
 from titan.common import hooks
 from titan.files import files
 
 SERVICE_NAME = 'memory-files'
-DEFAULT_MEMCACHE_NAMESPACE = 'titan-memory-files'
 
-# Use a global to store a mapping of paths to files._File entities in local
-# app server memory.
-_global_file_ents = {}
-_global_memory_files_version = 0
+# The default size of the MRU dictionary. This is how many File objects will be
+# allowed in the global cache at a time.
+# TODO(user): Allow this to be customized by a service config setting.
+DEFAULT_MRU_SIZE = 100
+
+# Map of paths to File objects.
+# This is used for request-local storage of File objects to prevent repeated
+# RPCs, at the expense of only having request-level consistency of file read
+# operations. Each new request clears this object (not really thread-safe).
+# TODO(user): Figure out how to have true request-local storage in 2.7.
+_global_file_objs = datastructures.MRUDict(max_size=DEFAULT_MRU_SIZE)
+_global_current_request_hash = ''
 
 # The "RegisterService" method is required for all Titan service plugins.
 def RegisterService():
   hooks.RegisterHook(SERVICE_NAME, 'file-get', hook_class=HookForGet)
-  hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
-  hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)
-  hooks.RegisterHook(SERVICE_NAME, 'file-delete', hook_class=HookForDelete)
+  hooks.RegisterHook(SERVICE_NAME, 'file-exists', hook_class=HookForExists)
+  hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrites)
+  hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForWrites)
+  hooks.RegisterHook(SERVICE_NAME, 'file-delete', hook_class=HookForWrites)
+  hooks.RegisterHook(SERVICE_NAME, 'file-copy', hook_class=HookForCopy)
 
 class HookForGet(hooks.Hook):
   """A hook for files.Get()."""
 
   def Pre(self, **kwargs):
     paths = files.ValidatePaths(kwargs['paths'])
-    file_ents_map = _GetGlobalEntities(paths)
+    paths, is_final_result = _Get(paths)
+    if is_final_result:
+      return hooks.TitanMethodResult(paths)
+    return {'paths': paths}
 
-    # If no paths matched for serving from globals, continue as normal.
-    if not file_ents_map:
-      return
-
-    # TODO(user): after refactor of Get() returns, this will need to change
-    # to pass the core method a dictionary for the 'file_ents' arg.
-    # For now, since we know this is only one entity, pull it out.
-    file_ent = file_ents_map.values()[0]
-
-    # Pass the global file_ents to the core Titan method, avoiding further RPCs.
-    return {'file_ents': file_ent}
-
-class HookForWrite(hooks.Hook):
-  """A hook for files.Write()."""
+class HookForExists(hooks.Hook):
+  """A hook for files.Exists()."""
 
   def Pre(self, **kwargs):
     path = files.ValidatePaths(kwargs['path'])
-    _EvictGlobalEntities(path)
+    path, is_final_result = _Get(path)
+    if is_final_result:
+      return hooks.TitanMethodResult(path)
+    return {'path': path}
 
-class HookForDelete(hooks.Hook):
-  """A hook for files.Delete()."""
-
-  def Pre(self, **kwargs):
-    paths = files.ValidatePaths(kwargs['paths'])
-    _EvictGlobalEntities(paths)
-
-class HookForTouch(hooks.Hook):
-  """A hook for files.Touch()."""
+class HookForWrites(hooks.Hook):
+  """A hook for files.Write(), files.Delete(), and files.Touch()."""
 
   def Pre(self, **kwargs):
-    paths = files.ValidatePaths(kwargs['paths'])
-    _EvictGlobalEntities(paths)
+    paths = files.ValidatePaths(kwargs.get('path', kwargs.get('paths')))
+    _Clear(paths)
 
-def _EvictGlobalEntities(paths):
-  """Evict the given paths from the globals cache."""
-  if not _AnyPathMatchesConfig(paths):
-    return
-  # If version is not set (normal eviction), start it at 0 and increment
-  # below. add() only has an effect if the item doesn't exist in memcache.
-  memcache.add('version', 0, namespace=DEFAULT_MEMCACHE_NAMESPACE)
+class HookForCopy(hooks.Hook):
+  """A hook for files.Copy()."""
 
-  # Update cache version number, signifying to other appservers that
-  # their globals cache is stale and to clear their local cache.
-  new_version = memcache.incr('version',
-                              namespace=DEFAULT_MEMCACHE_NAMESPACE)
+  def Pre(self, **kwargs):
+    paths = files.ValidatePaths(kwargs['destination_path'])
+    _Clear(paths)
 
-  # Also, clear the current appserver's local cache and version counter.
-  _global_file_ents.clear()
-  if new_version is not None:
-    global _global_memory_files_version
-    _global_memory_files_version = new_version
-    os.environ['MEMORY_FILES_VERSION'] = str(new_version)
-  else:
-    logging.error('Unable to increment memory files version in memcache.')
+def _Get(paths):
+  """Get File objects from paths, and populate the global cache."""
+  is_multiple = hasattr(paths, '__iter__')
 
-def _AnyPathMatchesConfig(paths):
-  """Check if any path in paths matches the config for using memory files."""
-  paths = paths if hasattr(paths, '__iter__') else [paths]
-  for path in paths:
-    for regex in hooks.GetServiceConfig(SERVICE_NAME)['path_regexes']:
-      if regex.match(path):
-        return True
-  return False
+  # Important: if this is the beginning of a new request, clear the previous
+  # request's file_objs so we never use them.
+  global _global_current_request_hash
+  if _global_current_request_hash != os.environ['REQUEST_ID_HASH']:
+    _global_file_objs.clear()
+    _global_current_request_hash = os.environ['REQUEST_ID_HASH']
 
-def _GetGlobalEntities(paths):
-  """Return entities from in-memory cache if paths match the configured regexes.
+  paths_set = set(paths if is_multiple else [paths])
+  cached_file_keys = set(_global_file_objs.keys())
+  cached_paths = list(cached_file_keys & paths_set)
+  uncached_paths = list(paths_set - cached_file_keys)
 
-  Will also fetch and store the entities if matched but not currently cached.
+  if cached_paths and not uncached_paths:
+    # All of the requested files are currently in the cache; return this subset.
+    file_objs = dict(
+        (k, _global_file_objs[k]) for k in cached_paths if _global_file_objs[k])
+    return __NormalizeResult(file_objs, is_multiple)
 
-  Args:
-    paths: An absolute path or iterable of absolute paths.
-  Returns:
-    A dictionary of {<path>: <file_ent>} for paths marked to come from globals.
-  """
-  paths_to_entities = {}
+  # Cache new files in the global cache.
+  file_objs = files.Get(uncached_paths, disabled_services=True)
+  _global_file_objs.update(file_objs)
 
-  # TODO(user): Add support for getting a mixed list of paths where
-  # some of them are pulled from the globals and some are not.
-  # For now, just return to follow the normal Get code path.
-  if hasattr(paths, '__iter__'):
-    return
-  path = paths
+  # Also store Nones, so that non-existent files are not re-fetched.
+  for path in uncached_paths:
+    if path not in file_objs:
+      _global_file_objs[path] = None
 
-  path_regexes = hooks.GetServiceConfig(SERVICE_NAME)['path_regexes']
-  for regex in path_regexes:
-    if not regex.match(path):
+  # Merge file objects which existed in the global cache into the result.
+  for path in cached_paths:
+    if path not in _global_file_objs:
+      # Path may have been evicted by above sets, cached_paths is out of date.
       continue
-    if not _ValidateGlobalCache():
-      return
-    # This file is special. Get it from the global app memory, and if it
-    # isn't there yet, put it there.
-    file_ent = _global_file_ents.get(path, None)
-    if not file_ent:
-      file_ent, _ = files._GetFiles(path)
-      _global_file_ents[path] = file_ent
-    paths_to_entities[path] = file_ent
-  return paths_to_entities
+    # This affects the MRUDict, so only grab the value once.
+    value = _global_file_objs[path]
+    if value:
+      file_objs[path] = value
 
-def _ValidateGlobalCache():
-  """Make sure our globals cache is up to date and usable.
+  return __NormalizeResult(file_objs, is_multiple)
 
-  Returns:
-    True: if the globals cache is valid and up to date.
-    False: if unknown state and globals shouldn't be used.
-  """
-  if 'MEMORY_FILES_VERSION' in os.environ:
-    memory_files_version = int(os.environ['MEMORY_FILES_VERSION'])
+def _Clear(paths):
+  """Remove paths from the global cache."""
+  is_multiple = hasattr(paths, '__iter__')
+  paths_list = paths if is_multiple else [paths]
+  for path in paths_list:
+    if path in _global_file_objs:
+      del _global_file_objs[path]
+
+def __NormalizeResult(file_objs, is_multiple):
+  """Handle all result cases including multiple paths and non-existent paths."""
+  # Return should be compatible with the path arg to files.Get(), or
+  # should give is_final_result=True to signal wrapper to use TitanMethodResult.
+  is_final_result = False
+  if is_multiple:
+    result = file_objs.values()
   else:
-    # This is the first Titan file read in the request path. Pull the current
-    # version counter from memcache and store in an os.environ var to avoid
-    # any further memcache calls for it. In the best case, this memcache call
-    # is the only one ever needed and all file entities come from the globals.
-    memory_files_version = memcache.get('version',
-                                        namespace=DEFAULT_MEMCACHE_NAMESPACE)
-
-    # If the memcache counter has been evicted, we are in an unknown state.
-    # Return False to signify the global cache is stale and also shouldn't
-    # be populated since we don't know which version to associate. This unknown
-    # state will be fixed the next time a Write() of a memory file happens.
-    if not memory_files_version:
-      return False
-
-  global _global_memory_files_version
-
-  if memory_files_version != _global_memory_files_version:
-    # This appserver has a stale global cache. Evict all the entities!
-    _global_file_ents.clear()
-
-  _global_memory_files_version = memory_files_version
-  os.environ['MEMORY_FILES_VERSION'] = str(memory_files_version)
-
-  return True
+    result = file_objs.values()[0] if file_objs else None
+  if not result:
+    # Non-existent result in cache or otherwise. Signal a short-circuit return.
+    is_final_result = True
+    result = {} if is_multiple else None
+  return result, is_final_result

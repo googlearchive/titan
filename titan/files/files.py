@@ -121,6 +121,10 @@ class File(object):
 
   def __getattr__(self, name):
     """Attempt to pull from a File's stored meta data."""
+    # Ignore builtins, like __setstate__ when being unpickled.
+    if name.startswith('__') and name.endswith('__'):
+      raise AttributeError("%s instance has no attribute '%s'"
+                           % (self.__class__.__name__, name))
     # Load dynamic attributes if not initialized.
     if self._meta is None:
       self._meta = {}
@@ -794,8 +798,8 @@ def _GetFiles(paths_or_file_objs):
   for maybe_file_obj in paths_list:
     is_loaded_file_obj = getattr(maybe_file_obj, 'is_loaded', False)
     if not is_loaded_file_obj:
-      # At least one of the given objects was not a File object, break and
-      # follow the non-optimized path.
+      # At least one of the given objects was not a loaded File object,
+      # break and follow the non-optimized path.
       is_all_file_objs = False
       break
   if is_all_file_objs:
