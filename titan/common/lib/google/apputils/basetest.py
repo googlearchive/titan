@@ -26,14 +26,20 @@ import difflib
 import getpass
 import itertools
 import os
-import pprint
 import re
 import subprocess
 import sys
 import tempfile
 import types
-import unittest
 
+
+# unittest2 is a backport of Python 2.7's unittest for Python 2.6, so
+# we don't need it if we are running 2.7 or newer.
+
+if sys.version_info < (2, 7):
+  import unittest2 as unittest
+else:
+  import unittest
 
 from titan.common.lib.google.apputils import app
 import gflags as flags
@@ -312,189 +318,6 @@ class TestCase(unittest.TestCase):
       desc = '\n'.join((desc, doc_first_line))
     return desc
 
-  def failUnlessAlmostEqual(self, first, second,
-                            places=7, msg=None, delta=None):
-    """Fail if two objects 'differ a lot'.
-
-    If delta is given 'differ a lot' means they differ by more than delta,
-    otherwise 'differ a lot' means first and second are unequal up to
-    a number of decimal places.
-
-    Args:
-      first:
-      second:
-      places:  Number of decimal places to which the difference between
-        first and second is rounded; if this is nonzero after rounding, the
-        test fails.  Note that decimal places (from zero) are usually not
-        the same as significant digits (measured from the most signficant
-        digit).
-      msg:  Message to print if the test fails.
-      delta: If first and second are within delta of each other they are
-        considered to be almost equal. If delta is None or 0 then places are
-        used for comparison.
-    Raises:
-      AssertionError: the objects are not close enough to equal.
-    """
-    if delta:
-      if abs(second - first) > delta:
-        raise self.failureException(
-            msg or '%r differs from %r by more than %r' %
-            (first, second, delta))
-    else:
-      if round(second - first, places) != 0:
-        raise self.failureException(
-            msg or '%r != %r within %r places' % (first, second, places))
-
-  assertAlmostEqual = assertAlmostEquals = failUnlessAlmostEqual
-
-  def failIfAlmostEqual(self, first, second, places=7, msg=None, delta=None):
-    """Fail if two objects do not 'differ a lot'.
-
-    If delta is given 'differ a lot' means they differ by more than delta,
-    otherwise 'differ a lot' means first and second are unequal up to
-    a number of decimal places.
-
-    Args:
-      first: The first object to compare.
-      second: The second object to compare.
-      places: The number of decimal places (default: 7)
-        considered significant.  The difference between first and
-        second is rounded to this number of decimal places before
-        being compared with zero.  This is not the same as the
-        number of significant digits.
-      msg:  Error message used if the test fails.
-      delta: If first and second are within delta of each other they are
-        considered to be almost equal. If delta is None or 0 then places are
-        used for comparison.
-    Raises:
-      AssertionError: the objects are close enough to equal.
-    """
-    if delta:
-      if abs(second - first) <= delta:
-        raise self.failureException(
-            msg or '%r differs from %r by less than %r' %
-            (first, second, delta))
-    else:
-      if round(second - first, places) == 0:
-        raise self.failureException(
-            msg or '%r == %r within %r places' % (first, second, places))
-
-  assertNotAlmostEqual = assertNotAlmostEquals = failIfAlmostEqual
-
-  def failIfEqual(self, first, second, msg=None):
-    """Verify that first != second.
-
-    The base unittest.failIfEqual() method only uses the '==' operator.
-    Hence unittest.py never exercises the __ne__ method if your class
-    defines one.   This method therefore uses both.
-
-    Args:
-      first:  First item to compare for equality.
-      second:  Second item to compare for equality.
-      msg:  Message to use to describe the test failure.
-    Raises:
-      AssertionError: if the test failed.
-    """
-    if first == second:
-      raise self.failureException(msg or
-                                  '%r == %r' % (first, second))
-    if not first != second:
-      raise self.failureException(msg or
-                                  '%r != %r returns False' % (first, second))
-
-  # While one could argue that the behaviour of assertNotEquals
-  # and failIfEqual should be different for objects which have NaN-like
-  # semantics, these methods in unittest.py are equivalent.  We assume
-  # that it's better to preserve that property than to support classes
-  # where __ne__ and __eq__ can both return False for the same pair of objects.
-  assertNotEquals = assertNotEqual = failIfEqual
-
-  def assertSequenceEqual(self, seq1, seq2, msg=None, seq_type=None):
-    """An equality assertion for ordered sequences (like lists and tuples).
-
-    For the purposes of this function, a valid orderd sequence type is one which
-    can be indexed, has a length, and has an equality operator.
-
-    Args:
-      seq1: The first sequence to compare.
-      seq2: The second sequence to compare.
-      msg: Optional message to use on failure instead of a list of differences.
-      seq_type: The expected datatype of the sequences, or None if no datatype
-          should be enforced.
-    """
-    if seq_type is not None:
-      seq_type_name = seq_type.__name__
-      assert isinstance(seq1, seq_type), ('First sequence is not a %s: %r' %
-                                          (seq_type_name, seq1))
-      assert isinstance(seq2, seq_type), ('Second sequence is not a %s: %r' %
-                                          (seq_type_name, seq2))
-    else:
-      seq_type_name = 'sequence'
-
-    differing = None
-    try:
-      len1 = len(seq1)
-    except (TypeError, NotImplementedError):
-      differing = 'First %s has no length.  Non-sequence?' % (seq_type_name)
-
-    if differing is None:
-      try:
-        len2 = len(seq2)
-      except (TypeError, NotImplementedError):
-        differing = 'Second %s has no length.  Non-sequence?' % (seq_type_name)
-
-    if differing is None:
-      if seq1 == seq2:
-        return
-
-      for i in xrange(min(len1, len2)):
-        try:
-          item1 = seq1[i]
-        except (TypeError, IndexError, NotImplementedError):
-          differing = ('Unable to index element %d of first %s\n' %
-                       (i, seq_type_name))
-          break
-
-        try:
-          item2 = seq2[i]
-        except (TypeError, IndexError, NotImplementedError):
-          differing = ('Unable to index element %d of second %s\n' %
-                       (i, seq_type_name))
-          break
-
-        if item1 != item2:
-          differing = ('First differing element %d:\n%s\n%s\n' %
-                       (i, item1, item2))
-          break
-      else:
-        if len1 == len2 and seq_type is None and type(seq1) != type(seq2):
-          # The sequences are the same, but have differing types.
-          return
-        # A catch-all message for handling arbitrary user-defined sequences.
-        differing = '%ss differ:\n' % seq_type_name.capitalize()
-        if len1 > len2:
-          differing = ('First %s contains %d additional elements.\n' %
-                       (seq_type_name, len1 - len2))
-          try:
-            differing += ('First extra element %d:\n%s\n' %
-                          (len2, seq1[len2]))
-          except (TypeError, IndexError, NotImplementedError):
-            differing += ('Unable to index element %d of first %s\n' %
-                          (len2, seq_type_name))
-        elif len1 < len2:
-          differing = ('Second %s contains %d additional elements.\n' %
-                       (seq_type_name, len2 - len1))
-          try:
-            differing += ('First extra element %d:\n%s\n' %
-                          (len1, seq2[len1]))
-          except (TypeError, IndexError, NotImplementedError):
-            differing += ('Unable to index element %d of second %s\n' %
-                          (len1, seq_type_name))
-    if not msg:
-      msg = '\n'.join(difflib.ndiff(pprint.pformat(seq1).splitlines(),
-                                    pprint.pformat(seq2).splitlines()))
-    self.fail(differing + msg)
-
   def assertSequenceStartsWith(self, prefix, whole, msg=None):
     """An equality assertion for the beginning of ordered sequences.
 
@@ -535,124 +358,6 @@ class TestCase(unittest.TestCase):
       self.fail(msg or 'prefix: %s not found at start of whole: %s.' %
                 (prefix, whole))
 
-  def assertListEqual(self, list1, list2, msg=None):
-    """A list-specific equality assertion.
-
-    Args:
-      list1: the first list to compare
-      list2: the second list to compare
-      msg: optional message to use on failure instead of a list of differences
-    """
-    self.assertSequenceEqual(list1, list2, msg, seq_type=list)
-
-  def assertTupleEqual(self, tuple1, tuple2, msg=None):
-    """A tuple-specific equality assertion.
-
-    Args:
-      tuple1: the first tuple to compare
-      tuple2: the second tuple to compare
-      msg: optional message to use on failure instead of a list of differences
-    """
-    self.assertSequenceEqual(tuple1, tuple2, msg, seq_type=tuple)
-
-  def assertSetEqual(self, set1, set2, msg=None):
-    """A set-specific equality assertion.
-
-    Args:
-      set1: the first set to compare
-      set2: the second set to compare
-      msg: optional message to use on failure instead of a list of differences
-
-    For more general containership equality, assertSameElements will work
-    with things other than sets.  This uses ducktyping to support different
-    types of sets, and is optimized for sets specifically (parameters must
-    support a difference method).
-    """
-    try:
-      difference1 = set1.difference(set2)
-    except TypeError, e:
-      self.fail('invalid type when attempting set difference: %s' % e)
-    except AttributeError, e:
-      self.fail('first argument does not support set difference: %s' % e)
-
-    try:
-      difference2 = set2.difference(set1)
-    except TypeError, e:
-      self.fail('invalid type when attempting set difference: %s' % e)
-    except AttributeError, e:
-      self.fail('second argument does not support set difference: %s' % e)
-
-    if not (difference1 or difference2):
-      return
-
-    if msg is not None:
-      self.fail(msg)
-
-    lines = []
-    if difference1:
-      lines.append('Items in the first set but not the second:')
-      for item in difference1:
-        lines.append(repr(item))
-    if difference2:
-      lines.append('Items in the second set but not the first:')
-      for item in difference2:
-        lines.append(repr(item))
-    self.fail('\n'.join(lines))
-
-  def assertIn(self, a, b, msg=None):
-    """Just like self.assert_(a in b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%s" not found in "%s"' % (a, b)
-    self.assert_(a in b, msg)
-
-  def assertNotIn(self, a, b, msg=None):
-    """Just like self.assert_(a not in b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%s" unexpectedly found in "%s"' % (a, b)
-    self.assert_(a not in b, msg)
-
-  def assertDictEqual(self, d1, d2, msg=None):
-    """Checks whether d1 and d2 contain the same key/value pairs."""
-    assert isinstance(d1, dict), 'First argument is not a dict: %r' % (d1,)
-    assert isinstance(d2, dict), 'Second argument is not a dict: %r' % (d2,)
-
-    if d1 != d2:
-
-      # Sort by keys so that the contents are diffed in the same order.
-      def YieldSortedLines(d):
-        for k, v in sorted(d.iteritems()):
-          yield '%r: %r' % (k, v)
-
-      self.fail(msg or ('Dicts differ:\n' + '\n'.join(difflib.ndiff(
-          list(YieldSortedLines(d1)),
-          list(YieldSortedLines(d2))))))
-
-  def assertDictContainsSubset(self, expected, actual, msg=None):
-    """Checks whether actual is a superset of expected."""
-    missing = []
-    mismatched = []
-    for key, value in expected.iteritems():
-      if key not in actual:
-        missing.append(key)
-      elif value != actual[key]:
-        mismatched.append('%s, expected: %s, actual: %s' % (key, value,
-                                                            actual[key]))
-
-    if not (missing or mismatched):
-      return
-
-    missing_msg = mismatched_msg = ''
-    if missing:
-      missing_msg = 'Missing: %s' % ','.join(missing)
-    if mismatched:
-      mismatched_msg = 'Mismatched values: %s' % ','.join(mismatched)
-
-    if msg:
-      msg = '%s: %s; %s' % (msg, missing_msg, mismatched_msg)
-    else:
-      msg = '%s; %s' % (missing_msg, mismatched_msg)
-    self.fail(msg)
-
   def assertContainsSubset(self, expected_subset, actual_set, msg=None):
     """Checks whether actual iterable is a superset of expected iterable."""
     missing = set(expected_subset) - set(actual_set)
@@ -668,7 +373,26 @@ class TestCase(unittest.TestCase):
     self.fail(msg)
 
   def assertSameElements(self, expected_seq, actual_seq, msg=None):
-    """Assert that two sequences have the same elements (in any order)."""
+    """Assert that two sequences have the same elements (in any order).
+
+    This method, unlike assertItemsEqual, doesn't care about any
+    duplicates in the expected and actual sequences.
+
+      >> assertSameElements([1, 1, 1, 0, 0, 0], [0, 1])
+      # Doesn't raise an AssertionError
+
+    If possible, you should use assertItemsEqual instead of
+    assertSameElements.
+
+    Args:
+      expected_seq: A sequence containing elements we are expecting.
+      actual_seq: The sequence that we are testing.
+      msg: The message to be printed if the test fails.
+    """
+    # `unittest2.TestCase` used to have assertSameElements, but it was
+    # removed in favor of assertItemsEqual. As there's a unit test
+    # that explicitly checks this behavior, I am leaving this method
+    # alone.
     try:
       expected = dict([(element, None) for element in expected_seq])
       actual = dict([(element, None) for element in actual_seq])
@@ -692,6 +416,8 @@ class TestCase(unittest.TestCase):
     if errors:
       self.fail(msg or ''.join(errors))
 
+  # unittest2.TestCase.assertMulitilineEqual works very similarly, but it
+  # has a different error format. However, I find this slightly more readable.
   def assertMultiLineEqual(self, first, second, msg=None):
     """Assert that two multi-line strings are equal."""
     assert isinstance(first, types.StringTypes), (
@@ -711,52 +437,6 @@ class TestCase(unittest.TestCase):
         failure_message.append('\n')
     raise self.failureException(''.join(failure_message))
 
-  def assertLess(self, a, b, msg=None):
-    """Just like self.assert_(a < b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly not less than "%r"' % (a, b)
-    self.assert_(a < b, msg)
-
-  def assertLessEqual(self, a, b, msg=None):
-    """Just like self.assert_(a <= b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly not less than or equal to "%r"' % (a, b)
-    self.assert_(a <= b, msg)
-
-  def assertGreater(self, a, b, msg=None):
-    """Just like self.assert_(a > b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly not greater than "%r"' % (a, b)
-    self.assert_(a > b, msg)
-
-  def assertGreaterEqual(self, a, b, msg=None):
-    """Just like self.assert_(a >= b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly not greater than or equal to "%r"' % (a, b)
-    self.assert_(a >= b, msg)
-
-  def assertIs(self, a, b, msg=None):
-    """Just like self.assert_(a is b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly not identical to "%r"' % (a, b)
-    self.assert_(a is b, msg)
-
-  def assertIsNot(self, a, b, msg=None):
-    """Just like self.assert_(a is not b), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly identical to "%r"' % (a, b)
-    self.assert_(a is not b, msg)
-
-  def assertIsNone(self, obj, msg=None):
-    """Just like self.assert_(obj is None), but with a nicer default message."""
-    if msg is None:
-      msg = '"%r" unexpectedly not None' % (obj,)
-    self.assert_(obj is None, msg)
-
-  def assertIsNotNone(self, obj, msg='unexpectedly None'):
-    """Included for symmetry with assertIsNone."""
-    self.assert_(obj is not None, msg)
-
   def assertBetween(self, value, minv, maxv, msg=None):
     """Asserts that value is between minv and maxv (inclusive)."""
     if msg is None:
@@ -766,6 +446,10 @@ class TestCase(unittest.TestCase):
 
   def assertRegexMatch(self, actual_str, regexes, message=None):
     """Asserts that at least one regex in regexes matches str.
+
+    If possible you should use assertRegexpMatches, which is a simpler
+    version of this method. assertRegexpMatches takes a single regular
+    expression (a string or re compiled object) instead of a list.
 
     Notes:
     1. This function uses substring matching, i.e. the matching
@@ -920,6 +604,9 @@ class TestCase(unittest.TestCase):
                                   callable_obj, *args, **kwargs):
     """Asserts that the message in a raised exception matches the given regexp.
 
+    This is just a wrapper around assertRaisesRegexp. Please use
+    assertRaisesRegexp instead of assertRaisesWithRegexpMatch.
+
     Args:
       expected_exception: Exception class expected to be raised.
       expected_regexp: Regexp (re pattern object or string) expected to be
@@ -928,25 +615,14 @@ class TestCase(unittest.TestCase):
       args: Extra args.
       kwargs: Extra keyword args.
     """
-    # The reason that we do not delegate to
-    # assertRaisesWithPredicateMatch is so that we can provide a more
-    # informative message.
-    if isinstance(expected_regexp, basestring):
-      compiled_regexp = re.compile(expected_regexp)
-      regexp_description = str(expected_regexp)
-    else:
-      compiled_regexp = expected_regexp
-      regexp_description = 'Compiled regexp %s' % (expected_regexp,)
-
-    try:
-      callable_obj(*args, **kwargs)
-    except expected_exception, err:
-      exception_message = str(err)
-      self.assert_(bool(compiled_regexp.search(exception_message)),
-                   '%s does not match %s' % (regexp_description,
-                                             exception_message))
-    else:
-      self.fail(expected_exception.__name__ + ' not raised')
+    # TODO(user): this is a good candidate for a global
+    # search-and-replace.
+    self.assertRaisesRegexp(
+        expected_exception,
+        expected_regexp,
+        callable_obj,
+        *args,
+        **kwargs)
 
   def assertContainsInOrder(self, strings, target):
     """Asserts that the strings provided are found in the target in order.
@@ -1079,7 +755,24 @@ class TestCase(unittest.TestCase):
     """
     self.__recorded_properties[property_name] = property_value
 
+  def _getAssertEqualityFunc(self, first, second):
+    try:
+      return super(TestCase, self)._getAssertEqualityFunc(first, second)
+    except AttributeError:
+      # This happens if unittest2.TestCase.__init__ was never run. It
+      # usually means that somebody created a subclass just for the
+      # assertions and has overriden __init__. "assertTrue" is a safe
+      # value that will not make __init__ raise a ValueError (this is
+      # a bit hacky).
+      test_method = getattr(self, '_testMethodName', 'assertTrue')
+      super(TestCase, self).__init__(test_method)
 
+    return super(TestCase, self)._getAssertEqualityFunc(first, second)
+
+
+# This is not really needed here, but some unrelated code calls this
+# function.
+# TODO(user): sort it out.
 def _SortedListDifference(expected, actual):
   """Finds elements in only one or the other of two, sorted input lists.
 

@@ -36,10 +36,13 @@ from poster import encode
 from poster import streaminghttp
 from google.appengine.tools import appengine_rpc
 
-class AuthenticationError(Exception):
+class Error(Exception):
   pass
 
-class BadFileError(Exception):
+class AuthenticationError(Error):
+  pass
+
+class BadFileError(Error):
   pass
 
 class TitanClient(appengine_rpc.HttpRpcServer):
@@ -199,7 +202,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     if params is None:
       params = {}
     url = '%s?%s' % (url_path, urllib.urlencode(params)) if params else url_path
-    return self.Send(url, payload=None)
+    return super(TitanClient, self).Send(url, payload=None)
 
   def _Post(self, url_path, params=None, payload=None, content_type=None,
             extra_headers=None):
@@ -220,7 +223,8 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     if extra_headers:
       # This is an attribute of AbstractRpcServer, used in self._CreateRequest.
       self.extra_headers = extra_headers
-    return self.Send(url_path, payload=payload, content_type=content_type)
+    return super(TitanClient, self).Send(url_path, payload=payload,
+                                         content_type=content_type)
 
   def _HostIsDevAppServer(self):
     """Make a single GET / request to see if the server is a dev_appserver."""

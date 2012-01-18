@@ -296,8 +296,9 @@ class TitanCommands(object):
     self.ExitForErrors(thread_pool.Errors())
 
     seconds = int(time.time() - start)
-    print '%s files downloaded in %s' % (
-        len(path_map), HumanizeDuration(seconds))
+    if not quiet:
+      print '%s files downloaded in %s' % (
+          len(path_map), HumanizeDuration(seconds))
     return path_map
 
   def Help(self, method=None):

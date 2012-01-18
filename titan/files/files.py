@@ -48,6 +48,7 @@ import logging
 import mimetypes
 import os
 from google.appengine.api import files as blobstore_files
+from google.appengine.api import namespace_manager
 from google.appengine.ext import blobstore
 from google.appengine.ext import db
 from google.appengine.ext import deferred
@@ -419,8 +420,12 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
   if content and len(content) > MAX_CONTENT_SIZE:
     logging.debug('Content size %s exceeds %s bytes, uploading to blobstore.',
                   len(content), MAX_CONTENT_SIZE)
-    blobstore_path = '/blobstore/' + path
-    filename = blobstore_files.blobstore.create(blobstore_path)
+
+    current_namespace = namespace_manager.get_namespace()
+    if current_namespace:
+      namespace_manager.set_namespace(None)
+
+    filename = blobstore_files.blobstore.create()
     content_file = cStringIO.StringIO(content)
     blobstore_file = blobstore_files.open(filename, 'a')
     # Blobstore writes cannot exceed the RPC size limit, so we chunk the writes.
@@ -435,6 +440,9 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     blobs = [blob_key]
     files_cache.StoreBlob(path, content)
     content = None
+
+    if current_namespace:
+      namespace_manager.set_namespace(current_namespace)
 
   if not file_ent:
     # Create new _File entity.

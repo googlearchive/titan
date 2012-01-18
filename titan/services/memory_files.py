@@ -29,7 +29,7 @@ SERVICE_NAME = 'memory-files'
 # The default size of the MRU dictionary. This is how many File objects will be
 # allowed in the global cache at a time.
 # TODO(user): Allow this to be customized by a service config setting.
-DEFAULT_MRU_SIZE = 100
+DEFAULT_MRU_SIZE = 300
 
 # Map of paths to File objects.
 # This is used for request-local storage of File objects to prevent repeated
@@ -53,20 +53,20 @@ class HookForGet(hooks.Hook):
 
   def Pre(self, **kwargs):
     paths = files.ValidatePaths(kwargs['paths'])
-    paths, is_final_result = _Get(paths)
+    file_objs, is_final_result = _Get(paths)
     if is_final_result:
-      return hooks.TitanMethodResult(paths)
-    return {'paths': paths}
+      return hooks.TitanMethodResult(file_objs)
+    return {'paths': file_objs}
 
 class HookForExists(hooks.Hook):
   """A hook for files.Exists()."""
 
   def Pre(self, **kwargs):
     path = files.ValidatePaths(kwargs['path'])
-    path, is_final_result = _Get(path)
+    file_obj, is_final_result = _Get(path)
     if is_final_result:
-      return hooks.TitanMethodResult(path)
-    return {'path': path}
+      return hooks.TitanMethodResult(bool(file_obj))
+    return {'path': file_obj}
 
 class HookForWrites(hooks.Hook):
   """A hook for files.Write(), files.Delete(), and files.Touch()."""
@@ -104,24 +104,24 @@ def _Get(paths):
         (k, _global_file_objs[k]) for k in cached_paths if _global_file_objs[k])
     return __NormalizeResult(file_objs, is_multiple)
 
-  # Cache new files in the global cache.
-  file_objs = files.Get(uncached_paths, disabled_services=True)
-  _global_file_objs.update(file_objs)
+  # Merge file objects which existed in the global cache into the result.
+  # Order is important here: these need to be added before the uncached_paths
+  # are merged in.
+  file_objs = {}
+  for path in cached_paths:
+    # This affects the MRUDict, so only grab the value once.
+    value = _global_file_objs[path]
+    if value:  # The cached calue could be None, meaning the file doesn't exist.
+      file_objs[path] = value
+
+  new_file_objs = files.Get(uncached_paths, disabled_services=True)
+  _global_file_objs.update(new_file_objs)
+  file_objs.update(new_file_objs)
 
   # Also store Nones, so that non-existent files are not re-fetched.
   for path in uncached_paths:
-    if path not in file_objs:
+    if path not in new_file_objs:
       _global_file_objs[path] = None
-
-  # Merge file objects which existed in the global cache into the result.
-  for path in cached_paths:
-    if path not in _global_file_objs:
-      # Path may have been evicted by above sets, cached_paths is out of date.
-      continue
-    # This affects the MRUDict, so only grab the value once.
-    value = _global_file_objs[path]
-    if value:
-      file_objs[path] = value
 
   return __NormalizeResult(file_objs, is_multiple)
 

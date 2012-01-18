@@ -66,6 +66,8 @@ class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
       self.error(404)
       return
     self.response.headers['Content-Type'] = str(file_obj.mime_type)
+    self.response.headers['Content-Disposition'] = (
+        'inline; filename=%s' % file_obj.name)
 
     if file_obj.blobs:
       blob_key = file_obj.blobs[0]  # For now, only support a single blob key.

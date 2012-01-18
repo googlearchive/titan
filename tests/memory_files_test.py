@@ -47,6 +47,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.assertEqual('bar', files.Get('/foo').content)
     self.assertEqual('blue', files.Get('/foo').color)
     self.assertTrue('/foo' in global_file_objs)
+    self.assertEqual('bar', files.Get(['/fake1', '/foo']).values()[0].content)
 
     # Writes should clear the cache for that path.
     files.Write('/foo', meta={'color': 'red'})
@@ -79,7 +80,11 @@ class MemoryFileTest(testing.ServicesTestCase):
     paths = ['/foo%s' % i for i in range(memory_files.DEFAULT_MRU_SIZE + 10)]
     files.Touch(paths)
     files.Get(paths)
+    self.assertEqual(1, len(files.Get(['/fake2', paths[-1]])))
     self.assertEqual(memory_files.DEFAULT_MRU_SIZE, len(global_file_objs))
+
+    # Regression test: make sure files.Exists returns booleans.
+    self.assertEqual(False, files.Exists('/fake3'))
 
 if __name__ == '__main__':
   basetest.main()

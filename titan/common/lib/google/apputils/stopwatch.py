@@ -150,7 +150,7 @@ class StopWatch(object):
     if total == 0.0:
       return 0.0
 
-    all_timers = reduce(lambda x, y: x+y, self.accum.values(), 0.0)
+    all_timers = sum(self.accum.itervalues())
     return total - (all_timers - total)
 
   def results(self, verbose=False):

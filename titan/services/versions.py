@@ -22,7 +22,6 @@ Documentation:
 # TODO(user): Add caching of all top-level entities, primarily _Changesets.
 
 import logging
-import os
 import re
 from google.appengine.ext import db
 import diff_match_patch
@@ -655,17 +654,10 @@ class VersionControlService(object):
     final_changeset = self._NewChangeset(
         status=CHANGESET_PRE_SUBMIT, created_by=staged_changeset.created_by)
 
-    # ----
-    # TODO(user): REMOVE THIS terrible, testing-and-dev_appserver-specific
-    # hack when xg_transaction_options are supported in the datastore stub.
-    # ----
-    if os.environ['SERVER_SOFTWARE'].startswith('Development'):
-      self._Commit(staged_changeset, final_changeset, staged_file_objs)
-    else:
-      xg_transaction_options = db.create_transaction_options(xg=True)
-      db.run_in_transaction_options(
-          xg_transaction_options, self._Commit, staged_changeset,
-          final_changeset, staged_file_objs)
+    xg_transaction_options = db.create_transaction_options(xg=True)
+    db.run_in_transaction_options(
+        xg_transaction_options, self._Commit, staged_changeset,
+        final_changeset, staged_file_objs)
 
     return final_changeset
 

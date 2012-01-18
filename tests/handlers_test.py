@@ -126,6 +126,8 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     })
     self.assertEqual(200, response.status)
     self.assertEqual('custom/mimetype', response.headers['Content-Type'])
+    self.assertEqual('inline; filename=foo',
+                     response.headers['Content-Disposition'])
     self.assertTrue('X-AppEngine-BlobKey' in response.headers)
     self.assertEqual('', response.out.getvalue())
 

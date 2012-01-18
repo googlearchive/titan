@@ -28,6 +28,7 @@ from mox import stubout
 from tests import appengine_rpc_test_util
 from google.appengine.api import files as blobstore_files
 from google.appengine.api import memcache
+from google.appengine.datastore import datastore_stub_util
 from google.appengine.ext import blobstore
 from google.appengine.ext import db
 from google.appengine.ext import testbed
@@ -98,7 +99,9 @@ class BaseTestCase(MockableTestCase):
     # Must come after the apiproxy stubs above.
     self.testbed = testbed.Testbed()
     self.testbed.activate()
-    self.testbed.init_datastore_v3_stub()
+    # Fake an always strongly-consistent HR datastore.
+    policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
+    self.testbed.init_datastore_v3_stub(consistency_policy=policy)
     self.testbed.init_memcache_stub()
     self.testbed.init_taskqueue_stub(_all_queues_valid=True)
     self.testbed.setup_env(
