@@ -49,6 +49,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertFalse(files.Exists(self.valid_path))
     response = self.Get(handlers.ExistsHandler, params={
         'path': self.valid_path,
+        'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
     self.assertEqual('application/json', response.headers['Content-Type'])
@@ -96,6 +97,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Get(handlers.GetHandler, params={
         'path': self.valid_path,
         'full': True,
+        'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
     self.assertEqual('application/json', response.headers['Content-Type'])
@@ -144,6 +146,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     payload = urllib.urlencode({
         'path': self.valid_path,
         'content': file_content,
+        'fake_arg_stripped_by_validators': 'foo',
     })
     response = self.Post(handlers.WriteHandler, payload=payload)
     self.assertEqual(200, response.status)
@@ -222,6 +225,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertTrue(files.Exists(self.valid_path))
     payload = urllib.urlencode({
         'path': self.valid_path,
+        'fake_arg_stripped_by_validators': 'foo',
     })
     response = self.Post(handlers.DeleteHandler, payload=payload)
     self.assertEqual(200, response.status)
@@ -243,6 +247,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertFalse(files.Exists(self.valid_path))
     payload = urllib.urlencode({
         'path': self.valid_path,
+        'fake_arg_stripped_by_validators': 'foo',
     })
     response = self.Post(handlers.TouchHandler, payload=payload)
     self.assertEqual(200, response.status)
@@ -267,6 +272,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Get(handlers.ListFilesHandler, params={
         'path': '/',
         'recursive': 'hellyes',
+        'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
     file_objs = simplejson.loads(response.out.getvalue())
@@ -280,6 +286,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     expected_files = ['/foo/bar.txt']
     response = self.Get(handlers.ListDirHandler, params={
         'path': '/foo',
+        'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
     result = simplejson.loads(response.out.getvalue())
@@ -291,7 +298,10 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
   def testDirExists(self):
     # Verify GET requests return 200 with a true or false.
     files.Touch('/foo/bar/baz/qux')
-    response = self.Get(handlers.DirExistsHandler, params={'path': '/foo/bar'})
+    response = self.Get(handlers.DirExistsHandler, params={
+        'path': '/foo/bar',
+        'fake_arg_stripped_by_validators': 'foo',
+    })
     self.assertEqual(200, response.status)
     self.assertTrue(simplejson.loads(response.out.getvalue()))
     response = self.Get(handlers.DirExistsHandler, params={'path': '/fake'})

@@ -17,7 +17,6 @@ from tests import testing
 
 from google.appengine.api import namespace_manager
 from titan.common.lib.google.apputils import basetest
-from titan.common.lib.google.apputils import basetest
 from titan.files import files
 
 class NamespacesTest(testing.ServicesTestCase):

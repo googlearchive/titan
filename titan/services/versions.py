@@ -56,14 +56,27 @@ class FileVersionError(Exception):
 class CommitError(db.TransactionFailedError):
   pass
 
-# The "RegisterService" method is required for all Titan service plugins.
 def RegisterService():
+  """Method required for all Titan service plugins."""
   hooks.RegisterHook(SERVICE_NAME, 'file-exists', hook_class=HookForExists)
   hooks.RegisterHook(SERVICE_NAME, 'file-get', hook_class=HookForGet)
   hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
   hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)
   hooks.RegisterHook(SERVICE_NAME, 'file-delete', hook_class=HookForDelete)
   hooks.RegisterHook(SERVICE_NAME, 'list-files', hook_class=HookForListFiles)
+
+  # Register validator for exposed arguments in the HTTP handlers.
+  http_hook_names = (
+      'http-file-exists',
+      'http-file-get',
+      'http-file-write',
+      'http-file-touch',
+      'http-file-delete',
+      'http-list-files',
+  )
+  for hook_name in http_hook_names:
+    hooks.RegisterParamValidator(
+        SERVICE_NAME, hook_name, validator_func=_GetValidParams)
 
 class VersionedFile(files.File):
   """Subclass of File class for magic hiding of versioned file paths."""
@@ -171,11 +184,17 @@ class HookForWrite(hooks.Hook):
     if delete:
       changed_kwargs['content'] = ''
       changed_kwargs['meta']['status'] = FILE_DELETED
+      # This will orphan blobs if a large file is uploaded many times in a
+      # changeset without committing, but that's better than losing the data.
+      # TODO(user): add a flag to entities signifying if they have been
+      # copied or deleted, so that we can notice and delete orphaned blobs.
+      changed_kwargs['_delete_old_blobs'] = False
     else:
       # The first time the versioned file is created (or un-deleted), we have
       # to branch all content and properties from the current root file version.
       versioned_file = _CopyFilesFromRoot(root_path, versioned_path, changeset)
       changed_kwargs['meta']['status'] = FILE_EDITED
+      changed_kwargs['_delete_old_blobs'] = False
 
     return changed_kwargs
 
@@ -249,6 +268,22 @@ class HookForListFiles(hooks.Hook):
       return [VersionedFile(file_obj) for file_obj in file_objs]
     return file_objs
 
+def _GetValidParams(request_params):
+  """Expose certain parameters for this service in the HTTP handlers.
+
+  Args:
+    request_params: Parameters from HTTP request.
+  Returns:
+    Validated dictionary of request params.
+  """
+  valid_kwargs = {}
+  if 'changeset' in request_params:
+    valid_kwargs['changeset'] = Changeset(int(request_params.get('changeset')))
+  if 'delete' in request_params:
+    delete = request_params.get('delete')
+    valid_kwargs['delete'] = False if delete == 'false' else True
+  return valid_kwargs
+
 # ------------------------------------------------------------------------------
 
 class Changeset(object):
@@ -257,7 +292,11 @@ class Changeset(object):
   Attributes:
     num: An integer of the changeset number.
     created: datetime.datetime object of when the changeset was created.
+    created_by: The User object of who created this changeset.
     status: An integer of one of the CHANGESET_* constants.
+    base_path: The path prefix for all files in this changeset,
+        for example: '/_titan/ver/123'
+    linked_changeset_base_path: Same as base_path, but for the linked changeset.
   """
 
   def __init__(self, num, changeset_ent=None):
@@ -297,9 +336,22 @@ class Changeset(object):
     return self.changeset_ent.status
 
   @property
+  def base_path(self):
+    return VERSIONS_PATH_FORMAT % (self.num, '')
+
+  @property
+  def linked_changeset_base_path(self):
+    return VERSIONS_PATH_FORMAT % (self.linked_changeset_num, '')
+
+  @property
   def linked_changeset(self):
-    linked_changeset = self.changeset_ent.linked_changeset
-    return Changeset(num=linked_changeset.num, changeset_ent=linked_changeset)
+    return Changeset(num=self.linked_changeset_num)
+
+  @property
+  def linked_changeset_num(self):
+    # Use protected property to avoid dereferencing the SelfReferenceProperty
+    # and performing an unnecessary RPC since we only need the key_name.
+    return int(self.changeset_ent._linked_changeset.name())
 
   @property
   def created_by(self):
@@ -410,7 +462,7 @@ class FileVersion(object):
   Attributes:
     path: The committed file path. Example: /foo.html
     versioned_path: The path of the versioned file. Ex: /_titan/ver/123/foo.html
-    changeset: A Changeset object.
+    changeset: A final Changeset object.
     created: datetime.datetime object of when the file version was created.
     status: The edit type of the affected file.
   """
@@ -427,7 +479,8 @@ class FileVersion(object):
     """Lazy-load the _FileVersion entity."""
     if not self._file_version_ent:
       key_name = _FileVersion.MakeKeyName(self._changeset, self._path)
-      self._file_version_ent = _FileVersion.get_by_key_name(key_name)
+      self._file_version_ent = _FileVersion.get_by_key_name(
+          key_name, parent=self._changeset.changeset_ent)
       if not self._file_version_ent:
         raise FileVersionError('No file version of %s at %s.'
                                % (self._path, self._changeset.num))
@@ -444,7 +497,8 @@ class FileVersion(object):
 
   @property
   def versioned_path(self):
-    return VERSIONS_PATH_FORMAT % (self._changeset.num, self._path)
+    return VERSIONS_PATH_FORMAT % (self._changeset.linked_changeset_num,
+                                   self._path)
 
   @property
   def changeset(self):
@@ -463,13 +517,15 @@ class FileVersion(object):
     return self._file_version.status
 
   def Serialize(self):
+    created_by = self.changeset_created_by
     result = {
         'path': self.path,
         'versioned_path': self.versioned_path,
         'created': self.created,
         'status': self.status,
         'changeset_num': self._changeset.num,
-        'changeset_created_by': str(self.changeset_created_by),
+        'changeset_created_by': str(created_by) if created_by else None,
+        'linked_changeset_num': self.changeset.linked_changeset_num,
     }
     return result
 
@@ -597,14 +653,21 @@ class VersionControlService(object):
                       file_version_ent=file_version_ent))
     return file_versions
 
-  def GenerateDiff(self, file_version_before, file_version_after):
+  @staticmethod
+  def GenerateDiff(file_version_before, file_version_after,
+                   semantic_cleanup=False, diff_lines=False, edit_cost=None):
     """Generate a diff using the diff_match_patch API.
 
     Args:
       file_version_before: An older FileVersion object.
       file_version_after: A younger FileVersion object.
+      semantic_cleanup: Whether or not to produce a human-readable diff.
+      diff_lines: Whether or not to perform a line-level diff.
+      edit_cost: Efficiency cleanup edit cost. The larger the edit cost,
+          the more aggressive the cleanup. Sets diff_match_patch.Edit_Cost.
+          This should usually not be combined with semantic_cleanup=True.
     Returns:
-      A list of tuples, following the diff_match_patch return structure.
+      A list of two-tuples, following the diff_match_patch return structure.
       http://code.google.com/p/google-diff-match-patch/wiki/API
     """
     file_obj_before = files.Get(
@@ -618,7 +681,136 @@ class VersionControlService(object):
     assert file_obj_after
 
     differ = diff_match_patch.diff_match_patch()
-    return differ.diff_main(file_obj_before.content, file_obj_after.content)
+    before = file_obj_before.content
+    after = file_obj_after.content
+    if diff_lines:
+      diffs = differ.diff_lineMode(before, after, deadline=None)
+    else:
+      # TODO(user): support diff deadline.
+      diffs = differ.diff_main(before, after)
+    if edit_cost is not None:
+      differ.Diff_EditCost = edit_cost
+      differ.diff_cleanupEfficiency(diffs)
+    if semantic_cleanup:
+      differ.diff_cleanupSemantic(diffs)
+    return diffs
+
+  @staticmethod
+  def MakeNiceDualLineDiffs(diffs):
+    """Convert a set of line-level diffs to an easier-to-output format.
+
+    Args:
+      diffs: A set of diff_match_patch diffs from GenerateDiff().
+    Returns:
+      Two lists in this format (each dict element is data for exactly one line):
+      [
+          {
+              'diff_types': [0, 1],
+              'diffs': [(0, 'foo'), (1, 'bar')],
+          },
+          ...
+      ]
+      The return is a two-tuple of two of the above structures, representing
+      the left-hand lines and the right-hand lines in a side-by-side diff:
+          (<lines for "before" diff>, <lines for "after" diff>)
+      Both lists will contain diffs for deletes, equalities, and inserts, but
+      lines breaks will naturally be in different places.
+    """
+    #
+    # EXPERIMENTAL. This function currently has known correctness issues.
+    #
+    line_diffs_before = VersionControlService._MakeNiceLineDiffs(
+        diffs, before=True)
+    line_diffs_after = VersionControlService._MakeNiceLineDiffs(
+        diffs, after=True)
+    return line_diffs_before, line_diffs_after
+
+  @staticmethod
+  def _MakeNiceLineDiffs(diffs, before=False, after=False):
+    # ---
+    # TODO(user): 2012-02-02...re-write this. It doesn't correctly
+    # determine newline break differences and could probably be much simpler.
+    # ---
+    line_diffs = []
+    pending_lines = []
+    current_line = {'diff_types': [], 'diffs': []}
+    for diff_type, diff_content in diffs:
+      multiline_content = diff_content.splitlines(True)
+      if not multiline_content:
+        # diff is (#, '') -- skip.
+        pass
+      elif len(multiline_content) == 1:
+        # No extra lines within this diff, append diff info to current line.
+        single_line_content = multiline_content[0]
+        current_line['diff_types'].append(diff_type)
+        current_line['diffs'].append((diff_type, single_line_content))
+        if single_line_content.endswith('\n'):
+          # End of line. Append to the result and then reset current_line:
+          line_diffs.append(current_line)
+          current_line = {'diff_types': [], 'diffs': []}
+      else:
+        # The current diff's content contains multiple lines all associated to
+        # the same diff_type. For example: (1, 'foo\nbar\nbaz') is three
+        # inserted lines. Split these up into their own lines with the same
+        # diff_type, like (1, 'foo\n'), (1, 'bar\n'), (1, 'baz').
+        #
+        # multiline_content = ['foo\n', 'bar\n', 'baz']
+        for single_line_content in multiline_content:
+          if single_line_content.endswith('\n'):
+            if before and current_line['diff_types'] and diff_type == 1:
+              # Special case: for the left-hand diff, we are in the middle
+              # of compiling the diffs for a line, and a new "insert" line
+              # is presented (which should come after the line we haven't
+              # finished yet). Put the line in a pending queue.
+              single_line = {
+                  'diff_types': [diff_type],
+                  'diffs': [(diff_type, single_line_content)],
+              }
+
+              # Don't add pending lines which are partials of a previous line.
+              # For example, in this set of diffs:
+              #   (0, 'the quick'), (-1, '\nbrown'), (1, 'fox\n')
+              # "fox" is a new addition to a line we have already completed, so
+              # we discard it here to avoid adding additional lines.
+              if pending_lines or single_line_content.startswith('\n'):
+                pending_lines.append(single_line)
+            else:
+              # Could be one of two things:
+              # - A partial which completes the current_line.
+              # - Or, an entirely self-contained line.
+              if current_line['diff_types']:
+                # End of line. Append and reset.
+                current_line['diff_types'].append(diff_type)
+                current_line['diffs'].append((diff_type, single_line_content))
+
+                if (before and diff_type != 1) or (after and diff_type != -1):
+                  line_diffs.append(current_line)
+                  current_line = {'diff_types': [], 'diffs': []}
+
+                  # Add any pending lines into their correct spot.
+                  line_diffs.extend(pending_lines)
+                  pending_lines = []
+              else:
+                # Self-contained line.
+                single_line = {
+                    'diff_types': [diff_type],
+                    'diffs': [(diff_type, single_line_content)],
+                }
+                line_diffs.append(single_line)
+          else:
+            # Partial line (example: the ending "baz" isn't followed by a
+            # newline, so this diff doesn't tell us where the line ends).
+            # Append the diff to the current_line, and one of the next
+            # iterations will find the end of the line.
+            current_line['diff_types'].append(diff_type)
+            current_line['diffs'].append((diff_type, single_line_content))
+
+    # Done with main loop. If the last diff didn't end with a newline, then we
+    # have some partial data still around in current_line. Append this
+    # final content as its own line.
+    if current_line['diff_types']:
+      line_diffs.append(current_line)
+    return line_diffs
 
   def Commit(self, staged_changeset, force=False):
     """Commit the given changeset.

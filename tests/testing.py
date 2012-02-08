@@ -15,6 +15,7 @@
 
 """Base test case classes for App Engine."""
 
+import base64
 import cStringIO
 import datetime
 import os
@@ -31,6 +32,7 @@ from google.appengine.api import memcache
 from google.appengine.datastore import datastore_stub_util
 from google.appengine.ext import blobstore
 from google.appengine.ext import db
+from google.appengine.ext import deferred
 from google.appengine.ext import testbed
 from google.appengine.api import apiproxy_stub_map
 from google.appengine.api.blobstore import blobstore_stub
@@ -182,6 +184,12 @@ class BaseTestCase(MockableTestCase):
     for key in ent.properties():
       props[key] = ent.__dict__['_' + key]
     return props
+
+  def _RunDeferredTasks(self, queue):
+    tasks = self.taskqueue_stub.GetTasks(queue)
+    for task in tasks:
+      deferred.run(base64.b64decode(task['body']))
+    self.taskqueue_stub.FlushQueue(queue)
 
 class TitanClientStub(appengine_rpc_test_util.TestRpcServer,
                       client.TitanClient):

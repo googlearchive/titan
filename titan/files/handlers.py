@@ -30,6 +30,7 @@ from google.appengine.api import blobstore
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp import blobstore_handlers
 from google.appengine.ext.webapp import util
+from titan.common import hooks
 from titan.files import files
 
 class BaseHandler(webapp.RequestHandler):
@@ -46,7 +47,10 @@ class ExistsHandler(BaseHandler):
 
   def get(self):
     path = self.request.get('path')
-    self.WriteJsonResponse(files.Exists(path))
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-file-exists', request_params=self.request.params)
+    self.WriteJsonResponse(files.Exists(path, **valid_params))
 
 class GetHandler(BaseHandler):
   """Handler to return a serialized file representation."""
@@ -54,7 +58,10 @@ class GetHandler(BaseHandler):
   def get(self):
     paths = self.request.get_all('path')
     full = bool(self.request.get('full'))
-    self.WriteJsonResponse(files.Get(paths), full=full)
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-file-get', request_params=self.request.params)
+    self.WriteJsonResponse(files.Get(paths, **valid_params), full=full)
 
 class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
   """Handler to return contents of a file."""
@@ -94,9 +101,13 @@ class WriteHandler(BaseHandler):
     if meta:
       meta = simplejson.loads(meta)
     mime_type = self.request.get('mime_type', None)
+
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-file-write', request_params=self.request.params)
     try:
       files.Write(path, content, blobs=blobs, mime_type=mime_type,
-                  meta=meta)
+                  meta=meta, **valid_params)
     except files.BadFileError:
       self.error(404)
 
@@ -129,8 +140,11 @@ class DeleteHandler(BaseHandler):
 
   def post(self):
     paths = self.request.get_all('path')
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-file-delete', request_params=self.request.params)
     try:
-      files.Delete(paths)
+      files.Delete(paths, **valid_params)
     except files.BadFileError:
       self.error(404)
 
@@ -139,7 +153,10 @@ class TouchHandler(BaseHandler):
 
   def post(self):
     paths = self.request.get_all('path')
-    files.Touch(paths)
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-file-touch', request_params=self.request.params)
+    files.Touch(paths, **valid_params)
 
 class ListFilesHandler(BaseHandler):
   """Handler to list files in a directory."""
@@ -147,14 +164,21 @@ class ListFilesHandler(BaseHandler):
   def get(self):
     path = self.request.get('path')
     recursive = bool(self.request.get('recursive'))
-    return self.WriteJsonResponse(files.ListFiles(path, recursive=recursive))
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-list-files', request_params=self.request.params)
+    file_objs = files.ListFiles(path, recursive=recursive, **valid_params)
+    return self.WriteJsonResponse(file_objs)
 
 class ListDirHandler(BaseHandler):
   """Handler to list directories and files in a directory."""
 
   def get(self):
     path = self.request.get('path')
-    dirs, file_objs = files.ListDir(path)
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-list-dir', request_params=self.request.params)
+    dirs, file_objs = files.ListDir(path, **valid_params)
     return self.WriteJsonResponse({'dirs': dirs, 'files': file_objs})
 
 class DirExistsHandler(BaseHandler):
@@ -162,7 +186,10 @@ class DirExistsHandler(BaseHandler):
 
   def get(self):
     path = self.request.get('path')
-    return self.WriteJsonResponse(files.DirExists(path))
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-dir-exists', request_params=self.request.params)
+    return self.WriteJsonResponse(files.DirExists(path, **valid_params))
 
 class CustomFileSerializer(simplejson.JSONEncoder):
   """A custom serializer for simplejson to support File objects."""

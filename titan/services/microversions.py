@@ -85,7 +85,9 @@ class HookForWrite(hooks.Hook):
     created_by = users.get_current_user()
     deferred.defer(_CommitMicroversion, created_by=created_by, write=True,
                    _queue=SERVICE_NAME, **kwargs)
-    return _DisableService(versions.SERVICE_NAME, **kwargs)
+    changed_kwargs = _DisableService(versions.SERVICE_NAME, **kwargs)
+    changed_kwargs['_delete_old_blobs'] = False
+    return changed_kwargs
 
 class HookForTouch(hooks.Hook):
   """Hook for files.Touch()."""
@@ -110,7 +112,9 @@ class HookForDelete(hooks.Hook):
     created_by = users.get_current_user()
     deferred.defer(_CommitMicroversion, created_by=created_by, delete=True,
                    _queue=SERVICE_NAME, **kwargs)
-    return _DisableService(versions.SERVICE_NAME, **kwargs)
+    changed_kwargs = _DisableService(versions.SERVICE_NAME, **kwargs)
+    changed_kwargs['_delete_old_blobs'] = False
+    return changed_kwargs
 
 class HookForListFiles(hooks.Hook):
   """Hook for files.ListFiles()."""
@@ -146,6 +150,7 @@ def _CommitMicroversion(created_by, write=False, touch=False, delete=False,
 
   if write:
     # Write the file through the versions service (microversioning will be off).
+    kwargs['_delete_old_blobs'] = False
     files.Write(**kwargs)
   elif touch:
     # Touch the file.
@@ -156,6 +161,7 @@ def _CommitMicroversion(created_by, write=False, touch=False, delete=False,
     # Transform Delete(paths=[]) into multiple Write(path, delete=True) calls.
     paths = kwargs['paths']
     is_multiple = hasattr(paths, '__iter__')
+    kwargs['_delete_old_blobs'] = False
     del kwargs['paths']
     for path in paths if is_multiple else [paths]:
       files.Write(path=path, **kwargs)

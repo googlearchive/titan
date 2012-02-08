@@ -13,9 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Titan Hook for namespaces.
+"""Temporarily use a different namespace to perform file operations.
 
-Temporarily uses a different namespace to perform Titan operations.
+Documentation:
+  http://code.google.com/p/titan-files/wiki/NamespacesService
 
 Usage:
   files.Write('/path/to/file.txt', 'tmp!', namespace='tmp')

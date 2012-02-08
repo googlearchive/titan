@@ -48,7 +48,6 @@ import logging
 import mimetypes
 import os
 from google.appengine.api import files as blobstore_files
-from google.appengine.api import namespace_manager
 from google.appengine.ext import blobstore
 from google.appengine.ext import db
 from google.appengine.ext import deferred
@@ -368,7 +367,7 @@ def Get(paths):
 
 @hooks.ProvideHook('file-write')
 def Write(path, content=None, blobs=None, mime_type=None, meta=None,
-          async=False):
+          async=False, _delete_old_blobs=True):
   """Write or update a File. Supports asynchronous writes.
 
   Updates: if the File already exists, Write will accept any of the given args
@@ -385,6 +384,7 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     mime_type: Content type of the file; will be guessed if not given.
     meta: A dictionary of properties to be added to the file.
     async: Whether or not to perform put() operations asynchronously.
+    _delete_old_blobs: Whether or not to delete old blobs if they've changed.
   Raises:
     ValueError: If paths are invalid.
     TypeError: For missing arguments.
@@ -421,10 +421,6 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     logging.debug('Content size %s exceeds %s bytes, uploading to blobstore.',
                   len(content), MAX_CONTENT_SIZE)
 
-    current_namespace = namespace_manager.get_namespace()
-    if current_namespace:
-      namespace_manager.set_namespace(None)
-
     filename = blobstore_files.blobstore.create()
     content_file = cStringIO.StringIO(content)
     blobstore_file = blobstore_files.open(filename, 'a')
@@ -440,9 +436,6 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
     blobs = [blob_key]
     files_cache.StoreBlob(path, content)
     content = None
-
-    if current_namespace:
-      namespace_manager.set_namespace(current_namespace)
 
   if not file_ent:
     # Create new _File entity.
@@ -483,14 +476,14 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
 
     if content is not None and file_ent.content != content:
       file_ent.content = content
-      if file_ent.blobs:
+      if file_ent.blobs and _delete_old_blobs:
         # Clear all current blobstore blobs for this file.
         blobstore.delete(file_ent.blobs)
       file_ent.blobs = []
       changed = True
 
     if blobs is not None and file_ent.blobs != blobs:
-      if file_ent.blobs:
+      if file_ent.blobs and _delete_old_blobs:
         # Clear all current blobstore blobs for this file.
         blobstore.delete(file_ent.blobs)
       file_ent.blobs = blobs
@@ -519,7 +512,8 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
   return rpc if async else rpc.get_result()
 
 @hooks.ProvideHook('file-delete')
-def Delete(paths, async=False, update_subdir_caches=False):
+def Delete(paths, async=False, update_subdir_caches=False,
+           _delete_old_blobs=True):
   """Delete a File. Supports asynchronous and batch deletes.
 
   Args:
@@ -528,6 +522,7 @@ def Delete(paths, async=False, update_subdir_caches=False):
     update_subdir_caches: Whether to defer a potentially expensive task that
         will repopulate the subdir caches by calling ListDir. If False, the
         dir caches will just be cleared and subsequent ListDirs may be slower.
+    _delete_old_blobs: Whether or not to delete old blobs if they've changed.
   Raises:
     BadFileError: if single file doesn't exist.
     datastore_errors.BadArgumentError: if one file in a batch delete fails.
@@ -543,14 +538,15 @@ def Delete(paths, async=False, update_subdir_caches=False):
   for file_obj in files_list:
     if file_obj.blobs:
       blob_keys += file_obj.blobs
-  if blob_keys:
+  if blob_keys and _delete_old_blobs:
     blobstore.delete(blob_keys)
 
   # Flag these files in cache as non-existent, cleanup subdir and blob caches.
   file_ents = _GetFileEntities(file_objs)
   files_cache.SetFileDoesNotExist(validated_paths)
   files_cache.ClearSubdirsForFiles(file_ents)
-  files_cache.ClearBlobsForFiles(file_ents)
+  if _delete_old_blobs:
+    files_cache.ClearBlobsForFiles(file_ents)
 
   if update_subdir_caches:
     validated_paths = validated_paths if is_multiple else [validated_paths]

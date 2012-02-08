@@ -81,7 +81,7 @@ class TitanCommands(object):
     self.flags = None
     self._password = None
     self._thread_pool = None
-    self.__original_titan_rpc_client = None
+    self._original_titan_rpc_client = None
 
     self.ResetCommands()
     self.RegisterCommand('upload', self.Upload)
@@ -162,12 +162,12 @@ class TitanCommands(object):
     titan_rpc_client = self._GetTitanClient()
     self.ValidateAuth(titan_rpc_client)
 
-    def UploadFile(path, target):
+    def UploadFile(path, target, force_blobs):
       # Ensure thread-safety by instantiating a new titan_rpc_client:
       titan_rpc_client = self._GetTitanClient()
 
       with open(path) as fp:
-        if os.path.getsize(path) > DIRECT_TO_BLOBSTORE_SIZE:
+        if force_blobs or os.path.getsize(path) > DIRECT_TO_BLOBSTORE_SIZE:
           titan_rpc_client.Write(target, fp=fp)
         else:
           titan_rpc_client.Write(target, content=fp.read())
@@ -175,9 +175,10 @@ class TitanCommands(object):
 
     # Start upload of files.
     thread_pool = ThreadPool(self.flags['num_threads'])
+    force_blobs = self.flags['force_blobs']
     start = time.time()
     for path, target in path_map:
-      thread_pool.EnqueueThread(UploadFile, path, target)
+      thread_pool.EnqueueThread(UploadFile, path, target, force_blobs)
     thread_pool.Wait()
     self.ExitForErrors(thread_pool.Errors())
 
@@ -449,14 +450,14 @@ class TitanCommands(object):
   def _GetTitanClient(self):
     """Returns a client.TitanClient object."""
     # Allow a new titan client to be init'd without need to re-authenticate.
-    if self.__original_titan_rpc_client:
-      titan_rpc_client = copy.copy(self.__original_titan_rpc_client)
+    if self._original_titan_rpc_client:
+      titan_rpc_client = copy.copy(self._original_titan_rpc_client)
       # For thread-safety, we need to make sure that the extra_headers dict
       # isn't shared among TitanClient objects.
       titan_rpc_client.extra_headers = titan_rpc_client.extra_headers.copy()
       return titan_rpc_client
 
-    self.__original_titan_rpc_client = client.TitanClient(
+    self._original_titan_rpc_client = client.TitanClient(
         self.host, self._AuthFunc, user_agent='TitanClient/1.0', source='-',
         secure=self.flags['secure'])
     return self._GetTitanClient()
@@ -549,6 +550,12 @@ def GetDefaultParser():
   parser.AddOption(
       '-f', '--force', dest='force',
       help='Ignore confirmation messages.',
+      action='store_true')
+
+  parser.AddOption(
+      '--force_blobs', dest='force_blobs',
+      help='Force all files to upload to blobstore.',
+      default=False,
       action='store_true')
 
   parser.AddOption(

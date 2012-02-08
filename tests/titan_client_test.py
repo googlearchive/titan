@@ -48,6 +48,7 @@ class TitanCommandsTest(testing.BaseTestCase):
         'username': 'titanuser',
         'num_threads': 1,
         'secure': False,
+        'force_blobs': False,
     }
     self.flags = self.commands.flags.copy()
     self.titan_client_stub = testing.TitanClientStub(

@@ -48,11 +48,13 @@ class BadFileError(Error):
 class TitanClient(appengine_rpc.HttpRpcServer):
   """Class that performs Titan file operations over RPC to a Titan service."""
 
-  def Exists(self, path):
+  def Exists(self, path, **kwargs):
     """Returns True if the path exists, False otherwise."""
-    return simplejson.loads(self._Get('/_titan/exists', {'path': path}))
+    params = {'path': path}
+    params.update(kwargs)
+    return simplejson.loads(self._Get('/_titan/exists', params))
 
-  def Get(self, paths, full=False):
+  def Get(self, paths, full=False, **kwargs):
     """Gets a serialized version of one or more files.
 
     Args:
@@ -60,6 +62,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       full: Whether or not to include this object's content. Potentially
           expensive if the content is large and particularly if the content is
           stored in blobstore.
+      **kwargs: Additional keyword args to be encoded in the request params.
     Returns:
       None: If given single path which didn't exist.
       Serialized File dictionary: If given a single path which did exist.
@@ -72,6 +75,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     params = [('path', path) for path in paths]
     if full:
       params += [('full', full)]
+    params += kwargs.items()
 
     data = simplejson.loads(self._Get('/_titan/get', params))
     if not is_multiple and not data:
@@ -96,7 +100,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       raise
 
   def Write(self, path, content=None, blobs=None, fp=None,
-            mime_type=None, meta=None):
+            mime_type=None, meta=None, **kwargs):
     """Writes contents to a file.
 
     Args:
@@ -111,6 +115,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       meta: A dict of meta key-value pairs.
       mime_type: The MIME type of the file. If not provided, then the MIME type
           will be guessed based on the filename.
+      **kwargs: Additional keyword args to be encoded in the request params.
     """
     params = [('path', path)]
     if content is not None:
@@ -125,6 +130,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       params.append(('meta', simplejson.dumps(meta)))
     if mime_type is not None:
       params.append(('mime_type', mime_type))
+    params += kwargs.items()
 
     try:
       if fp:
@@ -143,6 +149,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         # to the call to /_titan/write.
         url = response.geturl()
         response_params = urlparse.parse_qs(urlparse.urlparse(url).query)
+
         # Verify that blobs were not passed in.
         assert not blobs
         params.append(('blobs', response_params['blobs'][0]))
@@ -152,35 +159,42 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         raise BadFileError(e)
       raise
 
-  def Delete(self, path):
+  def Delete(self, path, **kwargs):
     """Deletes a file."""
     try:
-      result = self._Post('/_titan/delete', {'path': path})
+      params = {'path': path}
+      params.update(kwargs)
+      self._Post('/_titan/delete', params)
     except urllib2.HTTPError, e:
       if e.code == 404:
         raise BadFileError(e)
       raise
 
-  def Touch(self, path):
+  def Touch(self, path, **kwargs):
     """Touches a file."""
-    self._Post('/_titan/touch', {'path': path})
+    params = {'path': path}
+    params.update(kwargs)
+    self._Post('/_titan/touch', params)
 
-  def ListFiles(self, path, recursive=False):
+  def ListFiles(self, path, recursive=False, **kwargs):
     """Lists files in a directory."""
     params = {'path': path}
+    params.update(kwargs)
     if recursive:
       params['recursive'] = 1
     return simplejson.loads(self._Get('/_titan/listfiles', params))
 
-  def ListDir(self, path):
+  def ListDir(self, path, **kwargs):
     """Lists directory strings and files in a directory."""
     params = {'path': path}
+    params.update(kwargs)
     result = simplejson.loads(self._Get('/_titan/listdir', params))
     return (result['dirs'], result['files'])
 
-  def DirExists(self, path):
+  def DirExists(self, path, **kwargs):
     """Check the existence of a directory."""
     params = {'path': path}
+    params.update(kwargs)
     return simplejson.loads(self._Get('/_titan/direxists', params))
 
   def ValidateClientAuth(self):

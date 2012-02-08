@@ -162,5 +162,23 @@ class HooksTest(testing.ServicesTestCase):
 
     self.mox.VerifyAll()
 
+  def testParamValidators(self):
+
+    def ParamValidatorForFoo(request_params):
+      return {'service_arg': int(request_params['service_arg'])}
+
+    hooks.RegisterParamValidator(service_name='service', hook_name='http-foo',
+                                 validator_func=ParamValidatorForFoo)
+
+    request_params = {'base_arg': 'base', 'service_arg': '123'}
+    actual_valid_kwargs = hooks.GetValidParams('http-foo', request_params)
+    expected_valid_kwargs = {'service_arg': 123}
+    self.assertDictEqual(expected_valid_kwargs, actual_valid_kwargs)
+
+    # Error handling.
+    self.assertRaises(KeyError, hooks.GetValidParams, 'http-foo', {})
+    self.assertRaises(ValueError,
+                      hooks.GetValidParams, 'http-foo', {'service_arg': ''})
+
 if __name__ == '__main__':
   basetest.main()

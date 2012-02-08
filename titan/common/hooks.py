@@ -121,13 +121,24 @@ class ProvideHook(object):
       del composite_kwargs['disabled_services']
 
     # Get the current hooks if any exist.
-    hooks = _global_hooks.get(hook_name)
-    if hooks and disabled_services is not True:
-      result = hooks.RunWithHooks(
+    hook_container = _global_hooks.get(hook_name)
+    if hook_container and disabled_services is not True:
+      result = hook_container.RunWithHooks(
           disabled_services, func, core_args, composite_kwargs)
     else:
       result = func(**composite_kwargs)
     return result
+
+def _SetupServiceNameAndHooks(service_name, hook_name):
+  """Verify correctly populated hooks object and hook name."""
+  # Make sure the hooks object is populated.
+  if hook_name not in _global_hooks:
+    _global_hooks[hook_name] = HookContainer()
+
+  # Make sure the given service_name is registered the first time the
+  # service_name is seen.
+  if service_name not in _global_services_order:
+    _global_services_order.append(service_name)
 
 def RegisterHook(service_name, hook_name, hook_class):
   """Register pre and post callbacks for a given service at a specific hook.
@@ -137,16 +148,40 @@ def RegisterHook(service_name, hook_name, hook_class):
     hook_name: The hook name provided by the core Titan methods.
     hook_class: A class pointer to a subclass of Hook.
   """
-  # Get the hooks object for this service.
-  if hook_name not in _global_hooks:
-    _global_hooks[hook_name] = HookContainer()
-  hooks = _global_hooks[hook_name]
+  _SetupServiceNameAndHooks(service_name, hook_name)
+  # Register the given hook class.
+  hook_container = _global_hooks[hook_name]
+  hook_container.RegisterHook(service_name=service_name, hook_class=hook_class)
 
-  # Make sure the given service_name is registered the first time the
-  # service_name is seen.
-  if service_name not in _global_services_order:
-    _global_services_order.append(service_name)
-  hooks.RegisterHook(service_name=service_name, hook_class=hook_class)
+def RegisterParamValidator(service_name, hook_name, validator_func):
+  """Register function which validates args to an HTTP handler.
+
+  Args:
+    service_name: A unique service name string identifying the plugin.
+    hook_name: The hook name provided by the Titan HTTP handler method.
+    validator_func: A callable which validates HTTP request params.
+       This callable needs to accept one argument, "request_params", which
+       will be a WebOb NestedMultiDict of the request parameters.
+  """
+  _SetupServiceNameAndHooks(service_name, hook_name)
+  # Register the given hook class.
+  hook_container = _global_hooks[hook_name]
+  hook_container.RegisterParamValidator(service_name=service_name,
+                                        validator_func=validator_func)
+
+def GetValidParams(hook_name, request_params):
+  """For use by Titan handlers; gets a validated list of request params.
+
+  Args:
+    hook_name: The hook name provided by the Titan HTTP handler method.
+    request_params: A WebOb NestedMultiDict instance.
+  Returns:
+    A dictionary of valid parameters processed by all registered validators.
+  """
+  hook_container = _global_hooks.get(hook_name)
+  if not hook_container:
+    return {}
+  return hook_container.RunParamValidators(request_params)
 
 class Hook(object):
   """A base hook object. Subclasses should define Pre and/or Post methods."""
@@ -163,9 +198,13 @@ class HookContainer(object):
 
   def __init__(self):
     self._hook_classes = {}
+    self._param_validator_funcs = {}
 
   def RegisterHook(self, service_name, hook_class):
     self._hook_classes[service_name] = hook_class
+
+  def RegisterParamValidator(self, service_name, validator_func):
+    self._param_validator_funcs[service_name] = validator_func
 
   def RunWithHooks(self, disabled_services, func, core_args, composite_kwargs):
     """Run the given method and arguments with any registered hooks.
@@ -181,6 +220,21 @@ class HookContainer(object):
     """
     hook_runner = HookRunner(self._hook_classes, disabled_services)
     return hook_runner.Run(func, core_args, composite_kwargs)
+
+  def RunParamValidators(self, request_params):
+    """Run all the param validators in the global services order.
+
+    Args:
+      request_params: A mapping of request parameters from an HTTP request.
+    Returns:
+      A dictionary of validated request parameters.
+    """
+    valid_params = {}
+    for service_name in _global_services_order:
+      validator_func = self._param_validator_funcs.get(service_name)
+      if validator_func:
+        valid_params.update(validator_func(request_params))
+    return valid_params
 
 class HookRunner(object):
   """A one-time-use object to run a set of hooks around a core titan method."""

@@ -290,6 +290,8 @@ class BeforeAfterTestCaseMeta(type):
 class TestCase(unittest.TestCase):
   """Extension of unittest.TestCase providing more powerful assertions."""
 
+  maxDiff = 80 * 20
+
   def __init__(self, methodName='runTest'):
     super(TestCase, self).__init__(methodName)
     self.__recorded_properties = {}

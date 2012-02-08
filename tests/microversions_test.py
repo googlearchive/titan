@@ -17,6 +17,7 @@
 
 from tests import testing
 
+from google.appengine.api import files as blobstore_files
 from google.appengine.api import users
 from google.appengine.datastore import datastore_stub_util
 from titan.common.lib.google.apputils import basetest
@@ -149,6 +150,42 @@ class MicroversionsTest(testing.ServicesTestCase):
     self.assertEqual(2, final_changeset.num)
     file_obj = files.Get('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('foo', file_obj.content)
+
+  def testKeepOldBlobs(self):
+    # Create a blob and blob_reader for testing.
+    filename = blobstore_files.blobstore.create(
+        mime_type='application/octet-stream')
+    with blobstore_files.open(filename, 'a') as fp:
+      fp.write('Blobstore!')
+    blobstore_files.finalize(filename)
+    blob_key = blobstore_files.blobstore.get_blob_key(filename)
+
+    # Verify that blobs are not deleted when microversioned content resizes.
+    files.Write('/foo', blobs=[blob_key])
+    self._RunDeferredTasks(microversions.SERVICE_NAME)
+    file_obj = files.Get('/foo')
+    self.assertTrue(file_obj.blobs)
+    self.assertEqual('Blobstore!', file_obj.content)
+    self._RunDeferredTasks(microversions.SERVICE_NAME)
+    # Resize as smaller (shouldn't delete the old blob).
+    files.Write('/foo', 'foo')
+    files.Write('/foo', blobs=[blob_key])  # Resize back to large size.
+    # Delete file (shouldn't delete the old blob).
+    files.Delete('/foo')
+    self._RunDeferredTasks(microversions.SERVICE_NAME)
+
+    file_versions = self.vcs.GetFileVersions('/foo')
+
+    # Deleted file (blobs should be None).
+    changeset = file_versions[0].changeset.linked_changeset
+    file_obj = files.Get('/foo', changeset=changeset)
+    self.assertFalse(file_obj.blobs)
+
+    # Created file (blob key and blob content should still exist).
+    changeset = file_versions[-1].changeset.linked_changeset
+    file_obj = files.Get('/foo', changeset=changeset)
+    self.assertTrue(file_obj.blobs)
+    self.assertEqual('Blobstore!', file_obj.content)
 
 if __name__ == '__main__':
   basetest.main()

@@ -40,7 +40,8 @@ class ClientTest(testing.BaseTestCase):
   def testExists(self):
     self.assertFalse(self.titan.Exists(self.file_path))
     files.Touch(self.file_path)
-    self.assertTrue(self.titan.Exists(self.file_path))
+    self.assertTrue(self.titan.Exists(self.file_path,
+                                      fake_arg_stripped_by_validators=False))
 
   def testRead(self):
     file_content = 'foobar'
@@ -53,7 +54,8 @@ class ClientTest(testing.BaseTestCase):
   def testWrite(self):
     self.assertFalse(files.Exists(self.file_path))
     file_content = 'foobar'
-    self.titan.Write(self.file_path, file_content)
+    self.titan.Write(self.file_path, file_content,
+                     fake_arg_stripped_by_validators=False)
     self.assertEqual(file_content, files.Get(self.file_path).content)
 
     # Verify meta properties are set.
@@ -80,7 +82,8 @@ class ClientTest(testing.BaseTestCase):
   def testDelete(self):
     files.Touch(self.file_path)
     self.assertTrue(files.Exists(self.file_path))
-    self.titan.Delete(self.file_path)
+    self.titan.Delete(self.file_path,
+                      fake_arg_stripped_by_validators=False)
     self.assertFalse(files.Exists(self.file_path))
 
     # Error handling.
@@ -88,14 +91,16 @@ class ClientTest(testing.BaseTestCase):
 
   def testTouch(self):
     self.assertFalse(files.Exists(self.file_path))
-    self.titan.Touch(self.file_path)
+    self.titan.Touch(self.file_path,
+                     fake_arg_stripped_by_validators=False)
     self.assertTrue(files.Exists(self.file_path))
 
   def testGet(self):
     # Get single.
     files.Touch(self.file_path)
     expected = files.Get(self.file_path).Serialize(full=True)
-    file_obj = self.titan.Get(self.file_path, full=True)
+    file_obj = self.titan.Get(self.file_path, full=True,
+                              fake_arg_stripped_by_validators=False)
     self.assertDictEqual(expected, file_obj)
 
     # Get single non-existent.
@@ -112,18 +117,22 @@ class ClientTest(testing.BaseTestCase):
     files.Touch('/foo/bar.txt')
     files.Touch('/foo/bar/qux.txt')
     expected = files.ListFiles('/')
-    self.assertSameElements(expected, self.titan.ListFiles('/'))
+    actual = self.titan.ListFiles('/', fake_arg_stripped_by_validators=False)
+    self.assertSameElements(expected, actual)
 
   def testListDir(self):
     files.Touch('/foo/bar.txt')
     files.Touch('/foo/bar/qux.txt')
     expected = files.ListDir('/')
-    self.assertEqual(expected, self.titan.ListDir('/'))
+    actual = self.titan.ListDir('/', fake_arg_stripped_by_validators=False)
+    self.assertEqual(expected, actual)
 
   def testDirExists(self):
     files.Touch('/foo/bar/qux.txt')
     expected = files.DirExists('/foo/bar')
-    self.assertEqual(expected, self.titan.DirExists('/foo/bar'))
+    actual = self.titan.DirExists('/foo/bar',
+                                  fake_arg_stripped_by_validators=False)
+    self.assertEqual(expected, actual)
 
   def testValidateClientAuth(self):
     self.mox.StubOutWithMock(self.titan, '_HostIsDevAppServer')

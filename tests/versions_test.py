@@ -202,6 +202,17 @@ class VersionsTest(testing.ServicesTestCase):
     staged_changeset = versions.Changeset(1)
     self.assertEqual(CHANGESET_DELETED_BY_SUBMIT, staged_changeset.status)
     self.assertEqual(CHANGESET_SUBMITTED, final_changeset.status)
+    # Also, the changesets are linked to each other:
+    self.assertEqual(1, final_changeset.linked_changeset_num)
+    self.assertEqual(2, staged_changeset.linked_changeset_num)
+    self.assertEqual(versions.Changeset(1),
+                     final_changeset.linked_changeset)
+    self.assertEqual(versions.Changeset(2),
+                     staged_changeset.linked_changeset)
+    # Verify base_path properties also:
+    self.assertEqual('/_titan/ver/2', final_changeset.base_path)
+    self.assertEqual('/_titan/ver/1',
+                     final_changeset.linked_changeset_base_path)
 
     # Verify that the auto_current_user_add property is overwritten in the
     # final_changeset because it was overwritten in the staged_changeset.
@@ -263,9 +274,12 @@ class VersionsTest(testing.ServicesTestCase):
         'status': u'created',
         'path': u'/foo',
         'changeset_num': 17,
+        'linked_changeset_num': 16,
         'changeset_created_by': 'titanuser@example.com',
         'created': file_versions[0].created,
-        'versioned_path': u'/_titan/ver/17/foo'
+        # Important: this path uses the staging changeset number (not the
+        # final changeset number) since the content is not moved on commit.
+        'versioned_path': u'/_titan/ver/16/foo'
     }
     self.assertDictEqual(expected, file_versions[0].Serialize())
 
@@ -274,14 +288,17 @@ class VersionsTest(testing.ServicesTestCase):
     file_versions = self.vcs.GetFileVersions('/foo')
 
     # 'foo' --> 'foo3'
-    expected_diff = [(0, 'foo'), (1, '3')]
-    actual_diff = self.vcs.GenerateDiff(file_versions[3], file_versions[0])
-    self.assertEqual(actual_diff, expected_diff)
+    expected_diff = [(-1, ''), (0, 'foo'), (1, '3')]
+    actual_diff = self.vcs.GenerateDiff(file_versions[3], file_versions[0],
+                                        semantic_cleanup=True, diff_lines=True,
+                                        edit_cost=0)
+    self.assertEqual(expected_diff, actual_diff)
 
     # Deleted file --> 'foo3'
     expected_diff = [(1, 'foo3')]
-    actual_diff = self.vcs.GenerateDiff(file_versions[1], file_versions[0])
-    self.assertEqual(actual_diff, expected_diff)
+    actual_diff = self.vcs.GenerateDiff(file_versions[1], file_versions[0],
+                                        edit_cost=2)
+    self.assertEqual(expected_diff, actual_diff)
 
 if __name__ == '__main__':
   basetest.main()

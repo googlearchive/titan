@@ -170,6 +170,14 @@ def GetCommandAliasList():
   return _cmd_alias_list
 
 
+def GetFullCommandList():
+  """Return list of registered commands, including aliases."""
+  all_cmds = dict(GetCommandList())
+  for cmd_alias, cmd_name in GetCommandAliasList().iteritems():
+    all_cmds[cmd_alias] = all_cmds.get(cmd_name)
+  return all_cmds
+
+
 def GetCommandByName(name):
   """Get the command or None if name is not a registered command.
 
@@ -518,7 +526,7 @@ class _CmdHelp(Cmd):
     Returns:
       1 for failure
     """
-    if len(argv) > 1 and argv[1] in GetCommandList():
+    if len(argv) > 1 and argv[1] in GetFullCommandList():
       show_cmd = argv[1]
     else:
       show_cmd = None
