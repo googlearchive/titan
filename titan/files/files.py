@@ -693,7 +693,7 @@ def Copy(source_path, destination_path, async=False):
   return result
 
 @hooks.ProvideHook('list-files')
-def ListFiles(dir_path, recursive=False, depth=None):
+def ListFiles(dir_path, recursive=False, depth=None, filters=None):
   """Get list of File objects in the given directory path.
 
   Args:
@@ -701,6 +701,11 @@ def ListFiles(dir_path, recursive=False, depth=None):
     recursive: Whether to list files recursively.
     depth: If recursive, a positive integer to limit the recursion depth. 1 is
         one folder deep, 2 is two folders deep, etc.
+    filters: A two-tuple or list of two-tuples. The first element of each
+        tuple is a datastore filter expression, the second is the value.
+        This is used to filter on meta properties or other File properties.
+        Example: ('color =', 'blue')
+        Example: [('type =', 'foo'), ('color =', 'blue')]
   Raises:
     ValueError: If given an invalid depth argument.
   Returns:
@@ -723,6 +728,11 @@ def ListFiles(dir_path, recursive=False, depth=None):
     file_keys.filter('paths =', dir_path)
   else:
     file_keys.filter('dir_path =', dir_path)
+
+  if filters:
+    filters_list = filters if hasattr(filters[0], '__iter__') else [filters]
+    for expression, value in filters_list:
+      file_keys.filter(expression, value)
 
   return [File(key.name()) for key in file_keys]
 

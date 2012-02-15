@@ -517,6 +517,28 @@ class FileTestCase(testing.BaseTestCase):
     file_objs = files.ListFiles('/foo/bar/', recursive=True)
     self.assertSameObjects(second_level, file_objs)
 
+    # Custom filters:
+    foo_file_obj = files.Touch('/a/bar', meta={'color': 'red', 'count': 1})
+    bar_file_obj = files.Touch('/a/baz/qux', meta={'color': 'red', 'count': 2})
+    baz_file_obj = files.Touch('/a/bzz', meta={'color': 'blue', 'count': 3})
+    # Single filter:
+    filters = ('color =', 'red')
+    file_objs = files.ListFiles('/a', filters=filters)
+    self.assertSameObjects([foo_file_obj], file_objs)
+    # Multiple filters:
+    filters = [('color =', 'blue'), ('count =', 3)]
+    file_objs = files.ListFiles('/', recursive=True, filters=filters)
+    self.assertSameObjects([baz_file_obj], file_objs)
+    # Recursive:
+    filters = [('color =', 'red')]
+    file_objs = files.ListFiles('/', recursive=True, filters=filters)
+    self.assertSameObjects([foo_file_obj, bar_file_obj], file_objs)
+    # Non-meta property:
+    filters = [('created_by =', users.User('titanuser@example.com')),
+               ('count =', 2)]
+    file_objs = files.ListFiles('/a/', recursive=True, filters=filters)
+    self.assertSameObjects([bar_file_obj], file_objs)
+
     # Error handling.
     self.assertRaises(ValueError, files.ListFiles, '')
     self.assertRaises(ValueError, files.ListFiles, '//')
