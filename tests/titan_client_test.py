@@ -169,7 +169,7 @@ class TitanCommandsTest(testing.BaseTestCase):
     mock_opener = self.mox.CreateMockAnything()
     mock_response = self.mox.CreateMockAnything()
     mock_response.geturl().AndReturn(
-        'https://testserver/_titan/finalizeblob?blobs=fake-blob-key')
+        'https://testserver/_titan/finalizeblob?blob=fake-blob-key')
     mock_opener.add_handler(mox.IgnoreArg())
     mock_opener.open(mox.IgnoreArg()).AndReturn(mock_response)
     self.mox.StubOutWithMock(titan_client.client.urllib2, 'build_opener')

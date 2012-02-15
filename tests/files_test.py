@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#!/usr/bin/python2.4
 # Copyright 2011 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,8 +60,7 @@ class FileTestCase(testing.BaseTestCase):
   @testing.DisableCaching
   def testFileObject(self):
     meta = {'color': 'blue', 'flag': False}
-    key = files.Write('/foo/bar.html', content='Test', meta=meta)
-    file_ent = files._File.get(key)
+    files.Write('/foo/bar.html', content='Test', meta=meta)
 
     # Init with path only, verify lazy-loading properties.
     file_obj = files.File('/foo/bar.html')
@@ -69,6 +70,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertNotEqual(None, file_obj._file_ent)
 
     # Init with a _File entity.
+    file_ent = files._File.get_by_key_name('/foo/bar.html')
     file_obj = files.File('/foo/bar.html', _file_ent=file_ent)
     self.assertEqual('/foo/bar.html', file_obj.path)
     self.assertEqual('bar.html', file_obj.name)
@@ -112,17 +114,27 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(u'/foo/bar/baz', rpc.get_result().name())
     self.assertNotEqual(old_modified, file_obj.modified)
 
-    # Properties: paths, mime_type, created, modified, blobs, created_by,
-    # and modified_by.
+    # Properties: paths, mime_type, created, modified, blob, created_by,
+    # modified_by, and size.
     file_obj = files.File('/foo/bar/baz.html')
     file_obj.Touch()
     self.assertEqual(file_obj.paths, ['/', '/foo', '/foo/bar'])
     self.assertEqual(file_obj.mime_type, 'text/html')
     self.assertTrue(isinstance(file_obj.created, datetime.datetime))
     self.assertTrue(isinstance(file_obj.modified, datetime.datetime))
-    self.assertEqual(file_obj.blobs, [])
+    self.assertIsNone(file_obj.blob)
     self.assertEqual(file_obj.created_by, users.User('titanuser@example.com'))
     self.assertEqual(file_obj.modified_by, users.User('titanuser@example.com'))
+    # Size:
+    file_obj.Write('foo')
+    self.assertEqual(file_obj.size, 3)
+    file_obj.Write(u'f♥♥')
+    # "size" should represent the number of bytes, not the number of characters.
+    # 'f♥♥' == 'f\xe2\x99\xa5\xe2\x99\xa5' == 1 + 3 + 3 == 7
+    self.assertEqual(file_obj.size, 7)
+    # "size" should use blob size if present:
+    file_obj.Write(LARGE_FILE_CONTENT)
+    self.assertEqual(file_obj.size, 1 << 21)
 
     # read() and content property.
     self.assertEqual(file_obj.content, file_obj.read())
@@ -172,8 +184,7 @@ class FileTestCase(testing.BaseTestCase):
   @testing.DisableCaching
   def testGet(self):
     meta = {'color': 'blue', 'flag': False}
-    key = files.Write('/foo/bar.html', content='Test', meta=meta)
-    actual_file = files._File.get(key)
+    actual_file = files.Write('/foo/bar.html', content='Test', meta=meta)
 
     expected = {
         'name': 'bar.html',
@@ -182,7 +193,7 @@ class FileTestCase(testing.BaseTestCase):
         'mime_type': u'text/html',
         'created': actual_file.created,
         'modified': actual_file.modified,
-        'blobs': [],
+        'blob': None,
         'exists': True,
         'created_by': 'titanuser@example.com',
         'modified_by': 'titanuser@example.com',
@@ -217,8 +228,8 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual('', files.Get('/foo/bar.html').content)
 
     # Reading File contents from blobstore.
-    # Also, writing with blobs should nullify content.
-    files.Write('/foo/bar.html', blobs=[self.blob_key])
+    # Also, writing with a blob should nullify content.
+    files.Write('/foo/bar.html', blob=self.blob_key)
     blob_content = self.blob_reader.read()
     self.assertEqual(blob_content, files.Get('/foo/bar.html').content)
 
@@ -260,43 +271,37 @@ class FileTestCase(testing.BaseTestCase):
     dates = ['modified', 'created']
 
     # Synchronous write of a new file.
-    key = files.Write('/foo/bar.html', content='Test', meta=meta)
-    actual_file = files._File.get(key)
-    self.assertEntityEqual(expected_file, actual_file, ignore=dates)
+    actual_file = files.Write('/foo/bar.html', content='Test', meta=meta)
+    self.assertEntityEqual(expected_file, actual_file._file, ignore=dates)
     self.assertNotEqual(None, actual_file.modified, 'modified is not being set')
 
     # Synchronous update without changes.
     old_modified = actual_file.modified
-    key = files.Write('/foo/bar.html', meta=meta)
-    actual_file = files._File.get(key)
-    self.assertEntityEqual(expected_file, actual_file, ignore=dates)
+    actual_file = files.Write('/foo/bar.html', meta=meta)
+    self.assertEntityEqual(expected_file, actual_file._file, ignore=dates)
     self.assertEqual(old_modified, actual_file.modified)
 
     # Synchronous update with changes.
     old_modified = actual_file.modified
-    key = files.Write('/foo/bar.html', content='New content', meta=new_meta,
-                      mime_type='fake/type')
+    actual_file = files.Write('/foo/bar.html', content='New content',
+                              meta=new_meta, mime_type='fake/type')
     expected_file.content = 'New content'
     expected_file.flag = True
     expected_file.mime_type = 'fake/type'
-    actual_file = files._File.get(key)
-    self.assertEntityEqual(expected_file, actual_file, ignore=dates)
+    self.assertEntityEqual(expected_file, actual_file._file, ignore=dates)
     self.assertNotEqual(old_modified, actual_file.modified)
 
     # Allow writing blank files.
-    self.assertTrue(files.Write('/foo/bar.html', content=''))
-    actual_file = files._File.get(key)
+    actual_file = files.Write('/foo/bar.html', content='')
     self.assertEqual(actual_file.content, '')
 
     # Allow overwriting mime_type and meta without touching content.
     files.Write('/foo/bar.html', content='Test')
-    files.Write('/foo/bar.html', mime_type='fake/mimetype')
-    actual_file = files._File.get_by_key_name('/foo/bar.html')
+    actual_file = files.Write('/foo/bar.html', mime_type='fake/mimetype')
     self.assertEqual('fake/mimetype', actual_file.mime_type)
     self.assertEqual('Test', actual_file.content)
 
-    files.Write('/foo/bar.html', meta=new_meta)
-    actual_file = files._File.get_by_key_name('/foo/bar.html')
+    actual_file = files.Write('/foo/bar.html', meta=new_meta)
     self.assertEqual(True, actual_file.flag)
     self.assertEqual('Test', actual_file.content)
 
@@ -326,26 +331,23 @@ class FileTestCase(testing.BaseTestCase):
     self.assertNotEqual(old_modified, actual_file.modified)
 
     # Write large content to blobstore.
-    key = files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
-    file_obj = files.Get('/foo/bar.html')
-    blob_keys = file_obj.blobs
-    self.assertEqual(1, len(blob_keys))
+    file_obj = files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
+    blob_key = file_obj.blob.key()
+    self.assertTrue(blob_key)
     self.assertEqual(LARGE_FILE_CONTENT, file_obj.content)
     self.assertIsNone(file_obj._file_ent.content)
     self.assertEqual(LARGE_FILE_CONTENT, files.Get('/foo/bar.html').content)
-    # Make sure the blobs are deleted with the file:
+    # Make sure the blob is deleted with the file:
     file_obj.Delete()
-    self.assertEqual([None], blobstore.get(blob_keys))
-    self.assertRaises(files.BadFileError, lambda: file_obj.blobs)
-    # Make sure blobs are deleted if the file gets smaller:
-    key = files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
-    file_obj = files.Get('/foo/bar.html')
-    blob_keys = file_obj.blobs
+    self.assertIsNone(blobstore.get(blob_key))
+    self.assertRaises(files.BadFileError, lambda: file_obj.blob)
+    # Make sure the blob is deleted if the file gets smaller:
+    file_obj = files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
+    blob_key = file_obj.blob.key()
     file_obj.Write(content='Test')
-    self.assertEqual([None], blobstore.get(blob_keys))
-    actual_file = files._File.get_by_key_name('/foo/bar.html')
-    self.assertEqual('Test', actual_file.content)
-    self.assertEqual([], file_obj.blobs)
+    self.assertIsNone(blobstore.get(blob_key))
+    self.assertEqual('Test', file_obj.content)
+    self.assertIsNone(file_obj.blob)
 
     # Cleanup.
     expected_file = original_expected_file
@@ -361,14 +363,14 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.Write, '')
     self.assertRaises(ValueError, files.Write, 'bar.html')
     self.assertRaises(TypeError, files.Write)
-    self.assertRaises(TypeError, files.Write, content='', blobs=[])
+    self.assertRaises(TypeError, files.Write, content='', blob=None)
     # Attempt to set 'path' as dynamic property.
     meta = {'path': False}
     self.assertRaises(AttributeError, files.Write, '/bar.html',
                       content='', meta=meta)
-    # Specifying both content and blobs.
-    blobs = [self.blob_key]
-    self.assertRaises(TypeError, files.Write, content='Test', blobs=blobs)
+    # Specifying both content and blob.
+    blob = self.blob_key
+    self.assertRaises(TypeError, files.Write, content='Test', blob=blob)
 
   @testing.DisableCaching
   def testDelete(self):
@@ -412,11 +414,10 @@ class FileTestCase(testing.BaseTestCase):
 
   @testing.DisableCaching
   def testTouch(self):
-    old_file = files._File.get(files.Write('/foo/bar.html', content='Test'))
+    old_file = files.Write('/foo/bar.html', content='Test')
 
     # Synchronous touch.
-    key = files.Touch('/foo/bar.html')
-    touched_file = files._File.get(key)
+    touched_file = files.Touch('/foo/bar.html')
     self.assertNotEqual(touched_file.modified, old_file.modified)
 
     # Asynchronous touch.
@@ -426,9 +427,9 @@ class FileTestCase(testing.BaseTestCase):
 
     # Batch touch.
     paths = ['/foo/bar.html', '/foo/bar/baz', '/qux']
-    keys = files.Touch(paths, meta={'color': 'blue'})
-    self.assertEqual(len(keys), 3)
-    file_objs = files.Get(paths)
+    file_objs = files.Touch(paths, meta={'color': 'blue'})
+    file_objs = files.Get(file_objs)
+    self.assertEqual(len(file_objs), 3)
     modified_datetime = file_objs['/foo/bar.html'].modified
     self.assertEqual(modified_datetime, file_objs['/foo/bar.html'].modified)
     self.assertEqual(modified_datetime, file_objs['/foo/bar/baz'].modified)
@@ -455,7 +456,7 @@ class FileTestCase(testing.BaseTestCase):
 
     # Blobs instead of content.
     files.Delete('/foo.html')
-    files.Write('/foo.html', blobs=[self.blob_key], meta={'flag': False})
+    files.Write('/foo.html', blob=self.blob_key, meta={'flag': False})
     files.Copy('/foo.html', '/bar/qux.html')
     file_obj = files.Get('/bar/qux.html')
     blob_content = self.blob_reader.read()
@@ -650,7 +651,7 @@ class FileTestCase(testing.BaseTestCase):
     cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(set(['bar']), cache_item['subdirs'])
 
-    # Write blobs: should store in sharded cache.
+    # Write blob: should store in sharded cache.
     files.Write('/foo/bar.html', content=LARGE_FILE_CONTENT)
     cache_item = memcache.get(sharded_cache.MEMCACHE_PREFIX + '/foo/bar.html')
     blob_content = files.Get('/foo/bar.html').content
@@ -658,7 +659,7 @@ class FileTestCase(testing.BaseTestCase):
     blob_content = files.files_cache.GetBlob('/foo/bar.html')
     self.assertEqual(LARGE_FILE_CONTENT, blob_content)
 
-    # Delete: should delete blobs from sharded cache.
+    # Delete: should delete blob from sharded cache.
     files.Delete('/foo/bar.html')
     cache_item = memcache.get(sharded_cache.MEMCACHE_PREFIX + '/foo/bar.html')
     self.assertIsNone(cache_item)

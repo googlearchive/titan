@@ -188,15 +188,19 @@ class HookForWrite(hooks.Hook):
       # changeset without committing, but that's better than losing the data.
       # TODO(user): add a flag to entities signifying if they have been
       # copied or deleted, so that we can notice and delete orphaned blobs.
-      changed_kwargs['_delete_old_blobs'] = False
+      changed_kwargs['_delete_old_blob'] = False
     else:
       # The first time the versioned file is created (or un-deleted), we have
       # to branch all content and properties from the current root file version.
       versioned_file = _CopyFilesFromRoot(root_path, versioned_path, changeset)
       changed_kwargs['meta']['status'] = FILE_EDITED
-      changed_kwargs['_delete_old_blobs'] = False
+      changed_kwargs['_delete_old_blob'] = False
 
     return changed_kwargs
+
+  def Post(self, file_obj):
+    """Post-hook method."""
+    return VersionedFile(file_obj)
 
 class HookForTouch(hooks.Hook):
   """A hook for files.Touch()."""
@@ -210,7 +214,6 @@ class HookForTouch(hooks.Hook):
     changeset.AssociatePaths(root_paths)
 
     # Modify where the file is written by prepending the versioned path.
-    is_multiple = hasattr(root_paths, '__iter__')
     versioned_paths, _ = _MakeVersionedPaths(root_paths, changeset)
     changed_kwargs['paths'] = versioned_paths
 
@@ -220,6 +223,15 @@ class HookForTouch(hooks.Hook):
     changed_kwargs['meta'] = kwargs.get('meta') or {}
     changed_kwargs['meta']['status'] = FILE_EDITED
     return changed_kwargs
+
+  def Post(self, file_objs):
+    """Post-hook method."""
+    is_multiple = hasattr(file_objs, '__iter__')
+    if is_multiple:
+      file_objs = [VersionedFile(file_obj) for file_obj in file_objs]
+    else:
+      file_objs = VersionedFile(file_objs)
+    return file_objs
 
 class HookForDelete(hooks.Hook):
   """A hook for files.Delete().

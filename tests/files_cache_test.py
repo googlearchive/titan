@@ -58,12 +58,11 @@ class FileCacheTestCase(testing.BaseTestCase):
 
   def testStoreFiles(self):
     # Store single _File entity.
-    key = files.Write('/foo/bar', 'Bar')
-    file_ent = files._File.get(key)
-    result = files_cache.StoreFiles(file_ent)
+    file_obj = files.Write('/foo/bar', 'Bar')
+    result = files_cache.StoreFiles(file_obj._file)
     self.assertTrue(result)
     cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
-    self.assertEntityEqual(file_ent, cache_item)
+    self.assertEntityEqual(file_obj._file, cache_item)
 
     # Store multiple _File entities.
     files.Write('/foo/bar', 'Bar')
@@ -78,18 +77,17 @@ class FileCacheTestCase(testing.BaseTestCase):
 
   def testStoreAll(self):
     # Every entity should exist in memcache, and every None should be flagged.
-    key = files.Touch('/foo/bar')
-    file_ent = files._File.get(key)
+    file_obj = files.Touch('/foo/bar')
     data = {
         '/foo': None,
-        '/foo/bar': file_ent,
+        '/foo/bar': file_obj._file,
     }
     result = files_cache.StoreAll(data)
     self.assertEqual([], result)
     cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo')
     self.assertEqual(files_cache._NO_FILE_FLAG, cache_item)
     cache_item = memcache.get(files_cache.FILE_MEMCACHE_PREFIX + '/foo/bar')
-    self.assertEntityEqual(file_ent, cache_item)
+    self.assertEntityEqual(file_obj._file, cache_item)
 
   def testSetFileDoesNotExist(self):
     # Set single path.
@@ -116,19 +114,18 @@ class FileCacheTestCase(testing.BaseTestCase):
         files_cache.BLOB_MEMCACHE_PREFIX + '/foo.html'))
 
   def testClearBlobsForFiles(self):
-    key = files.Touch('/foo.html')
-    file_ent = files._File.get(key)
+    file_obj = files.Touch('/foo.html')
 
     # Clear single file.
     sharded_cache.Set('/foo.html', 'Test')
-    files_cache.ClearBlobsForFiles(file_ent)
+    files_cache.ClearBlobsForFiles(file_obj._file)
     cache_item = memcache.get('/foo.html')
     self.assertEqual(None, cache_item)
 
     # Clear multiple files.
     memcache.flush_all()
     sharded_cache.Set('/foo.html', 'Test')
-    files_cache.ClearBlobsForFiles([file_ent])
+    files_cache.ClearBlobsForFiles([file_obj._file])
     cache_item = memcache.get('/foo.html')
     self.assertEqual(None, cache_item)
 
@@ -161,14 +158,13 @@ class FileCacheTestCase(testing.BaseTestCase):
     self.assertEqual(set(['foo', 'bar', 'baz']), cached_subdirs)
 
     # Directory caches that exist without a "subdir" key should return None.
-    file_ent = files._File.get(files.Touch('/foo/bar/baz.html'))
-    files_cache.ClearSubdirsForFiles(file_ent)
+    file_obj = files.Touch('/foo/bar/baz.html')
+    files_cache.ClearSubdirsForFiles(file_obj._file)
     cached_subdirs = files_cache.GetSubdirs('/')
     self.assertEqual(None, cached_subdirs)
 
   def testUpdateSubdirsForFiles(self):
-    keys = [files.Touch('/foo/bar/baz.html')]
-    file_ent = files._File.get(keys[0])
+    file_objs = [files.Touch('/foo/bar/baz.html')]
 
     # Cleanup the dir caches for testing.
     preset_data = {'old_key': 1, 'subdirs': set([])}
@@ -176,7 +172,7 @@ class FileCacheTestCase(testing.BaseTestCase):
     memcache.set(files_cache.DIR_MEMCACHE_PREFIX + '/foo', preset_data)
 
     # Update single subdir set.
-    files_cache.UpdateSubdirsForFiles(file_ent)
+    files_cache.UpdateSubdirsForFiles(file_objs[0]._file)
     cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['foo']), cache_item['subdirs'])
     self.assertTrue(cache_item['old_key'])
@@ -184,9 +180,8 @@ class FileCacheTestCase(testing.BaseTestCase):
     self.assertEqual(set(['bar']), cache_item['subdirs'])
 
     # Update multiple subdir sets.
-    keys.append(files.Touch('/foo/qux/foo.html'))
-    file_ents = files._File.get([keys[0], keys[1]])
-    files_cache.UpdateSubdirsForFiles(file_ents)
+    file_objs.append(files.Touch('/foo/qux/foo.html'))
+    files_cache.UpdateSubdirsForFiles([file_objs[0]._file, file_objs[1]._file])
     cache_item = memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/')
     self.assertEqual(set(['foo']), cache_item['subdirs'])
     self.assertTrue(cache_item['old_key'])
@@ -194,12 +189,11 @@ class FileCacheTestCase(testing.BaseTestCase):
     self.assertEqual(set(['bar', 'qux']), cache_item['subdirs'])
 
   def testClearSubdirsForFiles(self):
-    keys = [files.Touch('/foo/bar/baz.html'), files.Touch('/foo/qux/foo.html')]
+    file_objs = files.Touch(['/foo/bar/baz.html', '/foo/qux/foo.html'])
     files.ListDir('/')
-    file_ents = files._File.get(keys)
     self.assertTrue(memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/'))
     self.assertTrue(memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/foo'))
-    files_cache.ClearSubdirsForFiles(file_ents)
+    files_cache.ClearSubdirsForFiles([f._file for f in file_objs])
     self.assertDictEqual(
         {}, memcache.get(files_cache.DIR_MEMCACHE_PREFIX + '/'))
     self.assertDictEqual(

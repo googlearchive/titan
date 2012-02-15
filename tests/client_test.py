@@ -72,12 +72,23 @@ class ClientTest(testing.BaseTestCase):
 
     # Blob handling.
     blob_key = 'ablobkey'
-    self.titan.Write(self.file_path, blobs=[blob_key])
-    self.assertEqual(blob_key, str(self.titan.Get(self.file_path)['blobs'][0]))
+    self.titan.Write(self.file_path, blob=blob_key)
+    self.assertEqual(blob_key, str(self.titan.Get(self.file_path)['blob']))
 
     # Error handling.
     self.assertRaises(client.BadFileError, self.titan.Write, '/fake/file',
                       mime_type='test/mimetype')
+
+  def testCopy(self):
+    content = 'hello world foo bar baz'
+    files.Write(self.file_path, content=content)
+    dest = '/foo/bar/baz.txt'
+    self.titan.Copy(self.file_path, dest)
+    file_obj = files.Get(dest)
+    self.assertEqual(content, file_obj.content)
+
+    # Error handling.
+    self.assertRaises(client.BadFileError, self.titan.Copy, '/fake/file', dest)
 
   def testDelete(self):
     files.Touch(self.file_path)

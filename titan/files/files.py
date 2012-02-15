@@ -83,13 +83,14 @@ class File(object):
     created: Created datetime.
     modified: Last modified datetime.
     content: The file contents, read from either datastore or blobstore.
-    blobs: If the content is stored in blobstore, this is the list of BlobKeys
-        comprising it. If only static serving is needed, a client could simply
-        check for 'blobs' and use webapp's send_blob() to avoid loading the
+    blob: If the content is stored in blobstore, this is the BlobInfo object
+        pointing to it. If only static serving is needed, a client should
+        check for 'blob' and use webapp's send_blob() to avoid loading the
         content blob into app memory.
     exists: Boolean of if the file exists.
     created_by: A users.User object of who first created the file, or None.
     modified_by: A users.User object of who last modified the file, or None.
+    size: The number of bytes of this file's content.
     [meta]: File objects also expose meta data as object attrs. Use the Write()
         method to update meta information.
 
@@ -147,6 +148,14 @@ class File(object):
     return self._file_ent
 
   @property
+  def blob(self):
+    """The BlobInfo of this File, if the file content is stored in blobstore."""
+    # Backwards-compatibility with deprecated "blobs" property:
+    if not self._file.blob and not self._file.blobs:
+      return
+    return self._file.blob or blobstore.get(self._file.blobs[0])
+
+  @property
   def is_loaded(self):
     """Whether or not this lazy object has been evaluated."""
     return bool(self._file_ent)
@@ -182,10 +191,6 @@ class File(object):
     return _ReadContentOrBlobs(self)
 
   @property
-  def blobs(self):
-    return self._file.blobs
-
-  @property
   def exists(self):
     if self._exists is not None:
       return self._exists
@@ -198,6 +203,15 @@ class File(object):
   @property
   def modified_by(self):
     return self._file.modified_by
+
+  @property
+  def size(self):
+    if self.blob:
+      return self.blob.size
+    content = self.content
+    if isinstance(content, unicode):
+      return len(content.encode('utf-8'))
+    return len(content)
 
   def read(self):
     return self.content
@@ -237,7 +251,7 @@ class File(object):
         'paths': self.paths,
         'mime_type': self.mime_type,
         'created': self.created,
-        'blobs': [str(blob_key) for blob_key in self.blobs],
+        'blob': str(self.blob.key()) if self.blob else None,
         'modified': self.modified,
         'exists': self.exists,
         'created_by': str(self.created_by) if self.created_by else None,
@@ -302,8 +316,8 @@ class _File(db.Expando):
     created: Created datetime.
     modified: Last-modified datetime.
     content: Byte string of the file's contents.
-    blobs: If content is null, a list of BlobKeys comprising the file.
-        Right now this is only ever one key, allowing up to the 2GB limit.
+    blob: If content is null, a BlobKey pointing to the file.
+    blobs: Deprecated; use "blob" instead.
     created_by: A users.User object of who first created the file, or None.
     modified_by: A users.User object of who last modified the file, or None.
   """
@@ -316,6 +330,8 @@ class _File(db.Expando):
   created = db.DateTimeProperty(auto_now_add=True)
   modified = db.DateTimeProperty()
   content = db.BlobProperty()
+  blob = blobstore.BlobReferenceProperty()
+  # Deprecated; use "blob" instead.
   blobs = db.ListProperty(blobstore.BlobKey)
   created_by = db.UserProperty(auto_current_user_add=True)
   modified_by = db.UserProperty(auto_current_user=True)
@@ -336,7 +352,6 @@ def Exists(path):
   Returns:
     Boolean of whether or not the file exists.
   """
-  ValidatePaths(path)
   file_obj, _ = _GetFiles(path)
   file_ent = _GetFileEntities(file_obj)
   return bool(file_ent)
@@ -366,8 +381,8 @@ def Get(paths):
   return file_objs_result
 
 @hooks.ProvideHook('file-write')
-def Write(path, content=None, blobs=None, mime_type=None, meta=None,
-          async=False, _delete_old_blobs=True):
+def Write(path, content=None, blob=None, mime_type=None, meta=None,
+          async=False, _delete_old_blob=True):
   """Write or update a File. Supports asynchronous writes.
 
   Updates: if the File already exists, Write will accept any of the given args
@@ -380,34 +395,34 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
         blobstore. However, this technique should only be used for relatively
         small files; it is significantly less efficient than directly uploading
         to blobstore and passing the resulting BlobKeys to the blobs argument.
-    blobs: If content is not provided, takes BlobKeys comprising the file.
+    blob: If content is not provided, a BlobKey pointing to the file.
     mime_type: Content type of the file; will be guessed if not given.
     meta: A dictionary of properties to be added to the file.
     async: Whether or not to perform put() operations asynchronously.
-    _delete_old_blobs: Whether or not to delete old blobs if they've changed.
+    _delete_old_blob: Whether or not to delete the old blob if it changed.
   Raises:
     ValueError: If paths are invalid.
     TypeError: For missing arguments.
     BadFileError: If attempting to update meta information on non-existent file.
   Returns:
-    db.Key object: if async is False.
+    File object: if async is False.
     Datastore RPC object: if async is True.
     None: if async is True and the file didn't change.
   """
-  path = ValidatePaths(path)
   file_obj, _ = _GetFiles(path)
   file_ent = _GetFileEntities(file_obj)
+  path = ValidatePaths(path)
   logging.info('Writing Titan file: %s', path)
 
   # Argument sanity checks.
-  is_content_update = content is not None or blobs is not None
+  is_content_update = content is not None or blob is not None
   is_meta_update = mime_type is not None or meta is not None
   if not is_content_update and not is_meta_update:
     raise TypeError('Arguments expected, but none given.')
   if not file_ent and is_meta_update and not is_content_update:
     raise BadFileError('File does not exist: %s' % path)
-  if content and blobs:
-    raise TypeError('Exactly one of "content" or "blobs" must be given.')
+  if content and blob:
+    raise TypeError('Exactly one of "content" or "blob" must be given.')
 
   # If given unicode content, flag it so that Read() can decode back to unicode.
   if isinstance(content, unicode):
@@ -432,15 +447,12 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
       blobstore_file.write(content_chunk)
     blobstore_file.close()
     blobstore_files.finalize(filename)
-    blob_key = blobstore_files.blobstore.get_blob_key(filename)
-    blobs = [blob_key]
+    blob = blobstore_files.blobstore.get_blob_key(filename)
     files_cache.StoreBlob(path, content)
     content = None
 
   if not file_ent:
     # Create new _File entity.
-    if not blobs:
-      blobs = []
     # Guess the MIME type if not given.
     if not mime_type:
       mime_type = _GuessMimeType(path)
@@ -457,7 +469,10 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
         encoding=encoding,
         modified=datetime.datetime.now(),
         content=content,
-        blobs=blobs)
+        blob=blob,
+        # Backwards-compatibility with deprecated "blobs" property:
+        blobs=[],
+    )
     # Add meta attributes.
     if meta:
       for key, value in meta.iteritems():
@@ -474,19 +489,27 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
       file_ent.mime_type = mime_type
       changed = True
 
-    if content is not None and file_ent.content != content:
-      file_ent.content = content
-      if file_ent.blobs and _delete_old_blobs:
-        # Clear all current blobstore blobs for this file.
-        blobstore.delete(file_ent.blobs)
+    # Auto-migrate entities from old "blobs" to new "blob" property on write:
+    if file_ent.blobs:
+      file_ent.blob = file_ent.blobs[0]
       file_ent.blobs = []
       changed = True
 
-    if blobs is not None and file_ent.blobs != blobs:
-      if file_ent.blobs and _delete_old_blobs:
-        # Clear all current blobstore blobs for this file.
-        blobstore.delete(file_ent.blobs)
-      file_ent.blobs = blobs
+    if content is not None and file_ent.content != content:
+      file_ent.content = content
+      if file_ent.blob and _delete_old_blob:
+        # Delete the actual blobstore data.
+        file_ent.blob.delete()
+      # Clear the current blob association for this file.
+      file_ent.blob = None
+      changed = True
+
+    if blob is not None and file_ent.blob != blob:
+      if file_ent.blob and _delete_old_blob:
+        # Delete the actual blobstore data.
+        file_ent.blob.delete()
+      # Associate the new blob to this file.
+      file_ent.blob = blob
       file_ent.content = None
       changed = True
 
@@ -508,8 +531,13 @@ def Write(path, content=None, blobs=None, mime_type=None, meta=None,
       # Update the cache.
       files_cache.StoreFiles(file_ent)
     else:
-      return file_ent.key() if not async else None
-  return rpc if async else rpc.get_result()
+      return File(path, _file_ent=file_ent) if not async else None
+
+  result = rpc
+  if not async:
+    rpc.get_result()
+    result = File(path, _file_ent=file_ent)
+  return result
 
 @hooks.ProvideHook('file-delete')
 def Delete(paths, async=False, update_subdir_caches=False,
@@ -522,7 +550,7 @@ def Delete(paths, async=False, update_subdir_caches=False,
     update_subdir_caches: Whether to defer a potentially expensive task that
         will repopulate the subdir caches by calling ListDir. If False, the
         dir caches will just be cleared and subsequent ListDirs may be slower.
-    _delete_old_blobs: Whether or not to delete old blobs if they've changed.
+    _delete_old_blobs: Whether or not to delete the old blobs.
   Raises:
     BadFileError: if single file doesn't exist.
     datastore_errors.BadArgumentError: if one file in a batch delete fails.
@@ -532,25 +560,26 @@ def Delete(paths, async=False, update_subdir_caches=False,
   """
   # With one RPC, delete any associated blobstore files for all paths.
   file_objs, is_multiple = _GetFilesOrDie(paths)
-  validated_paths = ValidatePaths(paths)
+  # Only use paths which are already validated by _GetFilesOrDie.
+  paths = [f.path for f in file_objs] if is_multiple else file_objs.path
   blob_keys = []
   files_list = file_objs if is_multiple else [file_objs]
   for file_obj in files_list:
-    if file_obj.blobs:
-      blob_keys += file_obj.blobs
+    if file_obj.blob:
+      blob_keys.append(file_obj.blob.key())
   if blob_keys and _delete_old_blobs:
     blobstore.delete(blob_keys)
 
   # Flag these files in cache as non-existent, cleanup subdir and blob caches.
   file_ents = _GetFileEntities(file_objs)
-  files_cache.SetFileDoesNotExist(validated_paths)
+  files_cache.SetFileDoesNotExist(paths)
   files_cache.ClearSubdirsForFiles(file_ents)
   if _delete_old_blobs:
     files_cache.ClearBlobsForFiles(file_ents)
 
   if update_subdir_caches:
-    validated_paths = validated_paths if is_multiple else [validated_paths]
-    deferred.defer(ListDir, _GetCommonDir(validated_paths))
+    paths = paths if is_multiple else [paths]
+    deferred.defer(ListDir, _GetCommonDir(paths))
 
   rpc = db.delete_async(file_ents)
   return rpc if async else rpc.get_result()
@@ -566,8 +595,8 @@ def Touch(paths, meta=None, async=False):
     meta: A dictionary of properties to be added to the file.
     async: Whether or not to do asynchronous touches.
   Returns:
-    db.Key: if only one path is given and async is False.
-    List of db.Key objects: if multiple paths given and async is False.
+    File object: if only one path is given and async is False.
+    List of File objects: if multiple paths given and async is False.
     Datastore RPC object: if async is True.
   """
   now = datetime.datetime.now()
@@ -589,8 +618,9 @@ def Touch(paths, meta=None, async=False):
       # itself. We trust that the arguments passed here to Touch() have already
       # been through any necessary modifications and the service hooks shouldn't
       # be called again.
-      file_ent = _File.get(Write(paths_list[i], content='', meta=meta,
-                                 disabled_services=True))
+      file_obj = Write(paths_list[i], content='', meta=meta,
+                       disabled_services=True)
+      file_ent = _GetFileEntities(file_obj)
       # Inject new _File entity back into the object that will be put().
       if is_multiple:
         file_ents[i] = file_ent
@@ -603,7 +633,14 @@ def Touch(paths, meta=None, async=False):
   files_cache.StoreFiles(file_ents)
   files_cache.UpdateSubdirsForFiles(file_ents)
 
-  return rpc if async else rpc.get_result()
+  result = rpc
+  if not async:
+    rpc.get_result()
+    if is_multiple:
+      result = [File(f.path, _file_ent=f) for f in file_ents]
+    else:
+      result = File(file_ents.path, _file_ent=file_ents)
+  return result
 
 @hooks.ProvideHook('file-copy')
 def Copy(source_path, destination_path, async=False):
@@ -639,7 +676,8 @@ def Copy(source_path, destination_path, async=False):
 
   # Copy all source file properties.
   content = source_file_ent.content
-  blobs = source_file_ent.blobs
+  # Use file_obj here, to correct handle old "blobs" property.
+  blob = source_file_obj.blob
   mime_type = source_file_ent.mime_type
   meta = {}
   for key in source_file_ent.dynamic_properties():
@@ -649,7 +687,7 @@ def Copy(source_path, destination_path, async=False):
     delete_rpc.wait()
 
   # Write the file.
-  result = Write(destination_path, content=content, blobs=blobs,
+  result = Write(destination_path, content=content, blob=blob,
                  mime_type=mime_type, meta=meta, async=async,
                  disabled_services=True)
   return result
@@ -869,7 +907,9 @@ def _ReadContentOrBlobs(file_obj):
   else:
     content = files_cache.GetBlob(file_ent.path)
     if content is None:
-      content = blobstore.BlobReader(file_ent.blobs[0]).read()
+      # Backwards-compatibility with deprecated "blobs" property:
+      blob = file_ent.blob or file_ent.blobs[0]
+      content = blob.open().read()
       files_cache.StoreBlob(file_ent.path, content)
   if file_ent.encoding == 'utf-8':
     return content.decode('utf-8')

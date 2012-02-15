@@ -108,22 +108,21 @@ class VersionsTest(testing.ServicesTestCase):
 
     # Write().
     self.assertRaises(TypeError, files.Write, '/foo')
-    result_key = files.Write('/foo', 'foo', meta={'color': 'blue'},
-                             changeset=changeset)
-    self.assertEqual('/_titan/ver/1/foo', result_key.name())
+    file_obj = files.Write('/foo', 'foo', meta={'color': 'blue'},
+                           changeset=changeset)
+    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
 
     # Writing with delete=True marks a file to be deleted on commit.
-    result_key = files.Write('/foo', changeset=changeset, delete=True)
-    self.assertEqual('/_titan/ver/1/foo', result_key.name())
-    file_obj = files.Get('/foo', changeset=changeset)
+    file_obj = files.Write('/foo', changeset=changeset, delete=True)
+    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
     self.assertEqual(FILE_DELETED, file_obj.status)
 
     # Touch with single and multiple paths.
-    result_key = files.Touch('/foo', changeset=changeset)
-    self.assertEqual('/_titan/ver/1/foo', result_key.name())
-    result_keys = files.Touch(['/foo', '/bar'], changeset=changeset)
-    result_keys = [key.name() for key in result_keys]
-    self.assertEqual(['/_titan/ver/1/foo', '/_titan/ver/1/bar'], result_keys)
+    file_obj = files.Touch('/foo', changeset=changeset)
+    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
+    file_objs = files.Touch(['/foo', '/bar'], changeset=changeset)
+    self.assertEqual(['/_titan/ver/1/foo', '/_titan/ver/1/bar'],
+                     [file_obj.versioned_path for file_obj in file_objs])
 
     # Delete (which is actually a revert).
     self.assertRaises(TypeError, files.Delete, '/foo')

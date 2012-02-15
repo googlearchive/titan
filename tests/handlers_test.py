@@ -75,8 +75,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
   def testGetHandler(self):
     # Verify GET requests return a JSON-serialized representation of the file.
     self.assertFalse(files.Exists(self.valid_path))
-    key = files.Write(self.valid_path, 'foobar')
-    actual_file = files._File.get(key)
+    actual_file = files.Write(self.valid_path, 'foobar')
     to_timestamp = lambda x: time.mktime(x.timetuple()) + 1e-6 * x.microsecond
     expected_file_obj = {
         'name': 'file.txt',
@@ -86,7 +85,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'created': to_timestamp(actual_file.created),
         'modified': to_timestamp(actual_file.modified),
         'content': 'foobar',
-        'blobs': [],
+        'blob': None,
         'exists': True,
         'created_by': 'titanuser@example.com',
         'modified_by': 'titanuser@example.com',
@@ -152,15 +151,15 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertEqual(200, response.status)
     self.assertEqual(file_content, files.Get(self.valid_path).content)
 
-    # Verify setting blobs.
+    # Verify setting blob.
     blob_key = 'ablobkey'
     payload = urllib.urlencode({
         'path': self.valid_path,
-        'blobs': blob_key,
+        'blob': blob_key,
     })
     response = self.Post(handlers.WriteHandler, payload=payload)
     self.assertEqual(200, response.status)
-    self.assertEqual(blob_key, str(files.Get(self.valid_path).blobs[0]))
+    self.assertEqual(blob_key, str(files.Get(self.valid_path).blob.key()))
 
     # Verify that meta strings are decoded properly.
     files.Delete(self.valid_path)
@@ -263,6 +262,29 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     response = self.Post(handlers.TouchHandler, payload=payload)
     self.assertEqual(500, response.status)
     self.mox.VerifyAll()
+
+  def testCopyHandler(self):
+    content = 'hello world foo bar baz'
+    files.Write(self.valid_path, content)
+    dest = '/foo/bar.txt'
+    payload = urllib.urlencode({
+        'source_path': self.valid_path,
+        'destination_path': dest,
+        'fake_arg_stripped_by_validators': 'foo',
+    })
+    response = self.Post(handlers.CopyHandler, payload=payload)
+    self.assertEqual(200, response.status)
+    file_obj = files.Get(dest)
+    self.assertEqual(content, file_obj.content)
+
+    # Verify 404 when source path doesn't exist.
+    payload = urllib.urlencode({
+        'source_path': self.error_path,
+        'destination_path': dest,
+        'fake_arg_stripped_by_validators': 'foo',
+    })
+    response = self.Post(handlers.CopyHandler, payload=payload)
+    self.assertEqual(404, response.status)
 
   def testListFiles(self):
     # Verify GET requests return 200 with a list of file paths.

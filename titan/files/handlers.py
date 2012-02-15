@@ -76,8 +76,8 @@ class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     self.response.headers['Content-Disposition'] = (
         'inline; filename=%s' % file_obj.name)
 
-    if file_obj.blobs:
-      blob_key = file_obj.blobs[0]  # For now, only support a single blob key.
+    if file_obj.blob:
+      blob_key = file_obj.blob
       self.send_blob(blob_key, content_type=str(file_obj.mime_type))
     else:
       self.response.out.write(file_obj.content)
@@ -89,13 +89,12 @@ class WriteHandler(BaseHandler):
     path = self.request.get('path')
     # Must use str_POST here to preserve the original encoding of the string.
     content = self.request.str_POST.get('content')
-    blobs = self.request.get('blobs', None)
+    blob = self.request.get('blob', None)
 
-    if blobs is not None:
-      blobs = self.request.get_all('blobs')
+    if blob is not None:
       # Convert any string keys to BlobKey instances.
-      blobs = [blobstore.BlobKey(key) if isinstance(key, basestring) else key
-               for key in blobs]
+      if isinstance(blob, basestring):
+        blob = blobstore.BlobKey(blob)
 
     meta = self.request.get('meta', None)
     if meta:
@@ -106,7 +105,7 @@ class WriteHandler(BaseHandler):
     valid_params = hooks.GetValidParams(
         hook_name='http-file-write', request_params=self.request.params)
     try:
-      files.Write(path, content, blobs=blobs, mime_type=mime_type,
+      files.Write(path, content, blob=blob, mime_type=mime_type,
                   meta=meta, **valid_params)
     except files.BadFileError:
       self.error(404)
@@ -128,11 +127,11 @@ class FinalizeBlobHandler(blobstore_handlers.BlobstoreUploadHandler):
 
   def post(self):
     uploads = self.get_uploads('file')
-    blobs = str(uploads[0].key())
+    blob = str(uploads[0].key())
     # Magic: BlobstoreUploadHandlers must return redirects, so we pass the
     # blobkey back as a query param. The client should followup with a call
     # to Write() and include the blobkey.
-    params = urllib.urlencode({'blobs': blobs})
+    params = urllib.urlencode({'blob': blob})
     self.redirect('/_titan/finalizeblob?%s' % params)
 
 class DeleteHandler(BaseHandler):
@@ -157,6 +156,26 @@ class TouchHandler(BaseHandler):
     valid_params = hooks.GetValidParams(
         hook_name='http-file-touch', request_params=self.request.params)
     files.Touch(paths, **valid_params)
+
+class CopyHandler(BaseHandler):
+  """Handler to copy files from one location to another."""
+
+  def post(self):
+    """Copies a file to a new destination.
+
+    Params:
+      source_path: The path of the file to copy.
+      destination_path: The new destination (a full file path).
+    """
+    path = self.request.get('source_path')
+    dest = self.request.get('destination_path')
+    # Get and validate extra parameters exposed by service layers.
+    valid_params = hooks.GetValidParams(
+        hook_name='http-file-copy', request_params=self.request.params)
+    try:
+      files.Copy(path, dest, **valid_params)
+    except files.BadFileError:
+      self.error(404)
 
 class ListFilesHandler(BaseHandler):
   """Handler to list files in a directory."""
@@ -222,6 +241,7 @@ URL_MAP = (
     ('/_titan/listfiles', ListFilesHandler),
     ('/_titan/listdir', ListDirHandler),
     ('/_titan/direxists', DirExistsHandler),
+    ('/_titan/copy', CopyHandler),
 )
 application = webapp.WSGIApplication(URL_MAP, debug=False)
 

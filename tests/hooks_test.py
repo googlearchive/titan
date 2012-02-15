@@ -102,6 +102,8 @@ class HooksTest(testing.ServicesTestCase):
 
     self.assertEqual('first-result', Foo(disabled_services=['disabled']))
     self.assertEqual('second-result', Foo(disabled_services=['disabled']))
+    self.assertEqual(0, Foo(disabled_services=True))
+    self.assertRaises(TypeError, Foo, disabled_services='disabled')
 
     self.mox.VerifyAll()
 

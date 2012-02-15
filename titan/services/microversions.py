@@ -86,7 +86,7 @@ class HookForWrite(hooks.Hook):
     deferred.defer(_CommitMicroversion, created_by=created_by, write=True,
                    _queue=SERVICE_NAME, **kwargs)
     changed_kwargs = _DisableService(versions.SERVICE_NAME, **kwargs)
-    changed_kwargs['_delete_old_blobs'] = False
+    changed_kwargs['_delete_old_blob'] = False
     return changed_kwargs
 
 class HookForTouch(hooks.Hook):
@@ -150,7 +150,7 @@ def _CommitMicroversion(created_by, write=False, touch=False, delete=False,
 
   if write:
     # Write the file through the versions service (microversioning will be off).
-    kwargs['_delete_old_blobs'] = False
+    kwargs['_delete_old_blob'] = False
     files.Write(**kwargs)
   elif touch:
     # Touch the file.
@@ -161,7 +161,7 @@ def _CommitMicroversion(created_by, write=False, touch=False, delete=False,
     # Transform Delete(paths=[]) into multiple Write(path, delete=True) calls.
     paths = kwargs['paths']
     is_multiple = hasattr(paths, '__iter__')
-    kwargs['_delete_old_blobs'] = False
+    kwargs['_delete_old_blob'] = False
     del kwargs['paths']
     for path in paths if is_multiple else [paths]:
       files.Write(path=path, **kwargs)

@@ -118,6 +118,10 @@ class ProvideHook(object):
     # is consumed by the hooks system and shouldn't be passed to core methods.
     disabled_services = composite_kwargs.get('disabled_services')
     if disabled_services is not None:
+      if (disabled_services is not True
+          and not hasattr(disabled_services, '__iter__')):
+        raise TypeError('disabled_services must be an iterable or True. Got: %r'
+                        % disabled_services)
       del composite_kwargs['disabled_services']
 
     # Get the current hooks if any exist.

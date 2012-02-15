@@ -99,16 +99,15 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         raise BadFileError(e)
       raise
 
-  def Write(self, path, content=None, blobs=None, fp=None,
+  def Write(self, path, content=None, blob=None, fp=None,
             mime_type=None, meta=None, **kwargs):
     """Writes contents to a file.
 
     Args:
       path: The path of the file.
       content: A byte string representing the contents of the file.
-      blobs: If content is not provided, a list of BlobKey strings
-          comprising the file.
-      fp: If no content and no blobs, pass an already-open file pointer.
+      blob: If content is not provided, a BlobKey pointing to the file.
+      fp: If no content and no blob, pass an already-open file pointer.
           This file will be uploaded as multipart data directly to the
           blobstore and this File's blob keys will be automatically populated.
           This arg must be used instead of content for files over ~10 MB.
@@ -120,12 +119,8 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     params = [('path', path)]
     if content is not None:
       params.append(('content', content))
-    if blobs is not None:
-      if not hasattr(blobs, '__iter__'):
-        # Prevent single string arguments.
-        raise ValueError('blobs argument must be an iterable.')
-      for blob_key in blobs:
-        params.append(('blobs', str(blob_key)))
+    if blob is not None:
+      params.append(('blob', blob))
     if meta is not None:
       params.append(('meta', simplejson.dumps(meta)))
     if mime_type is not None:
@@ -150,10 +145,32 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         url = response.geturl()
         response_params = urlparse.parse_qs(urlparse.urlparse(url).query)
 
-        # Verify that blobs were not passed in.
-        assert not blobs
-        params.append(('blobs', response_params['blobs'][0]))
+        # Verify that "blob" was not passed in.
+        assert not blob
+        params.append(('blob', response_params['blob'][0]))
       self._Post('/_titan/write', params=params)
+    except urllib2.HTTPError, e:
+      if e.code == 404:
+        raise BadFileError(e)
+      raise
+
+  def Copy(self, source_path, destination_path, **kwargs):
+    """Copies a file.
+
+    Args:
+      source_path: The source path to copy.
+      destination_path: The destination (a full file path).
+      **kwargs: Extra keyword args to pass to the handler.
+    Raises:
+      BadFileError: If the source path does not exist.
+    """
+    params = {
+        'source_path': source_path,
+        'destination_path': destination_path,
+    }
+    params.update(kwargs)
+    try:
+      self._Post('/_titan/copy', params)
     except urllib2.HTTPError, e:
       if e.code == 404:
         raise BadFileError(e)
