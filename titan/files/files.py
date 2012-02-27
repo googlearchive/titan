@@ -917,8 +917,10 @@ def _ReadContentOrBlobs(file_obj):
   else:
     content = files_cache.GetBlob(file_ent.path)
     if content is None:
-      # Backwards-compatibility with deprecated "blobs" property:
-      blob = file_ent.blob or file_ent.blobs[0]
+      blob = file_ent.blob
+      if not file_ent.blob:
+        # Backwards-compatibility with deprecated "blobs" property:
+        blob = blobstore.BlobInfo.get(file_ent.blobs[0])
       content = blob.open().read()
       files_cache.StoreBlob(file_ent.path, content)
   if file_ent.encoding == 'utf-8':

@@ -113,7 +113,7 @@ class BeforeAfterTestCaseMeta(type):
   _test_loader = unittest.defaultTestLoader
 
   def __init__(cls, name, bases, dict):
-    type.__init__(cls, name, bases, dict)
+    super(BeforeAfterTestCaseMeta, cls).__init__(name, bases, dict)
 
     # Notes from mtklein
 
