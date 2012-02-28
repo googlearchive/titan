@@ -467,6 +467,36 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(AttributeError, lambda: file_obj.color)
 
   @testing.DisableCaching
+  def testCopyDir(self):
+    files.Touch('/foo/a.html')
+    files.Touch('/foo/baz/a.html')
+    files.Write('/bar/a.html', 'foo')
+    files.Touch('/bar/baz/b.html')
+
+    # Test dry-run copy.
+    new_file_paths = files.CopyDir('/foo/', '/bar', dry_run=True)
+    expected_paths = [
+        '/bar/a.html',
+        '/bar/baz/a.html',
+    ]
+    self.assertListEqual(expected_paths, new_file_paths)
+    self.assertFalse(files.Exists('/bar/baz/a.html'))
+
+    # Test actual copy.
+    new_file_objs = files.CopyDir('/foo/', '/bar')
+    expected_files = [
+        files.File('/bar/a.html'),
+        files.File('/bar/baz/a.html'),
+    ]
+    self.assertListEqual(expected_files, new_file_objs)
+    self.assertEqual('', files.Get('/bar/a.html').content)
+    # b.html should still exist:
+    self.assertTrue(files.Exists('/bar/baz/b.html'))
+
+    # Error handling.
+    self.assertEqual([], files.CopyDir('/fake/', '/foo/'))
+
+  @testing.DisableCaching
   def testListFiles(self):
     # Create files for testing.
     root_level = [

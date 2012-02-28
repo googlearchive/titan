@@ -692,6 +692,48 @@ def Copy(source_path, destination_path, async=False):
                  disabled_services=True)
   return result
 
+@hooks.ProvideHook('copy-dir')
+def CopyDir(source_dir_path, destination_dir_path, dry_run=False):
+  """Copy a directory's contents recursively to another directory path.
+
+  Destination files which exist will be overwritten.
+
+  Args:
+    source_dir_path: An absolute directory path.
+    destination_dir_path: An absolute directory path.
+    dry_run: Whether or not to actually perform the copy.
+  Returns:
+    Default: a list of the new File objects which were created.
+    If dry_run is True, a list of new paths.
+  """
+  # Strip trailing slashes.
+  if source_dir_path != '/' and source_dir_path.endswith('/'):
+    source_dir_path = source_dir_path[:-1]
+  if destination_dir_path != '/' and destination_dir_path.endswith('/'):
+    destination_dir_path = destination_dir_path[:-1]
+
+  source_file_objs = ListFiles(
+      source_dir_path, recursive=True, disabled_services=True)
+  # If not a dry-run, wrap in a SmartFileList to optimize batch fetching
+  # of source file objects.
+  if not dry_run:
+    source_file_objs = SmartFileList(source_file_objs)
+
+  new_paths = []
+  async_results = []
+  for source_file_obj in source_file_objs:
+    new_path = source_file_obj.path.replace(source_dir_path,
+                                            destination_dir_path, 1)
+    if not dry_run:
+      rpc = Copy(source_file_obj, new_path, async=True)
+      async_results.append(rpc)
+    new_paths.append(new_path)
+
+  if dry_run:
+    return new_paths
+  file_keys = [rpc.get_result() for rpc in async_results]
+  return [File(key.name()) for key in file_keys]
+
 @hooks.ProvideHook('list-files')
 def ListFiles(dir_path, recursive=False, depth=None, filters=None):
   """Get list of File objects in the given directory path.
