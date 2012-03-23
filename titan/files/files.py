@@ -725,7 +725,7 @@ def CopyDir(source_dir_path, destination_dir_path, dry_run=False):
     new_path = source_file_obj.path.replace(source_dir_path,
                                             destination_dir_path, 1)
     if not dry_run:
-      rpc = Copy(source_file_obj, new_path, async=True)
+      rpc = Copy(source_file_obj, new_path, async=True, disabled_services=True)
       async_results.append(rpc)
     new_paths.append(new_path)
 

@@ -35,7 +35,7 @@ class HooksTest(testing.ServicesTestCase):
     #
     # Call stack for the wrapped Foo method:
     # Baz pre hook --> Bar pre hook --> Foo --> Bar post hook --> Baz post hook
-    baz_foo_hook().AndReturn(baz_foo_hook)
+    baz_foo_hook(test_kwarg='test').AndReturn(baz_foo_hook)
     baz_foo_hook.Pre(
         base_arg=False, baz_arg=False, bar_arg=False
     ).AndReturn({'base_arg': True})  # baz modifies the base_arg
@@ -50,7 +50,8 @@ class HooksTest(testing.ServicesTestCase):
     self.mox.ReplayAll()
 
     # First, the baz and bar services register.
-    hooks.RegisterHook('baz', 'foo-hook', hook_class=baz_foo_hook)
+    hooks.RegisterHook('baz', 'foo-hook', hook_class=baz_foo_hook,
+                       hook_kwargs={'test_kwarg': 'test'})
     hooks.RegisterHook('bar', 'foo-hook', hook_class=bar_foo_hook)
 
     # Then, the decorated and wrapped Foo() method is called.

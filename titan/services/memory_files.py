@@ -31,13 +31,7 @@ SERVICE_NAME = 'memory-files'
 # TODO(user): Allow this to be customized by a service config setting.
 DEFAULT_MRU_SIZE = 300
 
-# Map of paths to File objects.
-# This is used for request-local storage of File objects to prevent repeated
-# RPCs, at the expense of only having request-level consistency of file read
-# operations. Each new request clears this object (not really thread-safe).
-# TODO(user): Figure out how to have true request-local storage in 2.7.
-_global_file_objs = datastructures.MRUDict(max_size=DEFAULT_MRU_SIZE)
-_global_current_request_hash = ''
+_ENVIRON_FILES_STORE_NAME = 'titan-memory-files-store'
 
 # The "RegisterService" method is required for all Titan service plugins.
 def RegisterService():
@@ -82,26 +76,30 @@ class HookForCopy(hooks.Hook):
     paths = files.ValidatePaths(kwargs['destination_path'])
     _Clear(paths)
 
+def _GetRequestLocalFilesStore():
+  """Returns a request-local MRUDict mapping paths to File objects."""
+  # os.environ is replaced by the runtime environment with a request-local
+  # object, allowing non-string types to be stored globally in the environment
+  # and automatically cleaned up at the end of each request.
+  if _ENVIRON_FILES_STORE_NAME not in os.environ:
+    local_files_store = datastructures.MRUDict(max_size=DEFAULT_MRU_SIZE)
+    os.environ[_ENVIRON_FILES_STORE_NAME] = local_files_store
+  return os.environ[_ENVIRON_FILES_STORE_NAME]
+
 def _Get(paths):
   """Get File objects from paths, and populate the global cache."""
   is_multiple = hasattr(paths, '__iter__')
-
-  # Important: if this is the beginning of a new request, clear the previous
-  # request's file_objs so we never use them.
-  global _global_current_request_hash
-  if _global_current_request_hash != os.environ['REQUEST_ID_HASH']:
-    _global_file_objs.clear()
-    _global_current_request_hash = os.environ['REQUEST_ID_HASH']
+  local_files_store = _GetRequestLocalFilesStore()
 
   paths_set = set(paths if is_multiple else [paths])
-  cached_file_keys = set(_global_file_objs.keys())
+  cached_file_keys = set(local_files_store.keys())
   cached_paths = list(cached_file_keys & paths_set)
   uncached_paths = list(paths_set - cached_file_keys)
 
   if cached_paths and not uncached_paths:
     # All of the requested files are currently in the cache; return this subset.
     file_objs = dict(
-        (k, _global_file_objs[k]) for k in cached_paths if _global_file_objs[k])
+        (k, local_files_store[k]) for k in cached_paths if local_files_store[k])
     return __NormalizeResult(file_objs, is_multiple)
 
   # Merge file objects which existed in the global cache into the result.
@@ -110,28 +108,29 @@ def _Get(paths):
   file_objs = {}
   for path in cached_paths:
     # This affects the MRUDict, so only grab the value once.
-    value = _global_file_objs[path]
+    value = local_files_store[path]
     if value:  # The cached calue could be None, meaning the file doesn't exist.
       file_objs[path] = value
 
   new_file_objs = files.Get(uncached_paths, disabled_services=True)
-  _global_file_objs.update(new_file_objs)
+  local_files_store.update(new_file_objs)
   file_objs.update(new_file_objs)
 
   # Also store Nones, so that non-existent files are not re-fetched.
   for path in uncached_paths:
     if path not in new_file_objs:
-      _global_file_objs[path] = None
+      local_files_store[path] = None
 
   return __NormalizeResult(file_objs, is_multiple)
 
 def _Clear(paths):
   """Remove paths from the global cache."""
   is_multiple = hasattr(paths, '__iter__')
+  local_files_store = _GetRequestLocalFilesStore()
   paths_list = paths if is_multiple else [paths]
   for path in paths_list:
-    if path in _global_file_objs:
-      del _global_file_objs[path]
+    if path in local_files_store:
+      del local_files_store[path]
 
 def __NormalizeResult(file_objs, is_multiple):
   """Handle all result cases including multiple paths and non-existent paths."""

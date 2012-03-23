@@ -18,9 +18,9 @@
 from tests import testing
 
 try:
-  import json as simplejson
+  import json
 except ImportError:
-  import simplejson
+  import simplejson as json
 import time
 import urllib
 from google.appengine.api import blobstore
@@ -101,12 +101,12 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
     self.assertEqual(200, response.status)
     self.assertEqual('application/json', response.headers['Content-Type'])
     self.assertSameElements(expected_result,
-                            simplejson.loads(response.out.getvalue()))
+                            json.loads(response.out.getvalue()))
     response = self.Get(handlers.GetHandler, params={
         'path': self.error_path,
     })
     self.assertEqual(200, response.status)
-    self.assertEqual({}, simplejson.loads(response.out.getvalue()))
+    self.assertEqual({}, json.loads(response.out.getvalue()))
 
   def testReadHandler(self):
     # Verify that GET requests return the file contents.
@@ -297,7 +297,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
-    file_objs = simplejson.loads(response.out.getvalue())
+    file_objs = json.loads(response.out.getvalue())
     self.assertSameElements(
         expected, [file_obj['path'] for file_obj in file_objs])
 
@@ -311,7 +311,7 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
-    result = simplejson.loads(response.out.getvalue())
+    result = json.loads(response.out.getvalue())
     dirs, file_objs = result['dirs'], result['files']
     self.assertSameElements(['bar'], dirs)
     self.assertSameElements(
@@ -325,10 +325,10 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'fake_arg_stripped_by_validators': 'foo',
     })
     self.assertEqual(200, response.status)
-    self.assertTrue(simplejson.loads(response.out.getvalue()))
+    self.assertTrue(json.loads(response.out.getvalue()))
     response = self.Get(handlers.DirExistsHandler, params={'path': '/fake'})
     self.assertEqual(200, response.status)
-    self.assertFalse(simplejson.loads(response.out.getvalue()))
+    self.assertFalse(json.loads(response.out.getvalue()))
 
 if __name__ == '__main__':
   basetest.main()

@@ -40,7 +40,10 @@ LARGE_CONTENT = 'a' * (titan_client.DIRECT_TO_BLOBSTORE_SIZE + 1)
 class TitanCommandsTest(testing.BaseTestCase):
 
   def setUp(self):
-    super(TitanCommandsTest, self).setUp()
+    # The GAE patched environment has a thread-local object for os.environ,
+    # which messes with the state of threads used in this module. Disable
+    # the patch, since titan_client is only a local command-line tool.
+    super(TitanCommandsTest, self).setUp(enable_environ_patch=False)
     self.commands = titan_client.TitanCommands()
     self.commands.flags = {
         'host': 'localhost',

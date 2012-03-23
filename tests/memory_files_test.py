@@ -33,7 +33,7 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.EnableServices(services)
 
   def testMemoryFile(self):
-    global_file_objs = memory_files._global_file_objs
+    local_files_store = memory_files._GetRequestLocalFilesStore()
 
     # First request.
     os.environ['REQUEST_ID_HASH'] = 'aaaa'
@@ -43,15 +43,15 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.assertEqual({}, files.Get(['/bar']))
 
     files.Write('/foo', 'bar', meta={'color': 'blue'})
-    self.assertFalse('/foo' in global_file_objs)
+    self.assertFalse('/foo' in local_files_store)
     self.assertEqual('bar', files.Get('/foo').content)
     self.assertEqual('blue', files.Get('/foo').color)
-    self.assertTrue('/foo' in global_file_objs)
+    self.assertTrue('/foo' in local_files_store)
     self.assertEqual('bar', files.Get(['/fake1', '/foo']).values()[0].content)
 
     # Writes should clear the cache for that path.
     files.Write('/foo', meta={'color': 'red'})
-    self.assertFalse('/foo' in global_file_objs)
+    self.assertFalse('/foo' in local_files_store)
 
     # Make sure that a memcache RPC isn't made when getting the file
     # the second time.
@@ -67,21 +67,12 @@ class MemoryFileTest(testing.ServicesTestCase):
     self.assertEqual({}, files.Get(['/qux']))
     self.stubs.UnsetAll()
 
-    # Second request; globals should be cleared after the first files.Get.
-    global_file_objs.clear()
-    files.Get(['/some', '/random', '/files'])
-    self.assertEqual(3, len(global_file_objs))
-    os.environ['REQUEST_ID_HASH'] = 'bbbb'
-    files.Get('/foo')
-    self.assertEqual(1, len(global_file_objs))
-    self.assertEqual('red', files.Get('/foo').color)
-
     # Verify that filling the cache past its eviction limit works correctly.
     paths = ['/foo%s' % i for i in range(memory_files.DEFAULT_MRU_SIZE + 10)]
     files.Touch(paths)
     files.Get(paths)
     self.assertEqual(1, len(files.Get(['/fake2', paths[-1]])))
-    self.assertEqual(memory_files.DEFAULT_MRU_SIZE, len(global_file_objs))
+    self.assertEqual(memory_files.DEFAULT_MRU_SIZE, len(local_files_store))
 
     # Regression test: make sure files.Exists returns booleans.
     self.assertEqual(False, files.Exists('/fake3'))

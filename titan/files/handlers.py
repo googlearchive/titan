@@ -21,9 +21,9 @@ except ImportError:
   pass
 
 try:
-  import json as simplejson
+  import json
 except ImportError:
-  import simplejson
+  import simplejson as json
 import time
 import urllib
 from google.appengine.api import blobstore
@@ -39,7 +39,7 @@ class BaseHandler(webapp.RequestHandler):
   def WriteJsonResponse(self, data, **kwargs):
     """Data to serialize. Accepts keyword args to pass to the serializer."""
     self.response.headers['Content-Type'] = 'application/json'
-    json_data = simplejson.dumps(data, cls=CustomFileSerializer, **kwargs)
+    json_data = json.dumps(data, cls=CustomFileSerializer, **kwargs)
     self.response.out.write(json_data)
 
 class ExistsHandler(BaseHandler):
@@ -98,7 +98,7 @@ class WriteHandler(BaseHandler):
 
     meta = self.request.get('meta', None)
     if meta:
-      meta = simplejson.loads(meta)
+      meta = json.loads(meta)
     mime_type = self.request.get('mime_type', None)
 
     # Get and validate extra parameters exposed by service layers.
@@ -210,8 +210,8 @@ class DirExistsHandler(BaseHandler):
         hook_name='http-dir-exists', request_params=self.request.params)
     return self.WriteJsonResponse(files.DirExists(path, **valid_params))
 
-class CustomFileSerializer(simplejson.JSONEncoder):
-  """A custom serializer for simplejson to support File objects."""
+class CustomFileSerializer(json.JSONEncoder):
+  """A custom serializer for json to support File objects."""
 
   def __init__(self, full=False, *args, **kwargs):
     self.full = full

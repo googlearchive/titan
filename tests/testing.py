@@ -43,6 +43,7 @@ from titan.common import hooks
 from titan.files import client
 from titan.files import files_cache
 from titan.files import handlers
+from google.appengine.runtime import request_environment
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
 
@@ -79,7 +80,16 @@ class MockableTestCase(basetest.TestCase):
 class BaseTestCase(MockableTestCase):
   """Base test case for tests requiring Datastore, Memcache, or Blobstore."""
 
-  def setUp(self):
+  def setUp(self, enable_environ_patch=True):
+    # Evil os-environ patching which mirrors dev_appserver and production.
+    # This must come first.
+    self.enable_environ_patch = enable_environ_patch
+    if self.enable_environ_patch:
+      self._old_os_environ = os.environ.copy()
+      request_environment.current_request.Clear()
+      request_environment.PatchOsEnviron()
+      os.environ.update(self._old_os_environ)
+
     # Manually setup blobstore and files stubs (until supported in testbed).
     #
     # Setup base blobstore service stubs.
@@ -105,18 +115,23 @@ class BaseTestCase(MockableTestCase):
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
     self.testbed.init_memcache_stub()
-    self.testbed.init_taskqueue_stub(_all_queues_valid=True)
+    # All task queues must be specified in common/queue.yaml.
+    self.testbed.init_taskqueue_stub(root_path=os.path.dirname(__file__),
+                                     _all_queues_valid=True)
     self.testbed.setup_env(
-        app_id='testbed-test',
+        app_id=self.appid,
         user_email='titanuser@example.com',
         user_id='1',
         overwrite=True,
         http_host='localhost:8080',
     )
     self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
+
     super(BaseTestCase, self).setUp()
 
   def tearDown(self):
+    if self.enable_environ_patch:
+      os.environ = self._old_os_environ
     self.testbed.deactivate()
     super(BaseTestCase, self).tearDown()
 

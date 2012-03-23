@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://www.google.com/jsapi"></script>
+<script>
+  google.load('visualization', '1.0', {
+    'packages' : [ 'corechart', 'annotatedtimeline' ]
+  });
+  google.setOnLoadCallback(drawVisualization);
+
+  function drawVisualization() {
+    var data = new google.visualization.DataTable();
+    data.addColumn('datetime', 'Date');
+
+    var rowIndex = -1;
+    var colIndex;
+    {% for counter_name, counter_data in aggregate_data.iteritems %}
+      data.addColumn('number', '{{counter_name}}');
+      data.addColumn('string', 'title{{forloop.counter0}}');
+      data.addColumn('string', 'text{{forloop.counter0}}');
+      {% for timestamp, value in counter_data %}
+        data.addRow();
+        rowIndex++;
+        colIndex = {{forloop.parentloop.counter0}} * 3 + 1;
+        data.setValue(rowIndex, 0, new Date({{timestamp}} * 1000));
+        {# Slightly magical: if it's a list, treat the first number as the primary value. #}
+        data.setValue(rowIndex, colIndex, {% if value.pop %}{{value.0}}{% else %}{{value}}{% endif %});
+      {% endfor %}
+    {% endfor %}
+
+    var graphEl = document.getElementById('graph');
+    var annotatedtimeline = new google.visualization.AnnotatedTimeLine(graphEl);
+    var options = {
+      'height' : 300,
+      'fill' : 10,
+      'thickness' : 2,
+      'displayAnnotations' : true,
+      'displayExactValues' : true,
+      'legendPosition' : 'newRow'
+    };
+    annotatedtimeline.draw(data, options);
+  }
+</script>
+</head>
+<body>
+  <div id="graph" style="width: 100%; height: 300px"></div>
+</body>
+</html>

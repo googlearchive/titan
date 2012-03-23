@@ -24,9 +24,9 @@ Usage:
 """
 
 try:
-  import json as simplejson
+  import json
 except ImportError:
-  import simplejson
+  import simplejson as json
 import datetime
 import httplib
 import urllib
@@ -52,7 +52,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     """Returns True if the path exists, False otherwise."""
     params = {'path': path}
     params.update(kwargs)
-    return simplejson.loads(self._Get('/_titan/exists', params))
+    return json.loads(self._Get('/_titan/exists', params))
 
   def Get(self, paths, full=False, **kwargs):
     """Gets a serialized version of one or more files.
@@ -77,7 +77,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       params += [('full', full)]
     params += kwargs.items()
 
-    data = simplejson.loads(self._Get('/_titan/get', params))
+    data = json.loads(self._Get('/_titan/get', params))
     if not is_multiple and not data:
       # Single file requested doesn't exist.
       return
@@ -122,7 +122,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     if blob is not None:
       params.append(('blob', blob))
     if meta is not None:
-      params.append(('meta', simplejson.dumps(meta)))
+      params.append(('meta', json.dumps(meta)))
     if mime_type is not None:
       params.append(('mime_type', mime_type))
     params += kwargs.items()
@@ -199,20 +199,20 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     params.update(kwargs)
     if recursive:
       params['recursive'] = 1
-    return simplejson.loads(self._Get('/_titan/listfiles', params))
+    return json.loads(self._Get('/_titan/listfiles', params))
 
   def ListDir(self, path, **kwargs):
     """Lists directory strings and files in a directory."""
     params = {'path': path}
     params.update(kwargs)
-    result = simplejson.loads(self._Get('/_titan/listdir', params))
+    result = json.loads(self._Get('/_titan/listdir', params))
     return (result['dirs'], result['files'])
 
   def DirExists(self, path, **kwargs):
     """Check the existence of a directory."""
     params = {'path': path}
     params.update(kwargs)
-    return simplejson.loads(self._Get('/_titan/direxists', params))
+    return json.loads(self._Get('/_titan/direxists', params))
 
   def ValidateClientAuth(self):
     """Test the stored credentials, may raise AuthenticationError."""

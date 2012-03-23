@@ -38,6 +38,9 @@ import gflags as flags
 FLAGS = flags.FLAGS
 
 flags.DEFINE_boolean('run_with_pdb', 0, 'Set to true for PDB debug mode')
+flags.DEFINE_boolean('pdb_post_mortem', 0,
+                     'Set to true to handle uncaught exceptions with PDB '
+                     'post mortem.')
 flags.DEFINE_boolean('run_with_profiling', 0,
                      'Set to true for profiling the script. '
                      'Execution will be slower, and the output format might '
@@ -203,6 +206,11 @@ def really_start(main=None):
         sys.exit(main(argv))
   except UsageError, error:
     usage(shorthelp=1, detailed_error=error, exitcode=error.exitcode)
+  except:
+    if FLAGS.pdb_post_mortem:
+      traceback.print_exc()
+      pdb.post_mortem()
+    raise
 
 
 def run():

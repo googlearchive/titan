@@ -1,0 +1,5 @@
+handlers:
+- url: /_titan/.*
+  script: titan.files.handlers.application
+  login: admin
+  secure: always

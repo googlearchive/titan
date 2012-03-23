@@ -30,7 +30,7 @@ FLAGS = flags.FLAGS
 class TitanFilesystemCommandsTest(testing.BaseTestCase):
 
   def setUp(self):
-    super(TitanFilesystemCommandsTest, self).setUp()
+    super(TitanFilesystemCommandsTest, self).setUp(enable_environ_patch=False)
     self.commands = titanfs.TitanFilesystemCommands()
     self.commands.flags = {
         'host': 'localhost',

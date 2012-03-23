@@ -35,8 +35,6 @@ class PermissionsError(IOError):
 
 # The "RegisterService" method is required for all Titan service plugins.
 def RegisterService():
-  # TODO(user): Add allow_disabled=False functionality to service layer
-  # hooks. Until then, don't expose disabled_services in handlers.py.
   hooks.RegisterHook(SERVICE_NAME, 'file-get', hook_class=HookForGet)
   hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
   hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)
@@ -48,8 +46,6 @@ class Permissions(object):
   def __init__(self, read_users=None, write_users=None):
     self.read_users = set() if read_users is None else set(read_users)
     self.write_users = set() if write_users is None else set(write_users)
-
-# Allow unused arguments since hook methods must support base method arguments.
 
 class HookForGet(hooks.Hook):
   """Hook for files.Get()."""

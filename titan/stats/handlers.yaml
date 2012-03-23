@@ -1,0 +1,5 @@
+handlers:
+- url: /_titan/stats/.*
+  script: titan.stats.handlers.application
+  login: admin
+  secure: always

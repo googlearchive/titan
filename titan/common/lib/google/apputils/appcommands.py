@@ -288,6 +288,11 @@ class Cmd(object):
         return ret
       except app.UsageError, error:
         app.usage(shorthelp=1, detailed_error=error, exitcode=error.exitcode)
+      except:
+        if FLAGS.pdb_post_mortem:
+          traceback.print_exc()
+          pdb.post_mortem()
+        raise
     finally:
       # Restore app.usage and remove this command's flags from the global flags.
       app.usage = orig_app_usage
