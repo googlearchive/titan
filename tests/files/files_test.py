@@ -17,7 +17,7 @@
 
 """Tests for files.py."""
 
-from tests import testing
+from tests.common import testing
 
 import copy
 import datetime

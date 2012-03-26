@@ -15,12 +15,12 @@
 
 """Tests for Titan client."""
 
-from tests import testing
+from tests.common import testing
 
 import mox
 from google.appengine.tools import appengine_rpc
 from titan.common.lib.google.apputils import basetest
-from tests import testing
+from tests.common import testing
 from titan.files import client
 from titan.files import files
 

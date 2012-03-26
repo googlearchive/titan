@@ -27,7 +27,7 @@ import urllib2
 import mox
 import gflags as flags
 from titan.common.lib.google.apputils import basetest
-from tests import testing
+from tests.common import testing
 from titan.files import files
 from titan.utils import titan_client
 

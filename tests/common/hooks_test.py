@@ -15,7 +15,7 @@
 
 """Tests for hooks.py."""
 
-from tests import testing
+from tests.common import testing
 
 from titan.common.lib.google.apputils import basetest
 from titan.common import hooks

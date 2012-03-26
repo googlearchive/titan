@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from tests import testing
+from tests.common import testing
 
 from google.appengine.api import namespace_manager
 from titan.common.lib.google.apputils import basetest

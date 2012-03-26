@@ -18,3 +18,7 @@ queue:
 - name: full-text-search
   rate: 100/s
 
+# For db/db.py.
+- name: titandb
+  rate: 100/s
+

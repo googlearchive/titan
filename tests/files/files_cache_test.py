@@ -15,7 +15,7 @@
 
 """Tests for files_cache.py."""
 
-from tests import testing
+from tests.common import testing
 
 from google.appengine.api import memcache
 from titan.common.lib.google.apputils import basetest

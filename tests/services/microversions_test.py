@@ -15,7 +15,7 @@
 
 """Tests for microversions.py."""
 
-from tests import testing
+from tests.common import testing
 
 from google.appengine.api import files as blobstore_files
 from google.appengine.api import users

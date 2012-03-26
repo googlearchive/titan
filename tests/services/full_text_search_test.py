@@ -15,7 +15,7 @@
 
 """Tests for full_text_search.py"""
 
-from tests import testing
+from tests.common import testing
 
 import datetime
 from titan.common.lib.google.apputils import basetest

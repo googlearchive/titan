@@ -15,7 +15,7 @@
 
 """Tests for Titan handlers."""
 
-from tests import testing
+from tests.common import testing
 
 try:
   import json
@@ -25,7 +25,7 @@ import time
 import urllib
 from google.appengine.api import blobstore
 from titan.common.lib.google.apputils import basetest
-from tests import webapp_testing
+from tests.common import webapp_testing
 from titan.files import files
 from titan.files import handlers
 

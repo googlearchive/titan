@@ -15,7 +15,7 @@
 
 """Tests for versions.py."""
 
-from tests import testing
+from tests.common import testing
 
 import datetime
 from google.appengine.api import users

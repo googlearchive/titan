@@ -26,7 +26,7 @@ import urllib
 import urlparse
 import mox
 from mox import stubout
-from tests import appengine_rpc_test_util
+from tests.common import appengine_rpc_test_util
 from google.appengine.api import files as blobstore_files
 from google.appengine.api import memcache
 from google.appengine.datastore import datastore_stub_util
@@ -38,7 +38,7 @@ from google.appengine.api import apiproxy_stub_map
 from google.appengine.api.blobstore import blobstore_stub
 from google.appengine.api.blobstore import file_blob_storage
 from google.appengine.api.files import file_service_stub
-from tests import webapp_testing
+from tests.common import webapp_testing
 from titan.common import hooks
 from titan.files import client
 from titan.files import files_cache

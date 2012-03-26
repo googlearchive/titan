@@ -37,7 +37,12 @@ def main():
 
   test_filenames = sys.argv[1:]
   if not test_filenames:
-    test_filenames = sorted(os.listdir(tests_dir))
+    test_filenames = []
+    for root, unused_dirs, files in os.walk(tests_dir):
+      new_tests = [os.path.join(root, f) for f in files]
+      new_tests = [name.replace(tests_dir + '/', '') for name in new_tests]
+      test_filenames.extend(new_tests)
+    test_filenames = sorted(test_filenames)
 
   for basename in test_filenames:
     filename = os.path.join(tests_dir, basename)

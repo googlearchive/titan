@@ -15,7 +15,7 @@
 
 """Tests for memory_files.py."""
 
-from tests import testing
+from tests.common import testing
 
 import os
 from google.appengine.api import memcache
