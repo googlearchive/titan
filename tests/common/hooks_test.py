@@ -22,10 +22,6 @@ from titan.common import hooks
 
 class HooksTest(testing.ServicesTestCase):
 
-  def tearDown(self):
-    hooks._global_hooks = {}
-    hooks._global_services_order = []
-
   def testHooks(self):
     bar_foo_hook = self.mox.CreateMockAnything()
     baz_foo_hook = self.mox.CreateMockAnything()

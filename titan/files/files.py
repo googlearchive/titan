@@ -862,7 +862,7 @@ def ValidatePaths(paths):
     if not paths:
       return []
     # Make a copy of the paths list since we manipulate it in-place below.
-    paths = paths[:]
+    paths = list(paths[:])
 
   for i, path in enumerate(paths):
     # Support _File and File objects by pulling out the path.

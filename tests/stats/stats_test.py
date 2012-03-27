@@ -18,7 +18,6 @@
 from tests.common import testing
 
 import datetime
-from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
 from titan.stats import stats
 
@@ -176,8 +175,5 @@ class StatsTestCase(testing.BaseTestCase):
     # Weakly test execution path of ProcessWindowsWithBackoff:
     self.assertTrue(aggregator.ProcessWindowsWithBackoff(0))
 
-def main(unused_argv):
-  basetest.main()
-
 if __name__ == '__main__':
-  app.run()
+  basetest.main()

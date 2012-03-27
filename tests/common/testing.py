@@ -82,7 +82,8 @@ class BaseTestCase(MockableTestCase):
 
   def setUp(self, enable_environ_patch=True):
     # Evil os-environ patching which mirrors dev_appserver and production.
-    # This must come first.
+    # This patch turns os.environ into a thread-local object, which also happens
+    # to support storing more than just strings. This patch must come first.
     self.enable_environ_patch = enable_environ_patch
     if self.enable_environ_patch:
       self._old_os_environ = os.environ.copy()
@@ -263,8 +264,9 @@ class ServicesTestCase(BaseTestCase):
   """Base test class for Titan service tests."""
 
   def tearDown(self):
-    hooks.global_hooks = {}
-    hooks.global_services_order = []
+    hooks._global_hooks = {}
+    hooks._global_service_configs = {}
+    hooks._global_services_order = []
 
   def EnableServices(self, services):
     """Let tests define a custom set of TITAN_SERVICES."""

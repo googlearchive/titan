@@ -25,9 +25,9 @@ import logging
 import sys
 import traceback
 
-# For now, store registered services in global variables. These vars are
-# populated when files.py is imported and runs LoadServices(). Because
-# of this, we can guarantee services are registered at the lowest level
+# Store registered services in global variables. These vars are
+# populated when files.py is imported and appengine_config runs LoadServices().
+# Because of this, we can guarantee services are registered at the lowest level
 # no matter which handler is hit first.
 #
 # Data structure:
