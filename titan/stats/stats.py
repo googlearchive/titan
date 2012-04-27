@@ -41,9 +41,9 @@ Internal design and terminology:
   - "Window" or "aggregation window" used below is a unix timestamp rounded to
     some number of seconds. Each window can be thought of as a bucket of time
     used to hold counter data. Each window is also the unit-of-aggregation for
-    data, meaning that if the window size is 10 seconds, there will potentially
-    be 8640 data points stored permanently per day, per counter (since there
-    are 86400 seconds in a day).
+    data, meaning that if the window size is 60 seconds, there will potentially
+    be 1440 data points stored permanently per day, per counter (since there
+    are 1440 minutes in a day).
 
   - The counters work in two steps:
     1. Application code creates, increments, and saves counters during a
@@ -65,16 +65,16 @@ from google.appengine.api import taskqueue
 from titan import files
 
 # The bucket size for an aggregation window, in number of seconds.
-DEFAULT_WINDOW_SIZE = 10
+DEFAULT_WINDOW_SIZE = 60
 
 TASKQUEUE_NAME = 'titan-stats'
-TASKQUEUE_LEASE_SECONDS = 480  # 8 minutes.
+TASKQUEUE_LEASE_SECONDS = 2 * DEFAULT_WINDOW_SIZE  # 2 minutes leasing buffer.
 TASKQUEUE_LEASE_MAX_TASKS = 1000
 
 # The number of seconds before an added task is allowed to be leased.
 # This prevents the aggregator from prematurely consuming the tasks when
-# the window hasn't yet passed.
-TASKQUEUE_LEASE_BUFFER_SECONDS = 3 * DEFAULT_WINDOW_SIZE
+# the window hasn't yet passed. This is really only used for the tests.
+TASKQUEUE_LEASE_BUFFER_SECONDS = DEFAULT_WINDOW_SIZE
 
 BASE_DIR = '/_titan/stats/counters'
 DATA_FILENAME = 'data-%ss.json' % DEFAULT_WINDOW_SIZE
@@ -84,6 +84,8 @@ class AbstractBaseCounter(object):
 
   def __init__(self, name):
     self.name = name
+    # If this property is changed, the window is not calculated automatically.
+    self.timestamp = None
     if ':' in self.name:
       raise ValueError('":" is not allowed in counter name: %s'
                        % name)
@@ -204,13 +206,14 @@ def SaveRequestLocalCounters():
   """Save all environment counters for future aggregation."""
   return SaveCounters(GetRequestLocalCounters())
 
-def SaveCounters(counters, timestamp=None):
+def SaveCounters(counters, timestamp=None, eta=None):
   """Save counter data to a aggregation window.
 
   Args:
-    counters: An iterable of counters.
+    counters: An iterable of counters, potentially with duplicate names.
     timestamp: A unix timestamp. Defaults to the current time if not given.
-    _countdown: An internal argument, specifying the task countdown.
+    eta: A unix timestamp. When the created tasks should be able to be leased.
+        Defaults to the counter's window time + TASKQUEUE_LEASE_BUFFER_SECONDS.
   Raises:
     ValueError: if passed an empty list of counters.
   Result:
@@ -219,29 +222,55 @@ def SaveCounters(counters, timestamp=None):
   counters = counters if hasattr(counters, '__iter__') else [counters]
   if not counters:
     raise ValueError('Counters are required. Got: %r' % counters)
-  window = _GetWindow(time.time() if timestamp is None else timestamp)
-  counter_data = {
-      'window': window,
-      'counters': {},
-  }
+
+  # Aggregate data from counters of the same name.
+  final_counters = []
+  names_to_counters = {}
   for counter in counters:
-    counter_data['counters'][counter.name] = counter.Finalize()
-  counter_data = json.dumps(counter_data)
-  # Important: unlock this window's tasks for lease at the same time,
-  # after the window itself has passed.
-  eta = datetime.datetime.utcfromtimestamp(
-      window + TASKQUEUE_LEASE_BUFFER_SECONDS)
-  try:
-    task = taskqueue.Task(
-        method='PULL',
-        payload=counter_data,
-        tag=str(window),
-        eta=eta)
-    task.add(queue_name=TASKQUEUE_NAME)
-    return counter_data
-  except taskqueue.Error:
-    # Task queue errors from SaveCounters should not kill a request.
-    logging.exception('Unable to add stats task to queue.')
+    if counter.name not in names_to_counters:
+      names_to_counters[counter.name] = counter
+      final_counters.append(counter)
+    else:
+      if counter.timestamp is not None:
+        # Counter has a manual timestamp applied; treat this as it's own unique
+        # counter and don't aggregate data.
+        final_counters.append(counter)
+        continue
+      # Counter name already seen; combine data into the previous counter.
+      names_to_counters[counter.name].Aggregate(counter.Finalize())
+
+  default_window = _GetWindow(time.time() if timestamp is None else timestamp)
+  window_counter_data = {}
+  for counter in final_counters:
+    # Each counter can potentially belong to a different window, because
+    # each timestamp can be overwritten:
+    window = default_window if counter.timestamp is None else counter.timestamp
+    window = int(window)
+    if window not in window_counter_data:
+      window_counter_data[window] = {'window': window, 'counters': {}}
+    window_counter_data[window]['counters'][counter.name] = counter.Finalize()
+
+  # For each aggregation window, put data into the pull queue.
+  for window in sorted(window_counter_data):
+    counter_data = json.dumps(window_counter_data[window])
+    # Important: unlock this window's tasks for lease at the same time,
+    # after the window itself has passed.
+    if eta is None:
+      current_task_eta = datetime.datetime.utcfromtimestamp(
+          window + TASKQUEUE_LEASE_BUFFER_SECONDS)
+    else:
+      current_task_eta = datetime.datetime.utcfromtimestamp(eta)
+    try:
+      task = taskqueue.Task(
+          method='PULL',
+          payload=counter_data,
+          tag=str(window),
+          eta=current_task_eta)
+      task.add(queue_name=TASKQUEUE_NAME)
+    except taskqueue.Error:
+      # Task queue errors from SaveCounters should not kill a request.
+      logging.exception('Unable to add stats task to queue.')
+  return window_counter_data
 
 class Aggregator(object):
   """A service class, used in a cron job to consume and save counters."""
@@ -273,11 +302,15 @@ class Aggregator(object):
     if not tasks:
       return {}
     # Lease tasks by window tag.
-    tasks_in_window = queue.lease_tasks_by_tag(
-        lease_seconds=TASKQUEUE_LEASE_SECONDS,
-        max_tasks=TASKQUEUE_LEASE_MAX_TASKS,
-        tag=tasks[0].tag)
-    tasks.extend(tasks_in_window)
+    have_all_tasks = False
+    while not have_all_tasks:
+      tasks_in_window = queue.lease_tasks_by_tag(
+          lease_seconds=TASKQUEUE_LEASE_SECONDS,
+          max_tasks=TASKQUEUE_LEASE_MAX_TASKS,
+          tag=tasks[0].tag)
+      tasks.extend(tasks_in_window)
+      if len(tasks_in_window) < TASKQUEUE_LEASE_MAX_TASKS:
+        have_all_tasks = True
 
     current_window = json.loads(tasks[0].payload)['window']
     data_to_aggregate = []
@@ -289,7 +322,13 @@ class Aggregator(object):
     available_counter_names = set()
     for counter_data in data_to_aggregate:
       for counter_name, counter_value in counter_data['counters'].iteritems():
-        self._names_to_counters[counter_name].Aggregate(counter_value)
+        try:
+          self._names_to_counters[counter_name].Aggregate(counter_value)
+        except KeyError:
+          logging.error('Counter named "%s" is not configured! Discarding '
+                        'counter task data... fix this by adding the counter '
+                        'to the objects given to the Aggregator service.',
+                        counter_name)
         available_counter_names.add(counter_name)
 
     # Store each counter's finalized data into aggregate_data.
@@ -347,6 +386,17 @@ class Aggregator(object):
       content = []
       if file_obj:
         content = json.loads(file_obj.content)
+
+      # O(n) replicate and remove duplicate window data, so new data overwrites
+      # already present window data (might happen with failed tasks).
+      # TODO(user): Make this faster or more efficient?
+      new_content = []
+      for old_window, old_value in content:
+        if old_window != window:
+          new_content.append((old_window, old_value))
+      content = new_content
+
+      # Add new data point.
       content.append((window, counter_value))
 
       date = datetime.datetime.utcfromtimestamp(window)

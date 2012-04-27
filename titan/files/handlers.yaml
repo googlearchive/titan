@@ -1,4 +1,10 @@
 handlers:
+
+- url: /_titan/finalizeblob
+  script: titan.files.handlers.application
+  # This handler should not require login.
+  secure: always
+
 - url: /_titan/.*
   script: titan.files.handlers.application
   login: admin

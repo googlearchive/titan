@@ -26,12 +26,12 @@ INDEX_NAME = 'titan-' +  SERVICE_NAME
 
 def RegisterService():
   hooks.RegisterHook(SERVICE_NAME, 'file-write', hook_class=HookForWrite)
-  hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForWrite)
+  hooks.RegisterHook(SERVICE_NAME, 'file-touch', hook_class=HookForTouch)
   hooks.RegisterHook(SERVICE_NAME, 'file-copy', hook_class=HookForWrite)
   hooks.RegisterHook(SERVICE_NAME, 'file-delete', hook_class=HookForDelete)
 
 class HookForWrite(hooks.Hook):
-  """Hook for files.Write(), files.Touch(), and files.Copy()."""
+  """Hook for files.Write() and files.Copy()."""
 
   def Post(self, file_obj):
     """Create a search document for the file entity."""
@@ -42,6 +42,24 @@ class HookForWrite(hooks.Hook):
     index = _GetSearchIndex()
     deferred.defer(index.add, doc, _queue=SERVICE_NAME)
     return file_obj
+
+class HookForTouch(hooks.Hook):
+  """Hook for files.Touch()."""
+
+  def Post(self, file_objs):
+    """Create a search document for the file entity."""
+    is_multiple = hasattr(file_objs, '__iter__')
+    if not is_multiple:
+      file_objs = [file_objs]
+    # TODO(user): Support namespace.
+    docs = []
+    for file_obj in file_objs:
+      doc_id = _GetDocId(file_obj.path)
+      fields = _GetSearchFields(file_obj)
+      docs.append(search.Document(doc_id=doc_id, fields=fields))
+    index = _GetSearchIndex()
+    deferred.defer(index.add, docs, _queue=SERVICE_NAME)
+    return file_objs if is_multiple else file_objs[0]
 
 class HookForDelete(hooks.Hook):
   """Hook for files.Delete()."""
@@ -64,6 +82,7 @@ def _GetSearchIndex(index_name=INDEX_NAME, namespace=None):
 
 def _GetDocId(path):
   """Create a unique doc id string for the search document."""
+  path = path.path if hasattr(path, 'path') else path
   return base64.urlsafe_b64encode(path)
 
 def _KeyFromDocId(doc_id):
@@ -77,10 +96,13 @@ def _GetSearchFields(file_obj):
       search.TextField(name='mime_type', value=file_obj.mime_type),
       search.DateField(name='created', value=file_obj.created.date()),
       search.DateField(name='modified', value=file_obj.modified.date()),
-      search.TextField(name='created_by', value=file_obj.created_by.email()),
-      search.TextField(name='modified_by',
-                       value=file_obj.modified_by.email()),
   ]
+  if file_obj.created_by:
+    fields.append(search.TextField(name='created_by',
+                                   value=file_obj.created_by.email()))
+  if file_obj.modified_by:
+    fields.append(search.TextField(name='modified_by',
+                                   value=file_obj.modified_by.email()))
   # If the content isn't using blobs, index it.
   if not file_obj.blob:
     fields.append(search.TextField(name='content', value=file_obj.content))
@@ -104,5 +126,5 @@ def _SearchRequest(query, index_name=INDEX_NAME, namespace=None, **kwargs):
 def SearchRequest(query, index_name=INDEX_NAME, namespace=None, **kwargs):
   """Make a search request and return the file key names (paths)."""
   results = _SearchRequest(query, index_name, namespace, **kwargs)
-  documents = [_KeyFromDocId(x.document.doc_id) for x in results]
+  documents = [_KeyFromDocId(x.doc_id) for x in results]
   return documents

@@ -38,6 +38,7 @@ from google.appengine.api import apiproxy_stub_map
 from google.appengine.api.blobstore import blobstore_stub
 from google.appengine.api.blobstore import file_blob_storage
 from google.appengine.api.files import file_service_stub
+from google.appengine.api.search import simple_search_stub
 from tests.common import webapp_testing
 from titan.common import hooks
 from titan.files import client
@@ -108,6 +109,10 @@ class BaseTestCase(MockableTestCase):
     apiproxy_stub_map.apiproxy.RegisterStub(
         'file', file_service_stub.FileServiceStub(blob_storage))
     file_service_stub._now_function = datetime.datetime.now
+
+    # Setup the simple search stub.
+    self.search_stub = simple_search_stub.SearchServiceStub()
+    apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
 
     # Must come after the apiproxy stubs above.
     self.testbed = testbed.Testbed()

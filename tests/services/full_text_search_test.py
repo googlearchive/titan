@@ -20,7 +20,6 @@ from tests.common import testing
 import datetime
 from titan.common.lib.google.apputils import basetest
 from google.appengine.api import apiproxy_stub_map
-from google.appengine.api.search import simple_search_stub
 from titan.files import files
 from titan.services import full_text_search
 
@@ -32,13 +31,11 @@ class FullTextSearchTest(testing.ServicesTestCase):
         'titan.services.full_text_search',
     )
     self.EnableServices(services)
-    apiproxy_stub_map.apiproxy.RegisterStub(
-        'search',
-        simple_search_stub.SearchServiceStub())
 
   def testFullTextSearch(self):
     files.Touch('/foo')
-    files.Write('/bar', 'bar', mime_type='text/plain')
+    # Should still work if user object doesn't exist.
+    files.Write('/bar', 'bar', mime_type='text/plain', created_by=None)
     files.Copy('/bar', '/foo/bar')
     files.Delete('/bar')
 

@@ -74,7 +74,7 @@ class ReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
       return
     self.response.headers['Content-Type'] = str(file_obj.mime_type)
     self.response.headers['Content-Disposition'] = (
-        'inline; filename=%s' % file_obj.name)
+        'inline; filename=%s' % file_obj.name.encode('ascii', 'replace'))
 
     if file_obj.blob:
       blob_key = file_obj.blob

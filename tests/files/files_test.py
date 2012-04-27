@@ -89,7 +89,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertTrue(file_obj.exists)
     file_obj.Delete()
     self.assertFalse(file_obj.exists)
-    self.assertIsNone(file_obj._file_ent)
+    self.assertFalse(file_obj._file_ent)
     key = files.Write('/foo/bar.html', content='Test', meta=meta)
     rpc = file_obj.Delete(async=True)
     self.assertIsNone(rpc.get_result())

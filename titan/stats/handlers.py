@@ -24,7 +24,14 @@ import datetime
 import json
 import os
 import time
+
+# Allow Django templates to work even if not configured by this app. Defaults to
+# the Django settings defaults. Override this value in appengine_config if
+# necessary.
+if not 'DJANGO_SETTINGS_MODULE' in os.environ:
+  os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
 from django import template
+
 import webapp2
 from titan.stats import stats
 

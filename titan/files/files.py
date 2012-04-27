@@ -27,6 +27,7 @@ Usage:
   files.Delete('/some/file.html')
   files.Touch('/some/file.html')
   files.Copy('/some/file.html', '/other/file.html')
+  files.CopyDir('/some/dir', '/other/dir')
   files.ListFiles('/')
   files.ListDir('/')
   files.DirExists('/some/dir')
@@ -142,8 +143,15 @@ class File(object):
     """Internal property that allows lazy-loading of the public properties."""
     if self._file_ent:
       return self._file_ent
+    elif self._file_ent is False:
+      # Optimization to not make more RPCs if we know the file doesn't exist.
+      raise BadFileError('File does not exist: %s' % self._path)
     # Haven't initialized a File object yet.
-    temp_file_obj, _ = _GetFilesOrDie(self._path)
+    try:
+      temp_file_obj, _ = _GetFilesOrDie(self._path)
+    except BadFileError:
+      self._file_ent = False
+      raise
     self._file_ent = _GetFileEntities(temp_file_obj)
     return self._file_ent
 
@@ -192,9 +200,11 @@ class File(object):
 
   @property
   def exists(self):
-    if self._exists is not None:
-      return self._exists
-    return Exists(self._path)
+    try:
+      # Load file entity instead of calling core Exists() method.
+      return bool(self._file)
+    except BadFileError:
+      return False
 
   @property
   def created_by(self):
