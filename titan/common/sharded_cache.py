@@ -94,7 +94,9 @@ def Set(key, value, time=DEFAULT_EXPIRATION_SECONDS):
   failed_keys = memcache.set_multi(content_map, time=time)
   if failed_keys:
     logging.error('Sharded cache set_multi failed. Keys: %r', failed_keys)
-    if not memcache.delete_multi(failed_keys):
+    # Failed. Delete the sharp_map and any keys which succeeded.
+    failed_keys = memcache.delete_multi(content_map.keys())
+    if failed_keys:
       logging.error('Sharded cache delete_multi failed, Keys: %r', failed_keys)
   return not bool(failed_keys)
 

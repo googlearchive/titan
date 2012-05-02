@@ -30,6 +30,9 @@ SMALL_CONTENT = 'a' * 1000
 LARGE_CONTENT = 'b' * MAX_VALUE_SIZE * 2
 LARGE_CONTENT_PICKLED = pickle.dumps(LARGE_CONTENT)
 
+# 40MB -- Larger than the 32 MiB set_multi max.
+LARGEST_CONTENT = 'c' * MAX_VALUE_SIZE * 40
+
 class ShardedCacheTest(basetest.TestCase):
 
   def setUp(self):
@@ -102,6 +105,16 @@ class ShardedCacheTest(basetest.TestCase):
     self.assertDictEqual(expected_content_shards, content)
     next_shard = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo3')
     self.assertEqual(None, next_shard)
+
+    # Set object larger than 32MB, should die internally and clear cache.
+    sharded_cache.Set('foo', LARGEST_CONTENT)
+    shard_map = memcache.get(sharded_cache.MEMCACHE_PREFIX + 'foo')
+    cache_keys = ['foo0', 'foo1', 'foo2']
+    memcache_keys = [sharded_cache.MEMCACHE_PREFIX + key for key in cache_keys]
+    content = memcache.get_multi(memcache_keys)
+    self.assertEqual(None, shard_map)
+    self.assertEqual(None, sharded_cache.Get('foo'))
+    self.assertDictEqual({}, content)
 
   def testDelete(self):
     # Delete small content with no sharding.

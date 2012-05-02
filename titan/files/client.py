@@ -176,11 +176,14 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         raise BadFileError(e)
       raise
 
-  def Delete(self, path, **kwargs):
-    """Deletes a file."""
+  def Delete(self, paths, **kwargs):
+    """Deletes one or more file paths."""
+    params = list(kwargs.items())
+    if not hasattr(paths, '__iter__'):
+      paths = [paths]
+    params.extend([('path', path) for path in paths])
+
     try:
-      params = {'path': path}
-      params.update(kwargs)
       self._Post('/_titan/delete', params)
     except urllib2.HTTPError, e:
       if e.code == 404:

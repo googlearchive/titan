@@ -181,6 +181,26 @@ class BaseTestCase(MockableTestCase):
       if not found:
         raise AssertionError('%s not found in %s' % (ent, other_entities))
 
+  def assertNdbEntityEqual(self, ent, other_ent, ignore=None):
+    """Assert equality of properties and dynamic properties of two ndb entities.
+
+    Args:
+      ent: First ndb entity.
+      other_ent: Second ndb entity.
+      ignore: A list of strings of properties to ignore in equality checking.
+    Raises:
+      AssertionError: if either entity is None.
+    """
+    ent_properties = {}
+    other_ent_properties = {}
+    for key, prop in ent._properties.iteritems():
+      if key not in ignore:
+        ent_properties[key] = prop._get_value(ent)
+    for key, prop in other_ent._properties.iteritems():
+      if key not in ignore:
+        other_ent_properties[key] = prop._get_value(other_ent)
+    self.assertDictEqual(ent_properties, other_ent_properties)
+
   def assertSameObjects(self, objs, other_objs):
     """Assert that two lists' objects are equal."""
     self.assertEqual(len(objs), len(other_objs),
