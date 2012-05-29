@@ -78,7 +78,7 @@ def RegisterService():
     hooks.RegisterParamValidator(
         SERVICE_NAME, hook_name, validator_func=_GetValidParams)
 
-class VersionedFile(files.File):
+class VersionedFile(files.DeprecatedFile):
   """Subclass of File class for magic hiding of versioned file paths."""
 
   def __init__(self, file_obj):

@@ -210,6 +210,75 @@ class DirExistsHandler(BaseHandler):
         hook_name='http-dir-exists', request_params=self.request.params)
     return self.WriteJsonResponse(files.DirExists(path, **valid_params))
 
+class FileHandler(BaseHandler):
+  """RESTful file handler."""
+
+  def get(self):
+    """GET handler."""
+    path = self.request.get('path')
+    full = bool(self.request.get('full'))
+    titan_file = files.File(path)
+    if not titan_file.exists:
+      self.error(404)
+      return
+    # TODO(user): when full=True, this may fail for files with byte-string
+    # content.
+    self.WriteJsonResponse(files.File(path), full=full)
+
+  def post(self):
+    """POST handler."""
+    path = self.request.get('path')
+    # Must use str_POST here to preserve the original encoding of the string.
+    content = self.request.str_POST.get('content')
+    blob = self.request.get('blob', None)
+    if blob is not None:
+      # Convert any string keys to BlobKey instances.
+      if isinstance(blob, basestring):
+        blob = blobstore.BlobKey(blob)
+
+    meta = self.request.get('meta', None)
+    if meta:
+      meta = json.loads(meta)
+    mime_type = self.request.get('mime_type', None)
+
+    try:
+      files.File(path).Write(content, blob=blob, mime_type=mime_type,
+                             meta=meta)
+      self.response.set_status(201)
+      self.response.headers['Location'] = '/_titan/file/?path=%s' % path
+    except files.BadFileError:
+      self.error(404)
+    except (TypeError, ValueError):
+      self.error(400)
+
+  def delete(self):
+    """DELETE handler."""
+    path = self.request.get('path')
+    try:
+      files.File(path).Delete()
+    except files.BadFileError:
+      self.error(404)
+
+class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
+  """Handler to return contents of a file."""
+
+  def get(self):
+    """GET handler."""
+    path = self.request.get('path')
+    titan_file = files.File(path)
+    if not titan_file.exists:
+      self.error(404)
+      return
+    self.response.headers['Content-Type'] = str(titan_file.mime_type)
+    self.response.headers['Content-Disposition'] = (
+        'inline; filename=%s' % titan_file.name.encode('ascii', 'replace'))
+
+    if titan_file.blob:
+      blob_key = titan_file.blob
+      self.send_blob(blob_key, content_type=str(titan_file.mime_type))
+    else:
+      self.response.out.write(titan_file.content)
+
 class CustomFileSerializer(json.JSONEncoder):
   """A custom serializer for json to support File objects."""
 
@@ -230,6 +299,12 @@ class CustomFileSerializer(json.JSONEncoder):
     raise TypeError(repr(obj) + ' is not JSON serializable.')
 
 URL_MAP = (
+    ('/_titan/file', FileHandler),
+    ('/_titan/file/read', FileReadHandler),
+    ('/_titan/file/newblob', NewBlobHandler),
+    ('/_titan/file/finalizeblob', FinalizeBlobHandler),
+
+    # Deprecated API:
     ('/_titan/exists', ExistsHandler),
     ('/_titan/get', GetHandler),
     ('/_titan/read', ReadHandler),

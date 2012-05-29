@@ -63,7 +63,7 @@ class PermissionsTest(testing.ServicesTestCase):
                       user='bob')
     # Verify Get() and Delete() hooks.
     self.assertEqual('Test', files.Get('/bar').content)
-    self.assertEqual('Test', files.File('/bar').content)
+    self.assertEqual('Test', files.DeprecatedFile('/bar').content)
     self.assertEqual(None, files.Delete('/bar'))
 
     # Allow app-level admins to do anything.

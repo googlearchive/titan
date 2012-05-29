@@ -86,7 +86,7 @@ def _GetDocId(path):
   return base64.urlsafe_b64encode(path)
 
 def _KeyFromDocId(doc_id):
-  return base64.urlsafe_b64decode(doc_id)
+  return base64.urlsafe_b64decode(str(doc_id))
 
 def _GetSearchFields(file_obj):
   """Create a list of search fields to be indexed for the document."""

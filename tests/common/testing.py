@@ -20,20 +20,15 @@ import cStringIO
 import datetime
 import os
 import shutil
-import sys
 import types
-import urllib
 import urlparse
 import mox
 from mox import stubout
-from tests.common import appengine_rpc_test_util
-from google.appengine.api import files as blobstore_files
-from google.appengine.api import memcache
 from google.appengine.datastore import datastore_stub_util
-from google.appengine.ext import blobstore
-from google.appengine.ext import db
 from google.appengine.ext import deferred
 from google.appengine.ext import testbed
+import gflags as flags
+from titan.common.lib.google.apputils import basetest
 from google.appengine.api import apiproxy_stub_map
 from google.appengine.api.blobstore import blobstore_stub
 from google.appengine.api.blobstore import file_blob_storage
@@ -45,8 +40,7 @@ from titan.files import client
 from titan.files import files_cache
 from titan.files import handlers
 from google.appengine.runtime import request_environment
-import gflags as flags
-from titan.common.lib.google.apputils import basetest
+from tests.common import appengine_rpc_test_util
 
 def DisableCaching(func):
   """Decorator for disabling the files_cache module for a test case."""
@@ -292,6 +286,7 @@ class ServicesTestCase(BaseTestCase):
     hooks._global_hooks = {}
     hooks._global_service_configs = {}
     hooks._global_services_order = []
+    super(ServicesTestCase, self).tearDown()
 
   def EnableServices(self, services):
     """Let tests define a custom set of TITAN_SERVICES."""

@@ -81,6 +81,71 @@ def GetTimeMicros(time_tuple):
   return int(SecondsToMicroseconds(GetSecondsSinceEpoch(time_tuple)))
 
 
+def DatetimeToUTCMicros(date):
+  """Converts a datetime object to microseconds since the epoch in UTC.
+
+  Args:
+    date: A datetime to convert.
+  Returns:
+    The number of microseconds since the epoch, in UTC, represented by the input
+    datetime.
+  """
+  # Using this guide: http://wiki.python.org/moin/WorkingWithTime
+  # And this conversion guide: http://docs.python.org/library/time.html
+
+  # Turn the date parameter into a tuple (struct_time) that can then be
+  # manipulated into a long value of seconds.  During the conversion from
+  # struct_time to long, the source date in UTC, and so it follows that the
+  # correct transformation is calendar.timegm()
+  micros = calendar.timegm(date.utctimetuple()) * _MICROSECONDS_PER_SECOND
+  return micros + date.microsecond
+
+
+def DatetimeToUTCMillis(date):
+  """Converts a datetime object to milliseconds since the epoch in UTC.
+
+  Args:
+    date: A datetime to convert.
+  Returns:
+    The number of milliseconds since the epoch, in UTC, represented by the input
+    datetime.
+  """
+  return DatetimeToUTCMicros(date) / 1000
+
+
+def UTCMicrosToDatetime(micros, tz=None):
+  """Converts a microsecond epoch time to a datetime object.
+
+  Args:
+    micros: A UTC time, expressed in microseconds since the epoch.
+    tz: The desired tzinfo for the datetime object. If None, the
+        datetime will be naive.
+  Returns:
+    The datetime represented by the input value.
+  """
+  # The conversion from micros to seconds for input into the
+  # utcfromtimestamp function needs to be done as a float to make sure
+  # we dont lose the sub-second resolution of the input time.
+  dt = datetime.datetime.utcfromtimestamp(
+      micros / _MICROSECONDS_PER_SECOND_F)
+  if tz is not None:
+    dt = tz.fromutc(dt)
+  return dt
+
+
+def UTCMillisToDatetime(millis, tz=None):
+  """Converts a millisecond epoch time to a datetime object.
+
+  Args:
+    millis: A UTC time, expressed in milliseconds since the epoch.
+    tz: The desired tzinfo for the datetime object. If None, the
+        datetime will be naive.
+  Returns:
+    The datetime represented by the input value.
+  """
+  return UTCMicrosToDatetime(millis * 1000, tz)
+
+
 UTC = pytz.UTC
 US_PACIFIC = pytz.timezone('US/Pacific')
 

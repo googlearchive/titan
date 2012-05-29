@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2011 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,46 +13,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A filesystem abstraction for AppEngine apps.
+"""A filesystem abstraction for App Engine apps.
 
 Documentation:
   http://code.google.com/p/titan-files/
 
 Usage:
-  See class docstring below for how to use File objects.
+  titan_file = files.File('/some/file')
+  titan_file.Write(content='hello world')
+  titan_file.Delete()
+  titan_file.CopyTo(files.File('/destination/file'))
+  files.File.ValidatePath('/some/file')
 
-  files.Exists('/some/file.html')
-  files.Get('/some/file.html')
-  files.Write('/some/file.html', content='Hello')
-  files.Delete('/some/file.html')
-  files.Touch('/some/file.html')
-  files.Copy('/some/file.html', '/other/file.html')
-  files.CopyDir('/some/dir', '/other/dir')
-  files.ListFiles('/')
-  files.ListDir('/')
-  files.DirExists('/some/dir')
-
-  Some of these methods can take async=True and return asynchronous RPC objects.
+  titan_files = files.Files.Get(['/some/file', '/other/file'])
+  titan_files = files.Files.List('/some/dir')
+  titan_files.Delete()
+  files.Files.ValidatePaths(['/some/file', '/other/file'])
 """
 
 try:
-  # Load appengine_config here to guarantee that that hooks.LoadServices
-  # can register all services for any request paths.
+  # Load appengine_config here to guarantee that custom factories can be
+  # registered before any File operation takes place.
   import appengine_config
 except ImportError:
   appengine_config = None
 
 import collections
+import hashlib
+import os
+
+# TODO(user): deprecated, remove when migration is complete.
+if os.environ.get('APPENGINE_RUNTIME') == 'python':
+  # For Python 2.5 import compatibility, monkey patch dict as Mapping (evil).
+  collections.Mapping = getattr(collections, 'Mapping', dict)
+
 import cStringIO
 import datetime
 import logging
-import mimetypes
-import os
+
 from google.appengine.api import files as blobstore_files
 from google.appengine.ext import blobstore
 from google.appengine.ext import db
 from google.appengine.ext import deferred
+from google.appengine.ext import ndb
+
 from titan.common import hooks
+from titan.common import utils
 from titan.files import files_cache
 
 # Arbitrary cutoff for when content will be stored in blobstore.
@@ -63,11 +69,798 @@ BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19 # 500 KiB
 
 DEFAULT_BATCH_SIZE = 100
 
-class BadFileError(db.BadKeyError):
+class Error(Exception):
+  pass
+
+class BadFileError(Error):
+  pass
+
+class InvalidMetaError(Error):
   pass
 
 class File(object):
   """A file abstraction.
+
+  Usage:
+    titan_file = File('/path/to/file.html')
+    titan_file.Write('Some content')
+    titan_file.Delete()
+    titan_file.Serialize()
+  Attributes:
+    name: Filename without path. Example: file.html
+    path: Full filename and path. Example: /path/to/some/file.html
+    paths: A list of containing directories.
+        Example: ['/', '/path', '/path/to', '/path/to/some']
+    mime_type: Content type of the file.
+    created: Created datetime.
+    modified: Last modified datetime.
+    content: The file contents, read from either datastore or blobstore.
+    blob: If the content is stored in blobstore, this is the BlobInfo object
+        pointing to it. If only static serving is needed, a client should
+        check for 'blob' and use webapp's send_blob() to avoid loading the
+        content blob into app memory.
+    exists: Boolean of if the file exists.
+    created_by: A users.User object of who first created the file, or None.
+    modified_by: A users.User object of who last modified the file, or None.
+    size: The number of bytes of this file's content.
+    md5_hash: Pre-computed md5 hash of the file's content.
+    meta: An object exposing File metadata as attributes. Use the Write()
+        method to update meta information.
+
+  Note: be aware that this object performs optimizations to avoid unnecessary
+      RPCs. As such, some properties (like .exists) could return stale info
+      especially if a File object is long-lived.
+  """
+
+  def __new__(cls, path, _file_ent=None, _from_factory=False, **kwargs):
+    """Factory handling for File objects.
+
+    Args:
+      path: Mirrored from __init__.
+      _file_ent: Mirrored from __init__.
+      _from_factory: A flag for the recursive base case.
+    Returns:
+      File instance.
+    """
+    if _global_file_factory.is_registered and not _from_factory:
+      # Get the correct class instance for this path, determined by the factory:
+      file_class = _global_file_factory(path, **kwargs)
+      # Instantiate an object of the class and return it:
+      return file_class(path=path, _file_ent=_file_ent, _from_factory=True,
+                        **kwargs)
+    return super(File, cls).__new__(cls)
+
+  def __init__(self, path, _file_ent=None, _from_factory=False):
+    """File object constructor.
+
+    Args:
+      path: An absolute filename.
+      _file_ent: An internal-only optimization argument which helps avoid
+          unnecessary RPCs.
+      _from_factory: An internal-only flag for factory handling.
+    """
+    File.ValidatePath(path)
+    self._path = path
+    self._real_path = None
+    self._name = os.path.basename(self._path)
+    self._file_ent = _file_ent
+    self._meta = None
+
+  def __eq__(self, other_file):
+    return (isinstance(other_file, File)
+            and self.real_path == other_file.real_path)
+
+  def __repr__(self):
+    return '<%s: %s>' % (self.__class__.__name__, self.real_path)
+
+  @property
+  def _file(self):
+    """Internal property that allows lazy-loading of the public properties."""
+    try:
+      if self._file_ent:
+        return self._file_ent
+      # Haven't initialized a File object yet.
+      temp_file_obj, _ = _GetTitanFilesOrDie(self.real_path)
+      self._file_ent = _GetFileEntities(temp_file_obj)
+      return self._file_ent
+    except AttributeError:
+      # Without this, certain attribute errors are masked and harder to debug.
+      logging.exception('Internal AttributeError: ')
+      raise
+
+  @property
+  def blob(self):
+    """The BlobInfo of this File, if the file content is stored in blobstore."""
+    # Backwards-compatibility with deprecated "blobs" property.
+    if not self._file.blob and not self._file.blobs:
+      return
+    if self._file.blob:
+      return blobstore.BlobInfo.get(self._file.blob)
+    return blobstore.get(self._file.blobs[0])
+
+  @property
+  def is_loaded(self):
+    """Whether or not this lazy object has been evaluated."""
+    return bool(self._file_ent)
+
+  @property
+  def name(self):
+    return self._name
+
+  @property
+  def path(self):
+    """The file's path. Can be override to display a virtual path."""
+    # NOTE: All internal methods should use .real_path so that this
+    # property can be overridden in subclasses without interference.
+    return self._path
+
+  @property
+  def real_path(self):
+    """The canonical backend path of this file.
+
+    Subclasses can override self._real_path to use a different storage location.
+
+    Returns:
+      Actual storage path of the file.
+    """
+    return self._real_path or self._path
+
+  @property
+  def paths(self):
+    return self._file.paths
+
+  @property
+  def mime_type(self):
+    return self._file.mime_type
+
+  @property
+  def created(self):
+    return self._file.created
+
+  @property
+  def modified(self):
+    return self._file.modified
+
+  @property
+  def content(self):
+    return _ReadContentOrBlob(self)
+
+  @property
+  def exists(self):
+    try:
+      return bool(self._file)
+    except BadFileError:
+      return False
+
+  @property
+  def created_by(self):
+    return self._file.created_by
+
+  @property
+  def modified_by(self):
+    return self._file.modified_by
+
+  @property
+  def size(self):
+    if self.blob:
+      return self.blob.size
+    content = self.content
+    if isinstance(content, unicode):
+      return len(content.encode('utf-8'))
+    return len(content)
+
+  @property
+  def md5_hash(self):
+    return self.blob.md5_hash if self.blob else self._file.md5_hash
+
+  @property
+  def meta(self):
+    """File meta data."""
+    if self._meta:
+      return self._meta
+    meta = {}
+    for key in self._file.meta_properties:
+      meta[key] = getattr(self._file, key)
+    self._meta = _Meta(meta)
+    return self._meta
+
+  def read(self):
+    return self.content
+
+  def close(self):
+    pass
+
+  # TODO(user): remove _delete_old_blob, refactor into versions subclass.
+  def Write(self, content=None, blob=None, mime_type=None, meta=None,
+            _delete_old_blob=True):
+    """Write or update a File.
+
+    Updates: if the File already exists, Write will accept any of the given args
+    and only perform an update of the given data, without affecting other data.
+
+    Args:
+      content: File contents, either as a str or unicode object.
+          This will handle content greater than the 1MB limit by storing it in
+          blobstore. However, this technique should only be used for relatively
+          small files; it is much less efficient than directly uploading
+          to blobstore and passing the resulting BlobKeys to the blobs argument.
+      blob: If content is not provided, a BlobKey pointing to the file.
+      mime_type: Content type of the file; will be guessed if not given.
+      meta: A dictionary of properties to be added to the file.
+      _delete_old_blob: Whether or not to delete the old blob if it changed.
+    Raises:
+      TypeError: For missing arguments.
+      BadFileError: If updating meta information on a non-existent file.
+    Returns:
+      Self-reference.
+    """
+    logging.info('Writing Titan file: %s', self.real_path)
+
+    # Argument sanity checks.
+    _TitanFile.ValidateMetaProperties(meta)
+    is_content_update = content is not None or blob is not None
+    is_meta_update = mime_type is not None or meta is not None
+    if not is_content_update and not is_meta_update:
+      raise TypeError('Arguments expected, but none given.')
+    if not self.exists and is_meta_update and not is_content_update:
+      raise BadFileError('File does not exist: %s' % self.real_path)
+    if content and blob:
+      raise TypeError('Exactly one of "content" or "blob" must be given.')
+
+    # If given unicode, encode it as UTF-8 and flag it for future decoding.
+    if isinstance(content, unicode):
+      encoding = 'utf-8'
+      content = content.encode('utf-8')
+    else:
+      encoding = None
+
+    # Should we store content in blobstore? Must come after encoding.
+    if content and len(content) > MAX_CONTENT_SIZE:
+      logging.debug('Content size %s exceeds %s bytes, uploading to blobstore.',
+                    len(content), MAX_CONTENT_SIZE)
+
+      filename = blobstore_files.blobstore.create()
+      content_file = cStringIO.StringIO(content)
+      blobstore_file = blobstore_files.open(filename, 'a')
+      # Blobstore writes cannot exceed the RPC size limit, so chunk the writes.
+      while True:
+        content_chunk = content_file.read(BLOBSTORE_APPEND_CHUNK_SIZE)
+        if not content_chunk:
+          break
+        blobstore_file.write(content_chunk)
+      blobstore_file.close()
+      blobstore_files.finalize(filename)
+      blob = blobstore_files.blobstore.get_blob_key(filename)
+      files_cache.StoreBlob(self.real_path, content)
+      content = None
+
+    if not self.exists:
+      # Create new _File entity.
+      # Guess the MIME type if not given.
+      if not mime_type:
+        mime_type = utils.GuessMimeType(self.real_path)
+
+      # Create a new _File.
+      paths = utils.SplitPath(self.real_path)
+      self._file_ent = _TitanFile(
+          id=self.real_path,
+          name=os.path.basename(self.real_path),
+          dir_path=paths[-1],
+          paths=paths,
+          # Root files are at depth 0.
+          depth=len(paths) - 1,
+          mime_type=mime_type,
+          encoding=encoding,
+          modified=datetime.datetime.now(),
+          content=content,
+          blob=blob,
+          # Backwards-compatibility with deprecated "blobs" property:
+          blobs=[],
+          md5_hash=None if blob else hashlib.md5(content).hexdigest(),
+      )
+      # Add meta attributes.
+      if meta:
+        for key, value in meta.iteritems():
+          setattr(self._file, key, value)
+      self._file.put()
+    else:
+      # Updating an existing _File.
+      if mime_type and self._file.mime_type != mime_type:
+        self._file.mime_type = mime_type
+
+      # Auto-migrate entities from old "blobs" to new "blob" property on write:
+      if self._file.blobs:
+        self._file.blob = self._file.blobs[0]
+        self._file.blobs = []
+
+      if content is not None and self._file.content != content:
+        self._file.content = content
+        self._file.md5_hash = hashlib.md5(content).hexdigest()
+        if self._file.blob and _delete_old_blob:
+          # Delete the actual blobstore data.
+          blobstore.delete(self._file.blob)
+          files_cache.ClearBlobsForFiles(self._file)
+        # Clear the current blob association for this file.
+        self._file.blob = None
+
+      if blob is not None and self._file.blob != blob:
+        if self._file.blob and _delete_old_blob:
+          # Delete the actual blobstore data.
+          blobstore.delete(self._file.blob)
+          files_cache.ClearBlobsForFiles(self._file)
+        # Associate the new blob to this file.
+        self._file.blob = blob
+        self._file.md5_hash = None
+        self._file.content = None
+
+      if encoding != self._file.encoding:
+        self._file.encoding = encoding
+
+      # Update meta attributes.
+      if meta is not None:
+        for key, value in meta.iteritems():
+          if not hasattr(self._file, key) or getattr(self._file, key) != value:
+            setattr(self._file, key, value)
+            changed = True
+      self._file.put()
+    return self
+
+  def Delete(self):
+    """Delete file.
+
+    Returns:
+      Self-reference.
+    """
+    if self.blob:
+      blobstore.delete(self._file.blob)
+      files_cache.ClearBlobsForFiles(self._file)
+    self._file.key.delete()
+    self._file_ent = None
+    self._meta = None
+    return self
+
+  def CopyTo(self, destination_file):
+    """Copy this and all of its properties to a different path.
+
+    Args:
+      destination_file: A File object of the destination path.
+    Returns:
+      Self-reference.
+    """
+    assert isinstance(destination_file, File)
+    logging.info('Copying Titan file: %s --> %s', self.real_path,
+                 destination_file.real_path)
+    if destination_file.exists:
+      # TODO(user): make this DeleteAsync when available.
+      destination_file.Delete()
+    destination_file.Write(
+        content=self._file.content,
+        blob=self._file.blob,
+        mime_type=self.mime_type,
+        meta=self.meta.Serialize())
+    return self
+
+  def Serialize(self, full=False):
+    """Serialize the File object to native Python types.
+
+    Args:
+      full: Whether or not to include this object's content. Potentially
+          expensive if the content is large and particularly if the content is
+          stored in blobstore.
+    Returns:
+      A serializable dictionary of this File object's properties.
+    """
+    result = {
+        'name': self.name,
+        'path': self.path,
+        'real_path': self.real_path,
+        'paths': self.paths,
+        'mime_type': self.mime_type,
+        'created': self.created,
+        'blob': str(self.blob) if self.blob else None,
+        'modified': self.modified,
+        'created_by': str(self.created_by) if self.created_by else None,
+        'modified_by': str(self.modified_by) if self.modified_by else None,
+        'meta': {},
+        'size': self.size,
+        'md5_hash': self.md5_hash,
+    }
+    if full:
+      result['content'] = self.content
+    for key in self._file_ent.meta_properties:
+      result['meta'][key] = getattr(self._file_ent, key)
+    return result
+
+  @staticmethod
+  def ValidatePath(path):
+    return utils.ValidateFilePath(path)
+
+class FactoryState(object):
+  """A container for factories, to avoid direct use of globals."""
+
+  def __init__(self):
+    self.factory = None
+
+  @property
+  def is_registered(self):
+    return bool(self.factory)
+
+  def __call__(self, *args, **kwargs):
+    return self.factory(*args, **kwargs)
+
+  def Register(self, factory):
+    self.factory = factory
+
+  def Unregister(self):
+    self.factory = None
+
+# Internal FileFactoryState. See RegisterFileFactory().
+_global_file_factory = FactoryState()
+
+def RegisterFileFactory(file_factory):
+  """Register a global file factory, which returns a File subclass.
+
+  In advanced usage, all File object instantiations can be magically
+  overwritten by registering a factory which returns the correct File subclass
+  based on a given path.
+
+  Args:
+    file_factory: A callable which returns a File subclass.
+  """
+  _global_file_factory.Register(file_factory)
+
+def UnregisterFileFactory():
+  """Clear the global file factory."""
+  _global_file_factory.Unregister()
+
+class Files(collections.Mapping):
+  """A mapping of paths to File objects."""
+
+  def __init__(self, paths=None, files=None):
+    """Constructor.
+
+    Args:
+      paths: An iterable of absolute filenames.
+      files: An iteratble of File objects. Required if paths not specified.
+    Raises:
+      ValueError: If given invalid paths.
+      TypeError: If given both paths and files.
+    """
+    if paths is not None and files is not None:
+      raise TypeError('Exactly one of "paths" or "files" args must be given.')
+    self._titan_files = {}
+    if paths and not hasattr(paths, '__iter__'):
+      raise ValueError('"paths" must be an iterable.')
+    if files and not hasattr(files, '__iter__'):
+      raise ValueError('"files" must be an iterable.')
+    if paths is not None:
+      for path in paths:
+        self._titan_files[path] = File(path=path)
+    else:
+      for titan_file in files:
+        self._titan_files[titan_file.path] = titan_file
+
+  def __delitem__(self, path):
+    del self._titan_files[path]
+
+  def __getitem__(self, path):
+    return self._titan_files[path]
+
+  def __setitem__(self, path, titan_file):
+    assert isinstance(titan_file, File)
+    self._titan_files[path] = titan_file
+
+  def __contains__(self, other):
+    path = getattr(other, 'path', other)
+    return path in self._titan_files
+
+  def __iter__(self):
+    for key in self._titan_files:
+      yield key
+
+  def __len__(self):
+    return len(self._titan_files)
+
+  def __eq__(self, other):
+    if not isinstance(other, Files) or len(self) != len(other):
+      return False
+    for titan_file in other.itervalues():
+      if titan_file not in self:
+        return False
+    return True
+
+  def __repr__(self):
+    return '<Files %r>' % self.keys()
+
+  def update(self, other_titan_files):
+    for titan_file in other_titan_files.itervalues():
+      self[titan_file.path] = titan_file
+
+  def Delete(self):
+    """Delete all files in this container."""
+    # TODO(user): implement batch operation. For now, the naive way:
+    for titan_file in self.itervalues():
+      titan_file.Delete()
+    # Empty the container:
+    self._titan_files = {}
+    return self
+
+  def Load(self):
+    """If not loaded, load associated paths and removing non-existing ones."""
+    # TODO(user): optimize this. For now, the naive way:
+    paths_to_clear = []
+    for path, titan_file in self._titan_files.iteritems():
+      if not titan_file.exists:
+        paths_to_clear.append(path)
+    for path in paths_to_clear:
+      del self[path]
+    return self
+
+  @classmethod
+  def Merge(cls, first_files, second_files):
+    """Return a new Files instance merged from two others."""
+    new_titan_files = cls(first_files.keys())
+    new_titan_files.update(cls(second_files.keys()))
+    return new_titan_files
+
+  @classmethod
+  def Get(cls, paths):
+    """Factory method to get Files containing only the given files which exist.
+
+    Files will be pre-loaded.
+
+    Args:
+      paths: An iterable of absolute paths.
+    Returns:
+      A Files mapping containing existing files.
+    """
+    Files.ValidatePaths(paths)
+    titan_file_objs, _ = _GetTitanFiles(paths)
+    # Filter out non-existent files:
+    titan_file_objs = [f for f in titan_file_objs if f]
+    titan_files = cls(files=titan_file_objs)
+    return titan_files
+
+  @classmethod
+  def List(cls, dir_path, recursive=False, depth=None, filters=None,
+           limit=None, offset=None):
+    """Factory method to return a populated Files mapping for the given dir.
+
+    Args:
+      dir_path: Absolute directory path.
+      recursive: Whether to list files recursively.
+      depth: If recursive, a positive integer to limit the recursion depth.
+          1 is one folder deep, 2 is two folders deep, etc.
+      filters: An iterable of FileProperty objects.
+      limit: An integer limiting the number of files returned.
+      offset: Number of files to offset the query by.
+    Raises:
+      ValueError: If given an invalid depth argument.
+    Returns:
+      A populated Files mapping.
+    """
+    if depth is not None and depth <= 0:
+      raise ValueError('depth argument must be a positive integer.')
+    if filters is not None and not hasattr(filters, '__iter__'):
+      raise ValueError('"filters" must be an iterable.')
+    utils.ValidateDirPath(dir_path)
+
+    # Strip trailing slash.
+    if dir_path != '/' and dir_path.endswith('/'):
+      dir_path = dir_path[:-1]
+
+    files_query = _TitanFile.query()
+    if recursive:
+      files_query = files_query.filter(_TitanFile.paths == dir_path)
+      if depth is not None:
+        dir_path_depth = 0 if dir_path == '/' else dir_path.count('/')
+        depth_filter = _TitanFile.depth <= dir_path_depth + depth
+        files_query = files_query.filter(depth_filter)
+      files_query = files_query.filter(_TitanFile.paths == dir_path)
+    else:
+      files_query = files_query.filter(_TitanFile.dir_path == dir_path)
+
+    if filters:
+      for ndb_filter in filters:
+        files_query = files_query.filter(ndb_filter)
+
+    # TODO(user): support cursors.
+    file_keys = files_query.fetch(limit=limit, offset=offset, keys_only=True)
+    titan_files = cls([key.id() for key in file_keys])
+    return titan_files
+
+  @staticmethod
+  def ValidatePaths(paths):
+    if not hasattr(paths, '__iter__'):
+      raise ValueError('"paths" must be an iterable.')
+    for path in paths:
+      utils.ValidateFilePath(path)
+
+class FileProperty(ndb.GenericProperty):
+  """A convenience wrapper for creating filters for Files.List.
+
+  Usage:
+    filters = [files.FileProperty('color') == 'blue']
+    files.Files.List('/', recursive=True, filters=filters)
+  """
+
+class _Meta(object):
+  """Lightweight wrapper for exposing metadata as attributes."""
+
+  def __init__(self, meta):
+    self._meta = meta
+
+  def __getattr__(self, name):
+    try:
+      return self._meta[name]
+    except KeyError:
+      raise AttributeError("'%s' object has no attribute '%s'"
+                           % (self.__class__.__name__, name))
+
+  def Serialize(self):
+    return self._meta.copy()
+
+class _TitanFile(ndb.Expando):
+  """Model for representing a file; don't use directly outside of this module.
+
+  This model is intentionally free of data methods. All management of _TitanFile
+  entities must go through File methods to maintain data integrity.
+
+  Attributes:
+    id: Full filename and path. Example: /path/to/some/file.html
+    name: Filename without path. Example: file.html
+    dir_path: Full path string. Example: /path/to/some
+    paths: A list of containing directories.
+        Example: ['/', '/path', '/path/to', '/path/to/some']
+    depth: The depth in the directory tree, starting at 0 for root files.
+    mime_type: Content type of the file.
+    encoding: The content encoding. Right now, only null or 'utf-8'
+        and this encoding is intentionally not exposed by higher layers.
+    created: Created datetime.
+    modified: Last-modified datetime.
+    content: Byte string of the file's contents.
+    blob: If content is null, a BlobKey pointing to the file.
+    blobs: Deprecated; use "blob" instead.
+    created_by: A users.User object of who first created the file, or None.
+    modified_by: A users.User object of who last modified the file, or None.
+    md5_hash: Pre-computed md5 hash of the entity's content or blob.
+  """
+  name = ndb.StringProperty()
+  dir_path = ndb.StringProperty()
+  paths = ndb.StringProperty(repeated=True)
+  depth = ndb.IntegerProperty()
+  mime_type = ndb.StringProperty()
+  encoding = ndb.StringProperty()
+  created = ndb.DateTimeProperty(auto_now_add=True)
+  modified = ndb.DateTimeProperty(auto_now=True)
+  content = ndb.BlobProperty()
+  blob = ndb.BlobKeyProperty()
+  # Deprecated; use "blob" instead.
+  blobs = ndb.BlobKeyProperty(repeated=True)
+  created_by = ndb.UserProperty(auto_current_user_add=True)
+  modified_by = ndb.UserProperty(auto_current_user=True)
+  md5_hash = ndb.StringProperty(indexed=False)
+
+  BASE_PROPERTIES = frozenset((
+      'name',
+      'dir_path',
+      'paths',
+      'depth',
+      'mime_type',
+      'encoding',
+      'created',
+      'modified',
+      'content',
+      'blob',
+      'blobs',
+      'created_by',
+      'modified_by',
+      'md5_hash',
+  ))
+
+  @classmethod
+  def _get_kind(cls):
+    # TODO(user): when removing the deprecated v1 API code, remove this
+    # function entirely and rename this class to _File.
+    return '_File'
+
+  def __repr__(self):
+    return '<_TitanFile (_File): %s>' % self.key.id()
+
+  @property
+  def path(self):
+    return self.key.id()
+
+  @property
+  def meta_properties(self):
+    """A dictionary containing any expando properties."""
+    meta_properties = self.to_dict()
+    for name in self.BASE_PROPERTIES:
+      meta_properties.pop(name)
+    return meta_properties
+
+  @staticmethod
+  def ValidateMetaProperties(meta):
+    """Verify that meta properties are valid."""
+    if not meta:
+      return
+    for key in meta:
+      if key in _TitanFile.BASE_PROPERTIES:
+        raise InvalidMetaError('Invalid name for meta property: "%s"' % key)
+
+# ------------------------------------------------------------------------------
+
+def _GetTitanFiles(paths):
+  """Get a non-lazy File object or a list of non-lazy File objects, or None.
+
+  Args:
+    paths: An already-validated list of absolute filenames.
+  Returns:
+    A single File object or list of File objects.
+  """
+  is_multiple = hasattr(paths, '__iter__')
+
+  # Wrap all the _TitanFile entities in <File> objects.
+  paths = paths if is_multiple else [paths]
+  file_ents = ndb.get_multi([ndb.Key(_TitanFile, path) for path in paths])
+  titan_files = []
+  for f in file_ents:
+    titan_files.append(File(f.path, _file_ent=f) if f else None)
+  return titan_files if is_multiple else titan_files[0], is_multiple
+
+def _GetTitanFilesOrDie(paths):
+  """Same as _GetFiles, but raises BadFileError if a path doesn't exist."""
+  file_objs, is_multiple = _GetTitanFiles(paths)
+  if not is_multiple:
+    # Single path argument.
+    if file_objs is None:
+      raise BadFileError('File does not exist: %s' % paths)
+  else:
+    # Multiple paths.
+    for i, file_obj in enumerate(file_objs):
+      if file_obj is None:
+        raise BadFileError('File does not exist: %s' % paths[i])
+  return file_objs, is_multiple
+
+def _GetFileEntities(titan_files):
+  """Get _File entities from File objects; use sparingly."""
+  # This function should be the only place we access the protected _file attr
+  # on File objects. This centralizes the high coupling to one location.
+  is_multiple = hasattr(titan_files, '__iter__')
+  if not is_multiple:
+    return titan_files._file if titan_files else None
+  file_ents = []
+  for titan_file in titan_files:
+    file_ents.append(titan_file._file if titan_file else None)
+  return file_ents
+
+def _ReadContentOrBlob(titan_file):
+  file_ent = _GetFileEntities(titan_file)
+  if file_ent.content is not None:
+    content = file_ent.content
+  else:
+    content = files_cache.GetBlob(file_ent.path)
+    if content is None:
+      blob = file_ent.blob
+      if not file_ent.blob:
+        # Backwards-compatibility with deprecated "blobs" property:
+        blob = blobstore.BlobInfo.get(file_ent.blobs[0])
+      if not isinstance(blob, blobstore.BlobInfo):
+        blob = blobstore.BlobInfo(blob)
+      content = blob.open().read()
+      files_cache.StoreBlob(file_ent.path, content)
+  if file_ent.encoding == 'utf-8':
+    return content.decode('utf-8')
+  return content
+
+#-------------------------------------------------------------------------------
+# YARR, THERE BE DEPRECATED CODE BELOW. Will be removed!
+#-------------------------------------------------------------------------------
+
+class DeprecatedFile(object):
+  """A file abstraction.
+
+  DEPRECATED. DO NOT USE.
 
   Usage:
     file_obj = File('/path/to/file.html')
@@ -116,10 +909,11 @@ class File(object):
     self._exists = None
 
   def __eq__(self, other_file):
-    return isinstance(other_file, File) and self._path == other_file._path
+    return (isinstance(other_file, DeprecatedFile)
+            and self._path == other_file._path)
 
   def __repr__(self):
-    return '<File: %s>' % self._path
+    return '<DeprecatedFile: %s>' % self._path
 
   def __getattr__(self, name):
     """Attempt to pull from a File's stored meta data."""
@@ -196,7 +990,7 @@ class File(object):
 
   @property
   def content(self):
-    return _ReadContentOrBlobs(self)
+    return _ReadContentOrBlob(self)
 
   @property
   def exists(self):
@@ -273,10 +1067,35 @@ class File(object):
       result[key] = getattr(self._file_ent, key)
     return result
 
+class _File(db.Expando):
+  """DEPRECATED. DO NOT USE."""
+  name = db.StringProperty()
+  dir_path = db.StringProperty()
+  paths = db.StringListProperty()
+  depth = db.IntegerProperty()
+  mime_type = db.StringProperty()
+  encoding = db.StringProperty()
+  created = db.DateTimeProperty(auto_now_add=True)
+  modified = db.DateTimeProperty()
+  content = db.BlobProperty()
+  blob = blobstore.BlobReferenceProperty()
+  # Deprecated; use "blob" instead.
+  blobs = db.ListProperty(blobstore.BlobKey)
+  created_by = db.UserProperty(auto_current_user_add=True)
+  modified_by = db.UserProperty(auto_current_user=True)
+
+  @property
+  def path(self):
+    return self.key().name()
+
+  def __repr__(self):
+    return '<_File: %s>' % self.path
+
 class SmartFileList(object):
   """Smart list of File objects to optimize RPCs by iterative batch loading."""
 
   def __init__(self, file_objs, batch_size=DEFAULT_BATCH_SIZE):
+    _LogDeprecationNotice()
     # Make sure an iterable was given.
     assert hasattr(file_objs, '__iter__')
     self._file_objs = file_objs
@@ -306,53 +1125,6 @@ class SmartFileList(object):
   def __repr__(self):
     return repr(self._file_objs)
 
-class _File(db.Expando):
-  """Model for representing a file; don't use directly outside of this module.
-
-  This model is intentionally free of methods. All management of _File entities
-  must go through Write() and other module-level functions (or through the
-  File object) in order to maintain data integrity.
-
-  Attributes:
-    key_name: Full filename and path. Example: /path/to/some/file.html
-    name: Filename without path. Example: file.html
-    dir_path: Full path string. Example: /path/to/some
-    paths: A list of containing directories.
-        Example: ['/', '/path', '/path/to', '/path/to/some']
-    depth: The depth in the directory tree, starting at 0 for root files.
-    mime_type: Content type of the file.
-    encoding: The content encoding. Right now, only null or 'utf-8'
-        and this encoding is intentionally not exposed by higher layers.
-    created: Created datetime.
-    modified: Last-modified datetime.
-    content: Byte string of the file's contents.
-    blob: If content is null, a BlobKey pointing to the file.
-    blobs: Deprecated; use "blob" instead.
-    created_by: A users.User object of who first created the file, or None.
-    modified_by: A users.User object of who last modified the file, or None.
-  """
-  name = db.StringProperty()
-  dir_path = db.StringProperty()
-  paths = db.StringListProperty()
-  depth = db.IntegerProperty()
-  mime_type = db.StringProperty()
-  encoding = db.StringProperty()
-  created = db.DateTimeProperty(auto_now_add=True)
-  modified = db.DateTimeProperty()
-  content = db.BlobProperty()
-  blob = blobstore.BlobReferenceProperty()
-  # Deprecated; use "blob" instead.
-  blobs = db.ListProperty(blobstore.BlobKey)
-  created_by = db.UserProperty(auto_current_user_add=True)
-  modified_by = db.UserProperty(auto_current_user=True)
-
-  @property
-  def path(self):
-    return self.key().name()
-
-  def __repr__(self):
-    return '<_File: %s>' % self.path
-
 @hooks.ProvideHook('file-exists')
 def Exists(path):
   """Check if a File exists.
@@ -362,6 +1134,7 @@ def Exists(path):
   Returns:
     Boolean of whether or not the file exists.
   """
+  _LogDeprecationNotice()
   file_obj, _ = _GetFiles(path)
   file_ent = _GetFileEntities(file_obj)
   return bool(file_ent)
@@ -380,6 +1153,7 @@ def Get(paths):
     Dict: When given multiple paths, returns a dict of paths --> pre-loaded File
         objects. Non-existent file paths are not included in the result.
   """
+  _LogDeprecationNotice()
   file_objs, is_multiple = _GetFiles(paths)
   if not is_multiple:
     return file_objs if file_objs else None
@@ -419,6 +1193,7 @@ def Write(path, content=None, blob=None, mime_type=None, meta=None,
     Datastore RPC object: if async is True.
     None: if async is True and the file didn't change.
   """
+  _LogDeprecationNotice()
   file_obj, _ = _GetFiles(path)
   file_ent = _GetFileEntities(file_obj)
   path = ValidatePaths(path)
@@ -465,9 +1240,9 @@ def Write(path, content=None, blob=None, mime_type=None, meta=None,
     # Create new _File entity.
     # Guess the MIME type if not given.
     if not mime_type:
-      mime_type = _GuessMimeType(path)
+      mime_type = utils.GuessMimeType(path)
     # Create a new _File.
-    paths = _MakePaths(path)
+    paths = utils.SplitPath(path)
     file_ent = _File(
         key_name=path,
         name=os.path.basename(path),
@@ -541,12 +1316,12 @@ def Write(path, content=None, blob=None, mime_type=None, meta=None,
       # Update the cache.
       files_cache.StoreFiles(file_ent)
     else:
-      return File(path, _file_ent=file_ent) if not async else None
+      return DeprecatedFile(path, _file_ent=file_ent) if not async else None
 
   result = rpc
   if not async:
     rpc.get_result()
-    result = File(path, _file_ent=file_ent)
+    result = DeprecatedFile(path, _file_ent=file_ent)
   return result
 
 @hooks.ProvideHook('file-delete')
@@ -568,6 +1343,7 @@ def Delete(paths, async=False, update_subdir_caches=False,
     None: if async is False and delete succeeded.
     Datastore RPC object: if async is True.
   """
+  _LogDeprecationNotice()
   # With one RPC, delete any associated blobstore files for all paths.
   file_objs, is_multiple = _GetFilesOrDie(paths)
   # Only use paths which are already validated by _GetFilesOrDie.
@@ -589,7 +1365,7 @@ def Delete(paths, async=False, update_subdir_caches=False,
 
   if update_subdir_caches:
     paths = paths if is_multiple else [paths]
-    deferred.defer(ListDir, _GetCommonDir(paths))
+    deferred.defer(ListDir, utils.GetCommonDirPath(paths))
 
   rpc = db.delete_async(file_ents)
   return rpc if async else rpc.get_result()
@@ -609,6 +1385,7 @@ def Touch(paths, meta=None, async=False):
     List of File objects: if multiple paths given and async is False.
     Datastore RPC object: if async is True.
   """
+  _LogDeprecationNotice()
   now = datetime.datetime.now()
   paths = ValidatePaths(paths)
   file_objs, is_multiple = _GetFiles(paths)
@@ -647,9 +1424,9 @@ def Touch(paths, meta=None, async=False):
   if not async:
     rpc.get_result()
     if is_multiple:
-      result = [File(f.path, _file_ent=f) for f in file_ents]
+      result = [DeprecatedFile(f.path, _file_ent=f) for f in file_ents]
     else:
-      result = File(file_ents.path, _file_ent=file_ents)
+      result = DeprecatedFile(file_ents.path, _file_ent=file_ents)
   return result
 
 @hooks.ProvideHook('file-copy')
@@ -666,6 +1443,7 @@ def Copy(source_path, destination_path, async=False):
   Returns:
     The result of the Write() call to the destination path.
   """
+  _LogDeprecationNotice()
   # First _GetFiles (in order to accept pre-loaded File objects and avoid RPCs),
   # then ValidatePaths to overwrite the paths.
   file_objs, _ = _GetFiles([source_path, destination_path])
@@ -716,6 +1494,7 @@ def CopyDir(source_dir_path, destination_dir_path, dry_run=False):
     Default: a list of the new File objects which were created.
     If dry_run is True, a list of new paths.
   """
+  _LogDeprecationNotice()
   # Strip trailing slashes.
   if source_dir_path != '/' and source_dir_path.endswith('/'):
     source_dir_path = source_dir_path[:-1]
@@ -742,7 +1521,7 @@ def CopyDir(source_dir_path, destination_dir_path, dry_run=False):
   if dry_run:
     return new_paths
   file_keys = [rpc.get_result() for rpc in async_results]
-  return [File(key.name()) for key in file_keys]
+  return [DeprecatedFile(key.name()) for key in file_keys]
 
 @hooks.ProvideHook('list-files')
 def ListFiles(dir_path, recursive=False, depth=None, filters=None):
@@ -763,6 +1542,7 @@ def ListFiles(dir_path, recursive=False, depth=None, filters=None):
   Returns:
     A list of File objects.
   """
+  _LogDeprecationNotice()
   if depth is not None and depth <= 0:
     raise ValueError('depth argument must be a positive integer.')
   dir_path = ValidatePaths(dir_path)
@@ -786,7 +1566,7 @@ def ListFiles(dir_path, recursive=False, depth=None, filters=None):
     for expression, value in filters_list:
       file_keys.filter(expression, value)
 
-  return [File(key.name()) for key in file_keys]
+  return [DeprecatedFile(key.name()) for key in file_keys]
 
 @hooks.ProvideHook('list-dir')
 def ListDir(dir_path):
@@ -801,6 +1581,7 @@ def ListDir(dir_path):
   Returns:
     A two-tuple of (dirs, file_objs) with directory names and File objects.
   """
+  _LogDeprecationNotice()
   dir_path = ValidatePaths(dir_path)
   # Strip trailing slash.
   if dir_path != '/' and dir_path.endswith('/'):
@@ -846,6 +1627,7 @@ def ListDir(dir_path):
 @hooks.ProvideHook('dir-exists')
 def DirExists(dir_path):
   """Returns True if any files exist within the given directory path."""
+  _LogDeprecationNotice()
   # TODO(user): optimize this to pull from cache.
   dir_path = ValidatePaths(dir_path)
   # Strip trailing slash.
@@ -876,7 +1658,7 @@ def ValidatePaths(paths):
 
   for i, path in enumerate(paths):
     # Support _File and File objects by pulling out the path.
-    if isinstance(path, File) or isinstance(path, _File):
+    if isinstance(path, DeprecatedFile) or isinstance(path, _File):
       path = paths[i] = path.path
     if not path:
       raise ValueError('Path is invalid: "%s"' % path)
@@ -890,6 +1672,13 @@ def ValidatePaths(paths):
   return paths if is_multiple else paths[0]
 
 # ------------------------------------------------------------------------------
+
+def _LogDeprecationNotice():
+  if not getattr(appengine_config, 'TITAN_DISABLE_DEPRECATION_NOTICE', False):
+    logging.warning('DEPRECATION NOTICE. You are using the old Titan '
+                    'Files API which will be removed in a future release. '
+                    'Please see '
+                    'http://code.google.com/p/titan-files/wiki/DeprecatedAPI')
 
 def _GetFiles(paths_or_file_objs):
   """Get a non-lazy File object or a list of non-lazy File objects, or None."""
@@ -924,20 +1713,8 @@ def _GetFiles(paths_or_file_objs):
   # Wrap all the _File entities in <File> objects.
   file_objs = []
   for f in file_ents if is_multiple else [file_ents]:
-    file_objs.append(File(f.path, _file_ent=f) if f else None)
+    file_objs.append(DeprecatedFile(f.path, _file_ent=f) if f else None)
   return file_objs if is_multiple else file_objs[0], is_multiple
-
-def _GetFileEntities(file_objs):
-  """Get _File entities from File objects; use sparingly."""
-  # This function should be the only place we access the protected _file attr
-  # on File objects. This centralizes the high coupling to one location.
-  is_multiple = hasattr(file_objs, '__iter__')
-  if not is_multiple:
-    return file_objs._file if file_objs else None
-  file_ents = []
-  for file_obj in file_objs:
-    file_ents.append(file_obj._file if file_obj else None)
-  return file_ents
 
 def _LoadFiles(file_objs):
   """Given File objects, load all of them in-place and with batch RPCs."""
@@ -961,39 +1738,3 @@ def _GetFilesOrDie(paths_or_file_objs):
       if file_obj is None:
         raise BadFileError('File does not exist: %s' % paths_or_file_objs[i])
   return file_objs, is_multiple
-
-def _ReadContentOrBlobs(file_obj):
-  file_ent = _GetFileEntities(file_obj)
-  if file_ent.content is not None:
-    content = file_ent.content
-  else:
-    content = files_cache.GetBlob(file_ent.path)
-    if content is None:
-      blob = file_ent.blob
-      if not file_ent.blob:
-        # Backwards-compatibility with deprecated "blobs" property:
-        blob = blobstore.BlobInfo.get(file_ent.blobs[0])
-      content = blob.open().read()
-      files_cache.StoreBlob(file_ent.path, content)
-  if file_ent.encoding == 'utf-8':
-    return content.decode('utf-8')
-  return content
-
-def _MakePaths(path):
-  """Make a list of all containing dirs given a full filename including path."""
-  # '/path/to/some/file' --> ['/', '/path', '/path/to', '/path/to/some']
-  if path == '/':
-    return []
-  path = os.path.split(path)[0]
-  return _MakePaths(path) + [path]
-
-def _GuessMimeType(path):
-  return mimetypes.guess_type(path)[0] or 'application/octet-stream'
-
-def _GetCommonDir(paths):
-  """Given an iterable of file paths, return the top common prefix."""
-  common_dir = os.path.commonprefix(paths)
-  if common_dir != '/' and common_dir.endswith('/'):
-    return common_dir[:-1]
-  # If common_dir doesn't end in a slash, we need to pop the last directory off.
-  return os.path.split(common_dir)[0]

@@ -17,12 +17,14 @@
 
 from tests.common import testing
 
+import hashlib
 try:
   import json
 except ImportError:
   import simplejson as json
 import time
 import urllib
+import webtest
 from google.appengine.api import blobstore
 from titan.common.lib.google.apputils import basetest
 from tests.common import webapp_testing
@@ -32,15 +34,144 @@ from titan.files import handlers
 # Content which will be stored in blobstore.
 LARGE_FILE_CONTENT = 'a' * (files.MAX_CONTENT_SIZE + 1)
 
-class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
+class HandlersTest(testing.BaseTestCase):
 
   def setUp(self):
     super(HandlersTest, self).setUp()
-    self.valid_path = '/path/to/some/file.txt'
-    self.error_path = '/path/to/some/error.txt'
+    self.app = webtest.TestApp(handlers.application)
 
-  def tearDown(self):
-    super(HandlersTest, self).tearDown()
+  def testFileHandlerGet(self):
+    # Verify GET requests return a JSON-serialized representation of the file.
+    actual_file = files.File('/foo/bar').Write('foobar')
+    to_timestamp = lambda x: time.mktime(x.timetuple()) + 1e-6 * x.microsecond
+    expected_data = {
+        u'name': u'bar',
+        u'path': u'/foo/bar',
+        u'paths': [u'/', u'/foo'],
+        u'real_path': u'/foo/bar',
+        u'mime_type': u'application/octet-stream',
+        u'created': to_timestamp(actual_file.created),
+        u'modified': to_timestamp(actual_file.modified),
+        u'content': u'foobar',
+        u'blob': None,
+        u'created_by': u'titanuser@example.com',
+        u'modified_by': u'titanuser@example.com',
+        u'meta': {},
+        u'md5_hash': hashlib.md5('foobar').hexdigest(),
+        u'size': len('foobar'),
+    }
+    response = self.app.get('/_titan/file', {'path': '/foo/bar', 'full': True})
+    self.assertEqual(200, response.status_int)
+    self.assertEqual('application/json', response.headers['Content-Type'])
+    self.assertEqual(expected_data, json.loads(response.body))
+
+    response = self.app.get('/_titan/file', {'path': '/fake', 'full': True},
+                            expect_errors=True)
+    self.assertEqual(404, response.status_int)
+    self.assertEqual('', response.body)
+
+  def testFileHandlerPost(self):
+    params = {
+        'content': 'foobar',
+        'path': '/foo/bar',
+        'mime_type': 'fake/mimetype',
+        'meta': json.dumps({'color': 'blue'}),
+    }
+    response = self.app.post('/_titan/file', params)
+    self.assertEqual(201, response.status_int)
+    self.assertIn('/_titan/file/?path=/foo/bar', response.headers['Location'])
+    self.assertEqual('', response.body)
+    titan_file = files.File('/foo/bar')
+    self.assertEqual('foobar', titan_file.content)
+    self.assertEqual('fake/mimetype', titan_file.mime_type)
+    self.assertEqual('blue', titan_file.meta.color)
+
+    # Verify blob handling.
+    params = {
+        'path': '/foo/bar',
+        'blob': 'some-blob-key',
+    }
+    response = self.app.post('/_titan/file', params)
+    self.assertEqual(201, response.status_int)
+    self.assertEqual('some-blob-key', str(files.File('/foo/bar')._file.blob))
+
+    # Verify that update requests with BadFileError return a 404.
+    params = {
+        'path': '/fake',
+        'mime_type': 'new/mimetype',
+    }
+    response = self.app.post('/_titan/file', params, expect_errors=True)
+    self.assertEqual(404, response.status_int)
+
+    # Verify that bad requests get a 400.
+    params = {
+        'path': '/foo/bar',
+        'content': 'content',
+        'blob': 'some-blob-key',
+    }
+    response = self.app.post('/_titan/file', params, expect_errors=True)
+    self.assertEqual(400, response.status_int)
+
+  def testFileReadHandler(self):
+    files.File('/foo/bar').Write('foobar')
+    response = self.app.get('/_titan/file/read', {'path': '/foo/bar'})
+    self.assertEqual(200, response.status_int)
+    self.assertEqual('foobar', response.body)
+    self.assertEqual('application/octet-stream',
+                     response.headers['Content-Type'])
+
+    # Verify blob handling.
+    files.File('/foo/bar').Write(LARGE_FILE_CONTENT,
+                                 mime_type='custom/mimetype')
+    response = self.app.get('/_titan/file/read', {'path': '/foo/bar'})
+    self.assertEqual(200, response.status_int)
+    self.assertEqual('custom/mimetype', response.headers['Content-Type'])
+    self.assertEqual('inline; filename=bar',
+                     response.headers['Content-Disposition'])
+    self.assertTrue('X-AppEngine-BlobKey' in response.headers)
+    self.assertEqual('', response.body)
+
+    # Verify that requests with BadFileError return 404.
+    response = self.app.get('/_titan/file/read', {'path': '/fake'},
+                            expect_errors=True)
+    self.assertEqual(404, response.status_int)
+
+  def testWriteBlob(self):
+    # Verify getting a new blob upload URL.
+    response = self.app.get('/_titan/file/newblob', {'path': '/foo/bar'})
+    self.assertEqual(200, response.status_int)
+    self.assertIn('http://testbed.example.com:80/_ah/upload/', response.body)
+
+    # Blob uploads must return redirect responses. In our case, the handler
+    # so also always include a special header:
+    self.mox.StubOutWithMock(handlers.FinalizeBlobHandler, 'get_uploads')
+    mock_blob_info = self.mox.CreateMockAnything()
+    mock_blob_info.key().AndReturn(blobstore.BlobKey('fake-blob-key'))
+    handlers.FinalizeBlobHandler.get_uploads('file').AndReturn([mock_blob_info])
+
+    self.mox.ReplayAll()
+    response = self.app.post('/_titan/file/finalizeblob')
+    self.assertEqual(302, response.status_int)
+    self.assertIn('fake-blob-key', response.headers['Location'])
+    self.mox.VerifyAll()
+
+  def testFileHandlerDelete(self):
+    files.File('/foo/bar').Write('foobar')
+    response = self.app.delete('/_titan/file?path=/foo/bar')
+    self.assertEqual(200, response.status_int)
+    self.assertFalse(files.File('/foo/bar').exists)
+
+    # Verify that requests with BadFileError return 404.
+    response = self.app.delete('/_titan/file?path=/fake', expect_errors=True)
+    self.assertEqual(404, response.status_int)
+
+# DEPRECATED CODE BELOW. Will be removed soon.
+
+class DeprecatedHandlersTest(webapp_testing.WebAppTestCase,
+                             testing.BaseTestCase):
+
+  def setUp(self):
+    super(DeprecatedHandlersTest, self).setUp()
     self.valid_path = '/path/to/some/file.txt'
     self.error_path = '/path/to/some/error.txt'
 
@@ -89,6 +220,8 @@ class HandlersTest(testing.BaseTestCase, webapp_testing.WebAppTestCase):
         'exists': True,
         'created_by': 'titanuser@example.com',
         'modified_by': 'titanuser@example.com',
+        'md5_hash': hashlib.md5('foobar').hexdigest(),
+        'size': len('foobar'),
     }
     expected_result = {
         self.valid_path: expected_file_obj,

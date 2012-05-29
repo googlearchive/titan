@@ -62,7 +62,7 @@ import logging
 import os
 import time
 from google.appengine.api import taskqueue
-from titan import files
+from titan.files import files
 
 # The bucket size for an aggregation window, in number of seconds.
 DEFAULT_WINDOW_SIZE = 60
@@ -73,7 +73,7 @@ TASKQUEUE_LEASE_MAX_TASKS = 1000
 
 # The number of seconds before an added task is allowed to be leased.
 # This prevents the aggregator from prematurely consuming the tasks when
-# the window hasn't yet passed. This is really only used for the tests.
+# the window hasn't yet passed.
 TASKQUEUE_LEASE_BUFFER_SECONDS = DEFAULT_WINDOW_SIZE
 
 BASE_DIR = '/_titan/stats/counters'
@@ -180,6 +180,7 @@ class AverageTimingCounter(AverageCounter):
     self._start = time.time()
 
   def Stop(self):
+    assert self._start is not None, 'Counter stopped without starting.'
     self.Offset(int((time.time() - self._start) * 1000))
     self._start = None
 

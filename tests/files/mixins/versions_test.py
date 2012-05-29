@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2011 Google Inc. All Rights Reserved.
+# Copyright 2012 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import datetime
 from google.appengine.api import users
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
-from titan.services import versions
+from titan.files.mixins import versions
 
 CHANGESET_NEW = versions.CHANGESET_NEW
 CHANGESET_SUBMITTED = versions.CHANGESET_SUBMITTED
@@ -31,15 +31,19 @@ FILE_CREATED = versions.FILE_CREATED
 FILE_EDITED = versions.FILE_EDITED
 FILE_DELETED = versions.FILE_DELETED
 
-class VersionsTest(testing.ServicesTestCase):
+class VersionedFile(versions.FileVersioningMixin, files.File):
+  pass
+
+class VersionsTest(testing.BaseTestCase):
 
   def setUp(self):
-    services = (
-        'titan.services.versions',
-    )
-    self.EnableServices(services)
-    self.vcs = versions.VersionControlService()
     super(VersionsTest, self).setUp()
+    self.vcs = versions.VersionControlService()
+    files.RegisterFileFactory(lambda *args, **kwargs: VersionedFile)
+
+  def tearDown(self):
+    files.UnregisterFileFactory()
+    super(VersionsTest, self).tearDown()
 
   def InitTestData(self):
     for _ in range(1, 10):
@@ -47,10 +51,10 @@ class VersionsTest(testing.ServicesTestCase):
 
     # Changeset 11 (was changeset 10 before commit):
     changeset = self.vcs.NewStagingChangeset()
-    files.Write('/foo', 'foo', changeset=changeset)
-    files.Write('/bar', 'bar', changeset=changeset)
-    files.Write('/qux', 'qux', changeset=changeset)
-    changeset.FinalizeAssociatedPaths()
+    files.File('/foo', changeset=changeset).Write('foo')
+    files.File('/bar', changeset=changeset).Write('bar')
+    files.File('/qux', changeset=changeset).Write('qux')
+    changeset.FinalizeAssociatedFiles()
     self.vcs.Commit(changeset)
     # For testing, move the submitted datetime to 31 days ago.
     changeset_ent = versions.Changeset(11).changeset_ent
@@ -60,107 +64,101 @@ class VersionsTest(testing.ServicesTestCase):
 
     # Changset 13:
     changeset = self.vcs.NewStagingChangeset()
-    files.Write('/foo', 'foo2', changeset=changeset)  # edit
-    files.Write('/bar', delete=True, changeset=changeset)  # delete
-    files.Write('/baz', 'baz', changeset=changeset)  # create
-    files.Write('/qux', 'qux2', changeset=changeset)  # edit
-    changeset.FinalizeAssociatedPaths()
+    files.File('/foo', changeset=changeset).Write('foo2')  # edit
+    files.File('/bar', changeset=changeset).Write(delete=True)  # delete
+    files.File('/baz', changeset=changeset).Write('baz')  # create
+    files.File('/qux', changeset=changeset).Write('qux2')  # edit
+    changeset.FinalizeAssociatedFiles()
     self.vcs.Commit(changeset)
+    self.assertEqual(13, self.vcs.GetLastSubmittedChangeset().num)
 
     # Changset 15:
     changeset = self.vcs.NewStagingChangeset()
-    files.Write('/foo', delete=True, changeset=changeset)  # delete
-    files.Write('/bar', delete=True, changeset=changeset)  # delete
-    files.Write('/baz', 'baz2', changeset=changeset)  # edit
-    changeset.FinalizeAssociatedPaths()
+    files.File('/foo', changeset=changeset).Write(delete=True)  # delete
+    files.File('/bar', changeset=changeset).Write(delete=True)  # delete
+    files.File('/baz', changeset=changeset).Write('baz2')  # edit
+    changeset.FinalizeAssociatedFiles()
     self.vcs.Commit(changeset)
 
     # Changset 17:
     changeset = self.vcs.NewStagingChangeset()
-    files.Write('/foo', 'foo3', changeset=changeset)  # re-create
-    changeset.FinalizeAssociatedPaths()
+    files.File('/foo', changeset=changeset).Write('foo3')  # re-create
+    changeset.FinalizeAssociatedFiles()
     self.vcs.Commit(changeset)
 
-  def testHooks(self):
+  def testMixin(self):
     # NOTE: Look here first. If this test fails, other tests are likely broken.
     changeset = self.vcs.NewStagingChangeset()
-    files.Write('/foo', 'foo-versioned', changeset=changeset)
-    files.Write('/bar', 'bar-versioned', meta={'color': 'blue'},
-                changeset=changeset)
+    meta = {'color': 'blue', 'flag': False}
+    files.File('/foo', changeset=changeset).Write('foo-versioned')
+    files.File('/bar', changeset=changeset).Write('bar-versioned', meta=meta)
 
-    # Exists.
-    self.assertFalse(files.Exists('/foo'))
-    self.assertTrue(files.Exists('/foo', changeset=changeset))
-    self.assertFalse(files.Exists('/fake', changeset=changeset))
+    # Exists().
+    self.assertFalse(files.File('/foo').exists)
+    self.assertTrue(files.File('/foo', changeset=changeset).exists)
+    self.assertFalse(files.File('/fake', changeset=changeset).exists)
 
-    # Get() with an uncommitted file path:
-    self.assertEqual(None, files.Get('/foo'))
-    # Get() with an uncommitted file within a changeset:
-    file_obj = files.Get('/foo', changeset=changeset)
-    self.assertEqual('/foo', file_obj.path)
-    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
-    expected_foo = files.DeprecatedFile('/_titan/ver/1/foo')
-    expected_bar = files.DeprecatedFile('/_titan/ver/1/bar')
-    expected_file_objs = {
-        '/foo': versions.VersionedFile(expected_foo),
-        '/bar': versions.VersionedFile(expected_bar),
-    }
-    self.assertDictEqual(expected_file_objs, files.Get(
-        ['/foo', '/bar', '/fake'], changeset=changeset))
+    # Init with an uncommitted file path:
+    self.assertFalse(files.File('/foo').exists)
+    # Init with an uncommitted file within a changeset:
+    titan_file = files.File('/foo', changeset=changeset)
+    self.assertEqual('/foo', titan_file.path)
+    self.assertEqual('/_titan/ver/1/foo', titan_file.versioned_path)
+    expected_foo = files.File('/foo', changeset=changeset)
+    expected_bar = files.File('/bar', changeset=changeset)
+    actual_titan_files = files.Files(files=[
+        expected_foo,
+        expected_bar,
+        files.File('/fake', changeset=changeset),
+    ])
+    actual_titan_files.Load()
+    expected_titan_files = files.Files(files=[
+        expected_foo,
+        expected_bar,
+    ])
+    self.assertEqual(expected_titan_files, actual_titan_files)
 
     # Write().
-    self.assertRaises(TypeError, files.Write, '/foo')
-    file_obj = files.Write('/foo', 'foo', meta={'color': 'blue'},
-                           changeset=changeset)
-    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
+    titan_file = files.File('/foo', changeset=changeset)
+    titan_file.Write('foo', meta={'color': 'blue'})
+    self.assertEqual('/_titan/ver/1/foo', titan_file.versioned_path)
 
     # Writing with delete=True marks a file to be deleted on commit.
-    file_obj = files.Write('/foo', changeset=changeset, delete=True)
-    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
-    self.assertEqual(FILE_DELETED, file_obj.status)
-
-    # Touch with single and multiple paths.
-    file_obj = files.Touch('/foo', changeset=changeset)
-    self.assertEqual('/_titan/ver/1/foo', file_obj.versioned_path)
-    file_objs = files.Touch(['/foo', '/bar'], changeset=changeset)
-    self.assertEqual(['/_titan/ver/1/foo', '/_titan/ver/1/bar'],
-                     [file_obj.versioned_path for file_obj in file_objs])
+    titan_file = files.File('/foo', changeset=changeset).Write(delete=True)
+    self.assertEqual('/_titan/ver/1/foo', titan_file.versioned_path)
+    self.assertEqual(FILE_DELETED, titan_file.meta.status)
 
     # Delete (which is actually a revert).
-    self.assertRaises(TypeError, files.Delete, '/foo')
-    files.Delete('/foo', changeset=changeset)
-    self.assertFalse(files.Exists('/foo'))
-    self.assertFalse(files.Exists('/foo', changeset=changeset))
+    files.File('/foo', changeset=changeset).Delete()
+    self.assertFalse(files.File('/foo').exists)
+    self.assertFalse(files.File('/foo', changeset=changeset).exists)
 
-    changeset.FinalizeAssociatedPaths()
+    # Commit the changeset (/bar is the only remaining file).
+    changeset.FinalizeAssociatedFiles()
     self.vcs.Commit(changeset)
 
     # Exists() with a committed file path.
-    self.assertFalse(files.Exists('/foo'))
-    self.assertTrue(files.Exists('/bar'))
+    self.assertFalse(files.File('/foo').exists)
+    self.assertTrue(files.File('/bar').exists)
 
-    # Get() with uncommitted and committed file paths.
-    self.assertEqual(None, files.Get('/foo'))
-    self.assertEqual('/bar', files.Get('/bar').path)
-    self.assertEqual(['/bar'], files.Get(['/bar']).keys())
-
-    # Writing or touching an already-existing file in a new changeset should
-    # persist the existing file's content and attributes.
+    # Writing an already-existing file in a new changeset should
+    # copy the existing file's content and attributes.
     changeset = self.vcs.NewStagingChangeset()
-    files.Touch('/bar', changeset=changeset)
-    file_obj = files.Get('/bar', changeset=changeset)
-    self.assertEqual('bar-versioned', file_obj.content)
-    self.assertEqual('blue', file_obj.color)
-    files.Write('/bar', changeset=changeset, meta={'color': 'red'})
-    file_obj = files.Get('/bar', changeset=changeset)
-    self.assertEqual('red', file_obj.color)
+    titan_file = files.File('/bar', changeset=changeset)
+    # Before Write, the file has not been copied:
+    self.assertRaises(files.BadFileError, lambda: titan_file.content)
+    # Should copy from last-committed file:
+    titan_file.Write(meta={'color': 'red'})
 
-    # Content shouldn't change after delete and re-create via Touch.
-    files.Delete('/bar', changeset=changeset)
-    files.Touch('/bar', changeset=changeset)
-    file_obj = files.Get('/bar', changeset=changeset)
-    self.assertEqual(FILE_EDITED, file_obj.status)
-    self.assertEqual('bar-versioned', file_obj.content)
+    # Test original object:
+    self.assertEqual('bar-versioned', titan_file.content)
+    self.assertEqual('red', titan_file.meta.color)
+    self.assertEqual(False, titan_file.meta.flag)  # untouched meta property.
+    # Test re-inited object:
+    titan_file = files.File('/bar', changeset=changeset)
+    self.assertEqual('bar-versioned', titan_file.content)
+    self.assertEqual('red', titan_file.meta.color)
+    self.assertEqual(False, titan_file.meta.flag)  # untouched meta property.
 
   def testNewStagingChangeset(self):
     changeset = self.vcs.NewStagingChangeset()
@@ -188,14 +186,11 @@ class VersionsTest(testing.ServicesTestCase):
     # Verify that the auto_current_user_add property is overwritten.
     self.assertEqual('test@example.com', str(changeset.created_by))
 
-    # Before a changeset is committed, its associated paths must be finalized
-    # to indicate that the object's paths can be trusted for strong consistency.
-    files.Touch('/foo', changeset=changeset)
+    # Before a changeset is committed, its associated files must be finalized
+    # to indicate that the object's files can be trusted for strong consistency.
+    files.File('/foo', changeset=changeset).Write('')
     self.assertRaises(versions.ChangesetError, self.vcs.Commit, changeset)
-    self.assertListEqual(['/foo'], changeset._associated_paths)
-    # Test _VerifyRootPaths.
-    self.assertRaises(ValueError, changeset.AssociatePaths, '/_titan/ver/123/a')
-    changeset.FinalizeAssociatedPaths()
+    changeset.FinalizeAssociatedFiles()
     final_changeset = self.vcs.Commit(changeset)
     # When a changeset is committed, a new changeset is created (so that
     # changes are always sequential) with a created time. The old changeset
@@ -220,12 +215,9 @@ class VersionsTest(testing.ServicesTestCase):
     self.assertEqual('test@example.com', str(final_changeset.created_by))
 
     # After Commit(), files in a changeset cannot be modified.
-    self.assertRaises(versions.ChangesetError, files.Write, '/foo', '',
-                      changeset=changeset)
-    self.assertRaises(versions.ChangesetError, files.Delete, '/foo',
-                      changeset=changeset)
-    self.assertRaises(versions.ChangesetError, files.Touch, '/foo',
-                      changeset=changeset)
+    titan_file = files.File('/foo', changeset=changeset)
+    self.assertRaises(versions.ChangesetError, titan_file.Write, '')
+    self.assertRaises(versions.ChangesetError, titan_file.Delete)
 
   def testGetChangeset(self):
     self.assertRaises(versions.ChangesetError,
@@ -240,16 +232,16 @@ class VersionsTest(testing.ServicesTestCase):
     # List files changed by a staged changeset and a final changeset.
     # NOTE: the status checks here are merely for testing purposes.
     # VersionedFile objects should never be trusted for canonical version info.
-    file_versions = versions.Changeset(12).ListFiles()
-    self.assertEqual(file_versions['/foo'].status, FILE_EDITED)
-    self.assertEqual(file_versions['/bar'].status, FILE_DELETED)
-    self.assertEqual(file_versions['/baz'].status, FILE_EDITED)
-    self.assertEqual(file_versions['/qux'].status, FILE_EDITED)
-    file_versions = versions.Changeset(13).ListFiles()
-    self.assertEqual(file_versions['/foo'].status, FILE_EDITED)
-    self.assertEqual(file_versions['/bar'].status, FILE_DELETED)
-    self.assertEqual(file_versions['/baz'].status, FILE_EDITED)
-    self.assertEqual(file_versions['/qux'].status, FILE_EDITED)
+    titan_files = versions.Changeset(12).ListFiles()
+    self.assertEqual(titan_files['/foo'].meta.status, FILE_EDITED)
+    self.assertEqual(titan_files['/bar'].meta.status, FILE_DELETED)
+    self.assertEqual(titan_files['/baz'].meta.status, FILE_EDITED)
+    self.assertEqual(titan_files['/qux'].meta.status, FILE_EDITED)
+    titan_files = versions.Changeset(13).ListFiles()
+    self.assertEqual(titan_files['/foo'].meta.status, FILE_EDITED)
+    self.assertEqual(titan_files['/bar'].meta.status, FILE_DELETED)
+    self.assertEqual(titan_files['/baz'].meta.status, FILE_EDITED)
+    self.assertEqual(titan_files['/qux'].meta.status, FILE_EDITED)
 
   def testGetFileVersions(self):
     self.InitTestData()
@@ -283,23 +275,6 @@ class VersionsTest(testing.ServicesTestCase):
         'versioned_path': u'/_titan/ver/16/foo'
     }
     self.assertDictEqual(expected, file_versions[0].Serialize())
-
-  def testGenerateDiff(self):
-    self.InitTestData()
-    file_versions = self.vcs.GetFileVersions('/foo')
-
-    # 'foo' --> 'foo3'
-    expected_diff = [(-1, ''), (0, 'foo'), (1, '3')]
-    actual_diff = self.vcs.GenerateDiff(file_versions[3], file_versions[0],
-                                        semantic_cleanup=True, diff_lines=True,
-                                        edit_cost=0)
-    self.assertEqual(expected_diff, actual_diff)
-
-    # Deleted file --> 'foo3'
-    expected_diff = [(1, 'foo3')]
-    actual_diff = self.vcs.GenerateDiff(file_versions[1], file_versions[0],
-                                        edit_cost=2)
-    self.assertEqual(expected_diff, actual_diff)
 
 if __name__ == '__main__':
   basetest.main()

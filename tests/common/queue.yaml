@@ -14,6 +14,10 @@ queue:
 - name: titan-stats
   mode: pull
 
+# For files/dirs.py.
+- name: titan-dirs
+  mode: pull
+
 # For services/full_text_search.py.
 - name: full-text-search
   rate: 100/s

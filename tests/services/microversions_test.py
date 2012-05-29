@@ -55,10 +55,10 @@ class MicroversionsTest(testing.ServicesTestCase):
     # and defer a versioning task which commits a single-file changeset.
     files.Write('/foo', 'foo')
     self.assertEqual(1, len(self.taskqueue_stub.get_filtered_tasks()))
-    self.assertEqual('foo', files.File('/foo').content)
+    self.assertEqual('foo', files.DeprecatedFile('/foo').content)
     files.Touch('/foo')
     self.assertEqual(2, len(self.taskqueue_stub.get_filtered_tasks()))
-    self.assertEqual('foo', files.File('/foo').content)
+    self.assertEqual('foo', files.DeprecatedFile('/foo').content)
     files.Delete('/foo')
     self.assertEqual(3, len(self.taskqueue_stub.get_filtered_tasks()))
     self.assertEqual(None, files._File.get_by_key_name('/foo'))
