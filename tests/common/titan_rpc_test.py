@@ -42,11 +42,13 @@ class TitanRpcTest(basetest.TestCase):
   def testUrlFetch(self):
     self.mox.StubOutWithMock(self.client, 'Send')
     # /api/foo => return "foobar".
-    self.client.Send('/api/foo', payload=None).AndReturn('foobar')
+    self.client.Send('/api/foo', payload=None,
+                     content_type=mox.IgnoreArg()).AndReturn('foobar')
 
     # /api/bar => return 404 status.
     error = urllib2.HTTPError('', 404, '', '', cStringIO.StringIO())
-    self.client.Send('/api/bar', payload=None).AndRaise(error)
+    self.client.Send('/api/bar', payload=None,
+                     content_type=mox.IgnoreArg()).AndRaise(error)
     self.mox.ReplayAll()
 
     resp = self.client.UrlFetch('/api/foo')

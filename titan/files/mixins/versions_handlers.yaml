@@ -1,0 +1,6 @@
+handlers:
+
+- url: /_titan/files/versions/changeset(/commit)?
+  script: titan.files.mixins.versions_views.application
+  login: admin
+  secure: always

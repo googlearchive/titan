@@ -243,6 +243,19 @@ class VersionsTest(testing.BaseTestCase):
     self.assertEqual(titan_files['/baz'].meta.status, FILE_EDITED)
     self.assertEqual(titan_files['/qux'].meta.status, FILE_EDITED)
 
+    # Test Serialize().
+    changeset = versions.Changeset(12)
+    expected_data = {
+        'num': 12,
+        'created': changeset.created,
+        'status': versions.CHANGESET_DELETED_BY_SUBMIT,
+        'base_path': '/_titan/ver/12',
+        'linked_changeset_base_path': '/_titan/ver/13',
+        'linked_changeset_num': 13,
+        'created_by': 'titanuser@example.com',
+    }
+    self.assertEqual(expected_data, changeset.Serialize())
+
   def testGetFileVersions(self):
     self.InitTestData()
 

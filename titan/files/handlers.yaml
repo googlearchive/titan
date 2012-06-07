@@ -5,6 +5,12 @@ handlers:
   # This handler should not require login.
   secure: always
 
+- url: /_titan/file.*
+  script: titan.files.handlers.application
+  login: admin
+  secure: always
+
+# TODO: deprecated v1 API, remove this when migration is complete.
 - url: /_titan/.*
   script: titan.files.handlers.application
   login: admin

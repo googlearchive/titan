@@ -181,6 +181,7 @@ class Changeset(object):
     base_path: The path prefix for all files in this changeset,
         for example: '/_titan/ver/123'
     linked_changeset_base_path: Same as base_path, but for the linked changeset.
+    exists: If the given changeset exists.
   """
 
   def __init__(self, num, changeset_ent=None):
@@ -225,19 +226,29 @@ class Changeset(object):
 
   @property
   def linked_changeset_base_path(self):
-    return VERSIONS_PATH_FORMAT % (self.linked_changeset_num, '')
+    if self.linked_changeset:
+      return VERSIONS_PATH_FORMAT % (self.linked_changeset_num, '')
 
   @property
   def linked_changeset(self):
-    return Changeset(num=self.linked_changeset_num)
+    if self.linked_changeset_num:
+      return Changeset(num=self.linked_changeset_num)
 
   @property
   def linked_changeset_num(self):
-    return int(self.changeset_ent.linked_changeset.id())
+    if self.status not in (CHANGESET_NEW, CHANGESET_DELETED):
+      return int(self.changeset_ent.linked_changeset.id())
 
   @property
   def created_by(self):
     return self.changeset_ent.created_by
+
+  @property
+  def exists(self):
+    try:
+      return bool(self.changeset_ent)
+    except ChangesetError:
+      return False
 
   def GetFiles(self):
     """Get all files associated with this changeset.
@@ -271,8 +282,22 @@ class Changeset(object):
       # the staging changeset's number, since they are never moved.
       changeset = changeset.linked_changeset
     versioned_files = files.Files.List(changeset.base_path, recursive=True)
+    versioned_files.Load()
     # Recreate a Files object to get rid of versioned paths in the keys:
     return files.Files(files=versioned_files.values())
+
+  def Serialize(self):
+    """Serializes changeset data into simple types."""
+    data = {
+        'num': self.num,
+        'created': self.created,
+        'status': self.status,
+        'base_path': self.base_path,
+        'linked_changeset_base_path': self.linked_changeset_base_path,
+        'linked_changeset_num': self.linked_changeset_num,
+        'created_by': str(self.created_by) if self.created_by else None,
+    }
+    return data
 
   def AssociateFile(self, titan_file):
     """Associate a file temporally to this changeset object before commit.

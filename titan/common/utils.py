@@ -17,8 +17,10 @@
 
 import functools
 import inspect
+import json
 import mimetypes
 import os
+import time
 
 def GetCommonDirPath(paths):
   """Given an iterable of file paths, returns the top common prefix."""
@@ -132,3 +134,41 @@ def ComposeMethodKwargs(func):
     return func(func_self, **composite_kwargs)
 
   return Wrapper
+
+class CustomJsonEncoder(json.JSONEncoder):
+  """A custom JSON encoder to support objects providing a Serialize() method."""
+
+  def __init__(self, *args, **kwargs):
+    self.full = kwargs.pop('full', None)
+    super(CustomJsonEncoder, self).__init__(*args, **kwargs)
+
+  def default(self, obj):
+    """Override of json.JSONEncoder method."""
+    # Objects with custom Serialize() function.
+    if hasattr(obj, 'Serialize'):
+      if self.full is not None:
+        return obj.Serialize(full=self.full)
+      return obj.Serialize()
+
+    # Datetime objects => Unix timestamp.
+    if hasattr(obj, 'timetuple'):
+      # NOTE: timetuple() drops microseconds, so add it back in.
+      return time.mktime(obj.timetuple()) + 1e-6 * obj.microsecond
+
+    raise TypeError(repr(obj) + ' is not JSON serializable.')
+
+class DictAsObject(object):
+  """Lightweight wrapper for exposing a dictionary as object attributes."""
+
+  def __init__(self, data):
+    self._data = data
+
+  def __getattr__(self, name):
+    try:
+      return self._data[name]
+    except KeyError:
+      raise AttributeError("'%s' object has no attribute '%s'"
+                           % (self.__class__.__name__, name))
+
+  def Serialize(self):
+    return self._data.copy()

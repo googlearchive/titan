@@ -169,16 +169,6 @@ class File(object):
       raise
 
   @property
-  def blob(self):
-    """The BlobInfo of this File, if the file content is stored in blobstore."""
-    # Backwards-compatibility with deprecated "blobs" property.
-    if not self._file.blob and not self._file.blobs:
-      return
-    if self._file.blob:
-      return blobstore.BlobInfo.get(self._file.blob)
-    return blobstore.get(self._file.blobs[0])
-
-  @property
   def is_loaded(self):
     """Whether or not this lazy object has been evaluated."""
     return bool(self._file_ent)
@@ -226,6 +216,16 @@ class File(object):
     return _ReadContentOrBlob(self)
 
   @property
+  def blob(self):
+    """The BlobInfo of this File, if the file content is stored in blobstore."""
+    # Backwards-compatibility with deprecated "blobs" property.
+    if not self._file.blob and not self._file.blobs:
+      return
+    if self._file.blob:
+      return blobstore.BlobInfo.get(self._file.blob)
+    return blobstore.get(self._file.blobs[0])
+
+  @property
   def exists(self):
     try:
       return bool(self._file)
@@ -261,7 +261,7 @@ class File(object):
     meta = {}
     for key in self._file.meta_properties:
       meta[key] = getattr(self._file, key)
-    self._meta = _Meta(meta)
+    self._meta = utils.DictAsObject(meta)
     return self._meta
 
   def read(self):
@@ -401,7 +401,6 @@ class File(object):
         for key, value in meta.iteritems():
           if not hasattr(self._file, key) or getattr(self._file, key) != value:
             setattr(self._file, key, value)
-            changed = True
       self._file.put()
     return self
 
@@ -683,22 +682,6 @@ class FileProperty(ndb.GenericProperty):
     filters = [files.FileProperty('color') == 'blue']
     files.Files.List('/', recursive=True, filters=filters)
   """
-
-class _Meta(object):
-  """Lightweight wrapper for exposing metadata as attributes."""
-
-  def __init__(self, meta):
-    self._meta = meta
-
-  def __getattr__(self, name):
-    try:
-      return self._meta[name]
-    except KeyError:
-      raise AttributeError("'%s' object has no attribute '%s'"
-                           % (self.__class__.__name__, name))
-
-  def Serialize(self):
-    return self._meta.copy()
 
 class _TitanFile(ndb.Expando):
   """Model for representing a file; don't use directly outside of this module.

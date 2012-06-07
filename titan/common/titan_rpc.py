@@ -32,6 +32,18 @@ import sys
 import urllib2
 from google.appengine.tools import appengine_rpc
 
+USER_AGENT = 'TitanRpcClient/1.0'
+SOURCE = '-'
+
+class Error(Exception):
+  pass
+
+class AuthenticationError(Error):
+  pass
+
+class RpcError(Error):
+  pass
+
 def AuthFunc():
   """Default auth func."""
   email = ''
@@ -65,7 +77,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     obj.orig_headers = self.orig_headers.copy()
     return obj
 
-  def UrlFetch(self, url, method='GET', payload=None, headers=None):
+  def UrlFetch(self, url, method='GET', payload=None, headers=None, **kwargs):
     """Fetches a URL path and returns a Response object.
 
     Args:
@@ -92,10 +104,15 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       self.extra_headers.update(headers)
 
     try:
-      content = self.Send(url, payload=payload)
+      # content_type must unfortunately be given to the base class here,
+      # not in a header.
+      content_type = self.extra_headers.pop(
+          'Content-Type', 'application/x-www-form-urlencoded')
+      content = self.Send(url, payload=payload, content_type=content_type,
+                          **kwargs)
       # NOTE: The status code might not actually be 200 (any 2xx status code
-      # might be returned, but urllib2's urlopen method doesn't exactly provide
-      # an easy way to get this information.
+      # might be returned, but appengine_rpc doesn't exactly provide an
+      # easy way to get this information.
       status_code = 200
     except urllib2.HTTPError, e:
       content = e.read()
@@ -108,14 +125,40 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     resp = Response(content=content, status_code=status_code)
     return resp
 
+  def ValidateClientAuth(self):
+    """Test the stored credentials, may raise AuthenticationError."""
+    try:
+      if self._HostIsDevAppServer():
+        return
+      credentials = self.auth_function()
+      self._GetAuthToken(credentials[0], credentials[1])
+      # Valid credentials, call _Authenticate to populate self state.
+      self._Authenticate()
+    except appengine_rpc.ClientLoginError, e:
+      error = ('Error %d: %s %s' %
+               (e.code, e.reason, e.info or e.msg or '')).strip()
+      raise AuthenticationError('Invalid username or password. (%s)' % error)
+
+  def _HostIsDevAppServer(self):
+    """Make a single GET / request to see if the server is a dev_appserver."""
+    # This exists because appserver_rpc doesn't nicely expose auth error paths.
+    try:
+      response = urllib2.urlopen('%s://%s/' % (self.scheme, self.host))
+      server_header = response.headers.get('server', '')
+    except urllib2.URLError, e:
+      if not hasattr(e, 'headers'):
+        raise
+      server_header = e.headers.get('server', '')
+    if server_header.startswith('Development'):
+      return True
+    return False
+
   def _CreateRequest(self, url, data=None):
     """Overrides the base method to allow different HTTP methods to be used."""
     request = super(TitanClient, self)._CreateRequest(url, data=data)
+    method = 'POST' if data else 'GET'
     if self.method:
       method = self.method
-      self.method = None
-    else:
-      method = 'POST' if data else 'GET'
     request.get_method = lambda: method
     return request
 
@@ -125,9 +168,41 @@ class Response(object):
   Attributes:
     content: The body of the response.
     status_code: HTTP status code.
+    headers: The HTTP headers.
   """
 
   def __init__(self, content='', status_code=200, headers=None):
     self.content = content
     self.status_code = status_code
     self.headers = headers or {}
+
+class AbstractRemoteFactory(object):
+  """Abstract factory for creating Remote* objects."""
+
+  def __init__(self, host, auth_function=AuthFunc, user_agent=USER_AGENT,
+               source=SOURCE, secure=True, **kwargs):
+    self.host = host
+    self.auth_function = auth_function
+    self.user_agent = user_agent
+    self.source = source
+    self.secure = secure
+    self.kwargs = kwargs
+    self._titan_client = None
+
+  @property
+  def titan_client(self):
+    if not self._titan_client:
+      self._titan_client = self._GetTitanClient(
+          host=self.host,
+          auth_function=self.auth_function,
+          user_agent=self.user_agent,
+          source=self.source,
+          secure=self.secure,
+          **self.kwargs)
+    return self._titan_client.Copy()
+
+  def _GetTitanClient(self, **kwargs):
+    return TitanClient(**kwargs)
+
+  def ValidateClientAuth(self):
+    self.titan_client.ValidateClientAuth()

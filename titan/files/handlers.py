@@ -24,6 +24,7 @@ try:
   import json
 except ImportError:
   import simplejson as json
+import logging
 import time
 import urllib
 from google.appengine.api import blobstore
@@ -31,6 +32,7 @@ from google.appengine.ext import webapp
 from google.appengine.ext.webapp import blobstore_handlers
 from google.appengine.ext.webapp import util
 from titan.common import hooks
+from titan.common import utils
 from titan.files import files
 
 class BaseHandler(webapp.RequestHandler):
@@ -39,7 +41,7 @@ class BaseHandler(webapp.RequestHandler):
   def WriteJsonResponse(self, data, **kwargs):
     """Data to serialize. Accepts keyword args to pass to the serializer."""
     self.response.headers['Content-Type'] = 'application/json'
-    json_data = json.dumps(data, cls=CustomFileSerializer, **kwargs)
+    json_data = json.dumps(data, cls=utils.CustomJsonEncoder, **kwargs)
     self.response.out.write(json_data)
 
 class ExistsHandler(BaseHandler):
@@ -217,13 +219,20 @@ class FileHandler(BaseHandler):
     """GET handler."""
     path = self.request.get('path')
     full = bool(self.request.get('full'))
-    titan_file = files.File(path)
+
+    try:
+      file_kwargs, _ = _GetExtraParams(self.request.GET)
+    except ValueError:
+      self.error(400)
+      return
+
+    titan_file = files.File(path, **file_kwargs)
     if not titan_file.exists:
       self.error(404)
       return
     # TODO(user): when full=True, this may fail for files with byte-string
     # content.
-    self.WriteJsonResponse(files.File(path), full=full)
+    self.WriteJsonResponse(titan_file, full=full)
 
   def post(self):
     """POST handler."""
@@ -231,6 +240,13 @@ class FileHandler(BaseHandler):
     # Must use str_POST here to preserve the original encoding of the string.
     content = self.request.str_POST.get('content')
     blob = self.request.get('blob', None)
+
+    try:
+      file_kwargs, method_kwargs = _GetExtraParams(self.request.POST)
+    except ValueError:
+      self.error(400)
+      return
+
     if blob is not None:
       # Convert any string keys to BlobKey instances.
       if isinstance(blob, basestring):
@@ -242,20 +258,29 @@ class FileHandler(BaseHandler):
     mime_type = self.request.get('mime_type', None)
 
     try:
-      files.File(path).Write(content, blob=blob, mime_type=mime_type,
-                             meta=meta)
+      files.File(path, **file_kwargs).Write(
+          content, blob=blob, mime_type=mime_type, meta=meta, **method_kwargs)
       self.response.set_status(201)
-      self.response.headers['Location'] = '/_titan/file/?path=%s' % path
+      # Headers must be byte-strings, not unicode strings.
+      # Since this is a URI, follow RFC 3986 and encode it using UTF-8.
+      location_header = ('/_titan/file/?path=%s' % path).encode('utf-8')
+      self.response.headers['Location'] = location_header
     except files.BadFileError:
       self.error(404)
     except (TypeError, ValueError):
       self.error(400)
+      logging.exception('Bad request:')
 
   def delete(self):
     """DELETE handler."""
     path = self.request.get('path')
     try:
-      files.File(path).Delete()
+      file_kwargs, method_kwargs = _GetExtraParams(self.request.POST)
+    except ValueError:
+      self.error(400)
+      return
+    try:
+      files.File(path, **file_kwargs).Delete(**method_kwargs)
     except files.BadFileError:
       self.error(404)
 
@@ -265,7 +290,12 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
   def get(self):
     """GET handler."""
     path = self.request.get('path')
-    titan_file = files.File(path)
+    try:
+      file_kwargs, _ = _GetExtraParams(self.request.POST)
+    except ValueError:
+      self.error(400)
+      return
+    titan_file = files.File(path, **file_kwargs)
     if not titan_file.exists:
       self.error(404)
       return
@@ -279,24 +309,21 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     else:
       self.response.out.write(titan_file.content)
 
-class CustomFileSerializer(json.JSONEncoder):
-  """A custom serializer for json to support File objects."""
+def _GetExtraParams(request_params):
+  """Returns a two-tuple of (file_kwargs, method_kwargs)."""
+  # Extra keyword arguments for instantiation and method call.
+  file_params = request_params.get('file_params')
+  file_kwargs = json.loads(file_params) if file_params else {}
+  method_params = request_params.get('method_params')
+  method_kwargs = json.loads(method_params) if method_params else {}
 
-  def __init__(self, full=False, *args, **kwargs):
-    self.full = full
-    super(CustomFileSerializer, self).__init__(*args, **kwargs)
-
-  def default(self, obj):
-    # Objects with custom Serialize() function.
-    if hasattr(obj, 'Serialize'):
-      return obj.Serialize(full=self.full)
-
-    # Datetime objects => Unix timestamp.
-    if hasattr(obj, 'timetuple'):
-      # NOTE: timetuple() drops microseconds, so add it back in.
-      return time.mktime(obj.timetuple()) + 1e-6 * obj.microsecond
-
-    raise TypeError(repr(obj) + ' is not JSON serializable.')
+  # Quick sanity check, verify that no kwargs are internal arguments,
+  # for security purposes.
+  for key in file_kwargs.keys() + method_kwargs.keys():
+    if key.startswith('_'):
+      logging.error('Invalid param: %r', key)
+      raise ValueError('Invalid param: %r' % key)
+  return file_kwargs, method_kwargs
 
 URL_MAP = (
     ('/_titan/file', FileHandler),

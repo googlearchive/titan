@@ -74,8 +74,8 @@ class HandlersTest(testing.BaseTestCase):
     params = {
         'content': 'foobar',
         'path': '/foo/bar',
-        'mime_type': 'fake/mimetype',
         'meta': json.dumps({'color': 'blue'}),
+        'mime_type': 'fake/mimetype',
     }
     response = self.app.post('/_titan/file', params)
     self.assertEqual(201, response.status_int)
@@ -108,6 +108,15 @@ class HandlersTest(testing.BaseTestCase):
         'path': '/foo/bar',
         'content': 'content',
         'blob': 'some-blob-key',
+    }
+    response = self.app.post('/_titan/file', params, expect_errors=True)
+    self.assertEqual(400, response.status_int)
+
+    # Verify that bad requests get a 400.
+    params = {
+        'path': '/foo/bar',
+        'content': 'content',
+        'file_params': json.dumps({'_invalid_internal_arg': True}),
     }
     response = self.app.post('/_titan/file', params, expect_errors=True)
     self.assertEqual(400, response.status_int)
