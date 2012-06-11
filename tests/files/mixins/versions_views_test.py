@@ -19,18 +19,25 @@ from tests.common import testing
 
 import json
 import os
+import urllib
 
 import mox
 import webtest
 
 from titan.common.lib.google.apputils import basetest
+from titan.files import files
+from titan.files.mixins import versions
 from titan.files.mixins import versions_views
+
+class VersionedFile(versions.FileVersioningMixin, files.File):
+  pass
 
 class HandlersTest(testing.BaseTestCase):
 
   def setUp(self):
     super(HandlersTest, self).setUp()
     self.app = webtest.TestApp(versions_views.application)
+    files.RegisterFileFactory(lambda *args, **kwargs: VersionedFile)
 
   def testChangesetHandler(self):
     # Weakly test execution path:
@@ -41,15 +48,39 @@ class HandlersTest(testing.BaseTestCase):
   def testChangesetCommitHandler(self):
     mock_vcs = self.mox.CreateMockAnything()
     self.mox.StubOutWithMock(versions_views.versions, 'VersionControlService')
+
+    # 1st:
+    versions_views.versions.VersionControlService().AndReturn(mock_vcs)
+
+    # 2nd:
     versions_views.versions.VersionControlService().AndReturn(mock_vcs)
     mock_vcs.Commit(mox.IgnoreArg(), force=True).AndReturn('success')
 
+    # 3rd:
+    versions_views.versions.VersionControlService().AndReturn(mock_vcs)
+    mock_vcs.Commit(mox.IgnoreArg(), force=False).AndReturn('success')
+
     self.mox.ReplayAll()
-    # Weakly test execution path:
-    response = self.app.post(
-        '/_titan/files/versions/changeset/commit?changeset=1')
+
+    # Manifest and force not given.
+    url = '/_titan/files/versions/changeset/commit?changeset=1'
+    response = self.app.post(url, expect_errors=True)
+    self.assertEqual(400, response.status_int)
+
+    # Force eventually consistent commit.
+    url = '/_titan/files/versions/changeset/commit?changeset=1&force=true'
+    response = self.app.post(url)
     self.assertEqual(201, response.status_int)
     self.assertEqual('success', json.loads(response.body))
+
+    # Use manifest for strongly consistent commit.
+    manifest = ['/foo', '/bar']
+    url = '/_titan/files/versions/changeset/commit?changeset=1'
+    params = {'manifest': json.dumps(manifest)}
+    response = self.app.post(url, params=params)
+    self.assertEqual(201, response.status_int)
+    self.assertEqual('success', json.loads(response.body))
+
     self.mox.VerifyAll()
 
 if __name__ == '__main__':

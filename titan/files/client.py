@@ -32,8 +32,10 @@ import httplib
 import urllib
 import urllib2
 import urlparse
+
 from poster import encode
 from poster import streaminghttp
+from google.appengine.api import urlfetch
 from google.appengine.tools import appengine_rpc
 
 class Error(Exception):
@@ -47,6 +49,15 @@ class BadFileError(Error):
 
 class TitanClient(appengine_rpc.HttpRpcServer):
   """Class that performs Titan file operations over RPC to a Titan service."""
+
+  def __init__(self, *args, **kwargs):
+    oauth_token = kwargs.pop('oauth_token', None)
+    super(TitanClient, self).__init__(*args, **kwargs)
+
+    if oauth_token:
+      if not oauth_token.startswith('OAuth '):
+        oauth_token = 'OAuth ' + oauth_token
+      self.extra_headers['Authorization'] = oauth_token
 
   def Exists(self, path, **kwargs):
     """Returns True if the path exists, False otherwise."""
@@ -126,7 +137,6 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     if mime_type is not None:
       params.append(('mime_type', mime_type))
     params += kwargs.items()
-
     try:
       if fp:
         # If given a file pointer, create a multipart encoded request.
@@ -149,7 +159,25 @@ class TitanClient(appengine_rpc.HttpRpcServer):
         assert not blob
         params.append(('blob', response_params['blob'][0]))
       self._Post('/_titan/write', params=params)
-    except urllib2.HTTPError, e:
+    except urllib2.HTTPError as e:
+      if e.code == 404:
+        raise BadFileError(e)
+      raise
+
+  def WriteBlob(self, fp):
+    """Writes file object to blob store and return its blobkey."""
+    try:
+      params = [('file', fp)]
+      # If given a file pointer, create a multipart encoded request.
+      write_blob_url = self._Get('/_titan/newblob')
+      content_generator, headers = encode.multipart_encode(params)
+      resp = urlfetch.fetch(write_blob_url, payload=''.join(content_generator),
+                            headers=headers, method='POST',
+                            follow_redirects=False)
+      url = resp.headers['Location']
+      response_params = urlparse.parse_qs(urlparse.urlparse(url).query)
+      return response_params['blob'][0]
+    except urllib2.HTTPError as e:
       if e.code == 404:
         raise BadFileError(e)
       raise

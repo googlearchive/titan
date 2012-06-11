@@ -21,6 +21,7 @@ import logging
 import webapp2
 
 from titan.common import utils
+from titan.files import files
 from titan.files.mixins import versions
 
 class AbstractBaseHandler(webapp2.RequestHandler):
@@ -54,11 +55,24 @@ class ChangesetCommitHandler(AbstractBaseHandler):
     try:
       vcs = versions.VersionControlService()
       staging_changeset = versions.Changeset(int(self.request.get('changeset')))
-      # TODO(user): IMPORTANT -- implement some system for consistency
-      # guarantees here, instead of passing force=True. Otherwise, files may
-      # be accidentally excluded from the changeset commit because the index
-      # is behind.
-      final_changeset = vcs.Commit(staging_changeset, force=True)
+      force = bool(self.request.get('force', False))
+      manifest = self.request.POST.get('manifest', None)
+      if not force and not manifest or force and manifest:
+        self.error(400)
+        logging.error('Exactly one of "manifest" or "force" params is required')
+        return
+
+      # If a client has full knowledge of the files uploaded to a changeset,
+      # the "manifest" param may be given to ensure a strongly consistent
+      # commit. If given, associate the files to the changeset and finalize it.
+      if manifest:
+        manifest = json.loads(manifest)
+        for path in manifest:
+          titan_file = files.File(path, changeset=staging_changeset)
+          staging_changeset.AssociateFile(titan_file)
+        staging_changeset.FinalizeAssociatedFiles()
+
+      final_changeset = vcs.Commit(staging_changeset, force=force)
       self.WriteJsonResponse(final_changeset)
       self.response.set_status(201)
     except (TypeError, ValueError):
