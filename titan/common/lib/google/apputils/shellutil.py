@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# This code must be source compatible with Python 2.4 through 3.3.
 #
 # Copyright 2003 Google Inc. All Rights Reserved.
 

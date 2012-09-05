@@ -66,24 +66,22 @@ class FileVersioningMixin(files.File):
   determine the real file location from it's latest commited changeset.
   """
 
-  @utils.ComposeMethodKwargs
-  def __init__(self, **kwargs):
+  def __init__(self, path, **kwargs):
     # If given, this File represents the file at the given changeset.
     # If not, this File represents the lastest committed file version,
     # but it cannot be written or changed (since that must happen with an
     # associated changeset).
-    self.changeset = kwargs.pop('changeset', None)
-    self._disable_root_copy = kwargs.pop('_disable_root_copy', False)
+    self.changeset = kwargs.get('changeset', None)
+    self._disable_root_copy = kwargs.get('_disable_root_copy', False)
 
-    super(FileVersioningMixin, self).__init__(**kwargs)
+    super(FileVersioningMixin, self).__init__(path, **kwargs)
 
     # Support initing with a /_titan/ver path instead of a changeset number.
-    versioned_path_match = VERSIONS_PATH_BASE_REGEX.match(kwargs['path'])
+    versioned_path_match = VERSIONS_PATH_BASE_REGEX.match(path)
     if versioned_path_match:
       self.changeset = int(versioned_path_match.group(1))
       # Replace the path argument.
-      kwargs['path'] = VERSIONS_PATH_BASE_REGEX.sub('', kwargs['path'])
-      self._path = kwargs['path']
+      self._path = VERSIONS_PATH_BASE_REGEX.sub('', path)
 
     self._real_path = None
     if self.changeset and isinstance(self.changeset, int):
@@ -114,6 +112,8 @@ class FileVersioningMixin(files.File):
   @property
   def real_path(self):
     """Override the storage location of the file to the versioned path."""
+    # Avoid using other properties of self.changeset here, to avoid making
+    # an RPC for the Changeset entity.
     if not self.changeset:
       raise InvalidChangesetError(
           'File modification requires an associated changeset.')
@@ -150,7 +150,9 @@ class FileVersioningMixin(files.File):
       # The first time the versioned file is created (or un-deleted), we have
       # to branch all content and properties from the current root file version.
       if not self._disable_root_copy:
-        _CopyFileFromRoot(self.path, self.changeset)
+        copy_kwargs = self._original_kwargs.copy()
+        del copy_kwargs['changeset']
+        _CopyFileFromRoot(self.path, self.changeset, **copy_kwargs)
       kwargs['meta']['status'] = FILE_EDITED
       kwargs['_delete_old_blob'] = False
 
@@ -413,6 +415,15 @@ class FileVersion(object):
   @property
   def changeset(self):
     return self._changeset
+
+  @property
+  def content_changeset(self):
+    """Convenience property for finding the committed content changeset."""
+    if self.changeset.status != CHANGESET_SUBMITTED:
+      raise TypeError(
+          'content_changeset can only be accessed from final, committed '
+          'changesets. Current changeset: %r' % self)
+    return self.changeset.linked_changeset
 
   @property
   def changeset_created_by(self):
@@ -717,18 +728,20 @@ def _VerifyVersionedPaths(paths):
     if not VERSIONS_PATH_BASE_REGEX.match(path):
       raise ValueError('Not a versioned file path: %s' % path)
 
-def _CopyFileFromRoot(root_path, changeset):
+def _CopyFileFromRoot(path, changeset, **kwargs):
   """Copy a root file (if it exists) to a new versioned path.
 
   Args:
-    root_path: An absolute filename.
+    path: An absolute filename.
     changeset: A Changeset object.
   Returns:
     The newly created files.File object or None (if the root path didn't exist).
   """
-  root_file = files.File(root_path)
-  versioned_file = files.File(root_path, changeset=changeset,
-                              _disable_root_copy=True)
+  kwargs_without_changeset = kwargs.copy()
+  kwargs_without_changeset.pop('changeset', None)
+  root_file = files.File(path, **kwargs_without_changeset)
+  versioned_file = files.File(path, changeset=changeset,
+                              _disable_root_copy=True, **kwargs)
   if not root_file.exists:
     return
   # Copy the root file to the versioned path if:

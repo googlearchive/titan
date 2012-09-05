@@ -65,8 +65,6 @@ from titan.files import files_cache
 # This value should be mirrored by titan_client.DIRECT_TO_BLOBSTORE_SIZE.
 MAX_CONTENT_SIZE = 1 << 19  # 500 KiB
 
-BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19 # 500 KiB
-
 DEFAULT_BATCH_SIZE = 100
 
 class Error(Exception):
@@ -85,10 +83,19 @@ class File(object):
     titan_file = File('/path/to/file.html')
     titan_file.Write('Some content')
     titan_file.Delete()
+    titan_file.CopyTo(destination_file)
+    titan_file.MoveTo(destination_file)
     titan_file.Serialize()
   Attributes:
     name: Filename without path. Example: file.html
-    path: Full filename and path. Example: /path/to/some/file.html
+    path: Full filename and path. Might be a virtual path from a mixin.
+        Example: /path/to/some/file.html
+    real_path: Full filename and path. Always the actual backend storage path.
+        Example: /path/to/some/file.html
+    dir_path: The containing directory. Might be a virtual path.
+        Example: /path/to/some
+    real_dir_path: The containing directory. Always the actual storage dir path.
+        Example: /path/to/some
     paths: A list of containing directories.
         Example: ['/', '/path', '/path/to', '/path/to/some']
     mime_type: Content type of the file.
@@ -122,15 +129,17 @@ class File(object):
     Returns:
       File instance.
     """
+    # Validate path before class creation and mixins.
+    File.ValidatePath(path)
     if _global_file_factory.is_registered and not _from_factory:
       # Get the correct class instance for this path, determined by the factory:
       file_class = _global_file_factory(path, **kwargs)
       # Instantiate an object of the class and return it:
-      return file_class(path=path, _file_ent=_file_ent, _from_factory=True,
-                        **kwargs)
+      return file_class(
+          path=path, _file_ent=_file_ent, _from_factory=True, **kwargs)
     return super(File, cls).__new__(cls)
 
-  def __init__(self, path, _file_ent=None, _from_factory=False):
+  def __init__(self, path, _file_ent=None, _from_factory=False, **kwargs):
     """File object constructor.
 
     Args:
@@ -145,6 +154,10 @@ class File(object):
     self._name = os.path.basename(self._path)
     self._file_ent = _file_ent
     self._meta = None
+    self._original_kwargs = kwargs
+
+  def __nonzero__(self):
+    return self.exists
 
   def __eq__(self, other_file):
     return (isinstance(other_file, File)
@@ -160,8 +173,9 @@ class File(object):
       if self._file_ent:
         return self._file_ent
       # Haven't initialized a File object yet.
-      temp_file_obj, _ = _GetTitanFilesOrDie(self.real_path)
-      self._file_ent = _GetFileEntities(temp_file_obj)
+      self._file_ent = _TitanFile.get_by_id(self.real_path)
+      if not self._file_ent:
+        raise BadFileError('File does not exist: %s' % self.real_path)
       return self._file_ent
     except AttributeError:
       # Without this, certain attribute errors are masked and harder to debug.
@@ -194,6 +208,18 @@ class File(object):
       Actual storage path of the file.
     """
     return self._real_path or self._path
+
+  @property
+  def dir_path(self):
+    """The file's containing directory path."""
+    # Don't use self._file.dir_path to avoid evaluation.
+    return os.path.dirname(self.path)
+
+  @property
+  def real_dir_path(self):
+    """The actualy backend storage dir path of this file."""
+    # Don't use self._file.dir_path to avoid evaluation.
+    return os.path.dirname(self.real_path)
 
   @property
   def paths(self):
@@ -270,9 +296,32 @@ class File(object):
   def close(self):
     pass
 
+  def _MaybeEncodeContent(self, content, encoding):
+    # If given unicode, encode it as UTF-8 and flag it for future decoding.
+    if isinstance(content, unicode):
+      if encoding is not None:
+        raise TypeError(
+            'If given a unicode object for "content", the "encoding" '
+            'argument cannot be given.')
+      encoding = 'utf-8'
+      content = content.encode(encoding)
+    return content, encoding
+
+  def _MaybeWriteToBlobstore(self, content, blob):
+    if content and blob:
+      raise TypeError('Exactly one of "content" or "blob" must be given.')
+    if content and len(content) > MAX_CONTENT_SIZE:
+      logging.debug('Content size %s exceeds %s bytes, uploading to blobstore.',
+                    len(content), MAX_CONTENT_SIZE)
+      old_blobinfo = self.blob if self.exists else None
+      blob = utils.WriteToBlobstore(content, old_blobinfo=old_blobinfo)
+      files_cache.StoreBlob(self.real_path, content)
+      content = None
+    return content, blob
+
   # TODO(user): remove _delete_old_blob, refactor into versions subclass.
   def Write(self, content=None, blob=None, mime_type=None, meta=None,
-            _delete_old_blob=True):
+            encoding=None, _delete_old_blob=True):
     """Write or update a File.
 
     Updates: if the File already exists, Write will accept any of the given args
@@ -287,6 +336,9 @@ class File(object):
       blob: If content is not provided, a BlobKey pointing to the file.
       mime_type: Content type of the file; will be guessed if not given.
       meta: A dictionary of properties to be added to the file.
+      encoding: The optional encoding of the content if given a bytestring.
+          The encoding will be automatically determined if "content" is passed
+          a unicode string.
       _delete_old_blob: Whether or not to delete the old blob if it changed.
     Raises:
       TypeError: For missing arguments.
@@ -304,35 +356,12 @@ class File(object):
       raise TypeError('Arguments expected, but none given.')
     if not self.exists and is_meta_update and not is_content_update:
       raise BadFileError('File does not exist: %s' % self.real_path)
-    if content and blob:
-      raise TypeError('Exactly one of "content" or "blob" must be given.')
 
     # If given unicode, encode it as UTF-8 and flag it for future decoding.
-    if isinstance(content, unicode):
-      encoding = 'utf-8'
-      content = content.encode('utf-8')
-    else:
-      encoding = None
+    content, encoding = self._MaybeEncodeContent(content, encoding)
 
-    # Should we store content in blobstore? Must come after encoding.
-    if content and len(content) > MAX_CONTENT_SIZE:
-      logging.debug('Content size %s exceeds %s bytes, uploading to blobstore.',
-                    len(content), MAX_CONTENT_SIZE)
-
-      filename = blobstore_files.blobstore.create()
-      content_file = cStringIO.StringIO(content)
-      blobstore_file = blobstore_files.open(filename, 'a')
-      # Blobstore writes cannot exceed the RPC size limit, so chunk the writes.
-      while True:
-        content_chunk = content_file.read(BLOBSTORE_APPEND_CHUNK_SIZE)
-        if not content_chunk:
-          break
-        blobstore_file.write(content_chunk)
-      blobstore_file.close()
-      blobstore_files.finalize(filename)
-      blob = blobstore_files.blobstore.get_blob_key(filename)
-      files_cache.StoreBlob(self.real_path, content)
-      content = None
+    # If big enough, store content in blobstore. Must come after encoding.
+    content, blob = self._MaybeWriteToBlobstore(content, blob)
 
     if not self.exists:
       # Create new _File entity.
@@ -404,13 +433,15 @@ class File(object):
       self._file.put()
     return self
 
-  def Delete(self):
+  def Delete(self, _delete_old_blob=True):
     """Delete file.
 
+    Args:
+      _delete_old_blob: defaults to True.
     Returns:
       Self-reference.
     """
-    if self.blob:
+    if self.blob and _delete_old_blob:
       blobstore.delete(self._file.blob)
       files_cache.ClearBlobsForFiles(self._file)
     self._file.key.delete()
@@ -439,6 +470,21 @@ class File(object):
         meta=self.meta.Serialize())
     return self
 
+  def MoveTo(self, destination_file):
+    """Move this and all of its properties to a different path.
+
+    Args:
+      destination_file: A File object of the destination path.
+    Returns:
+      Self-reference.
+    """
+    assert isinstance(destination_file, File)
+    logging.info('Moving Titan file: %s --> %s', self.real_path,
+                 destination_file.real_path)
+    self.CopyTo(destination_file)
+    self.Delete(_delete_old_blob=False)
+    return self
+
   def Serialize(self, full=False):
     """Serialize the File object to native Python types.
 
@@ -456,7 +502,7 @@ class File(object):
         'paths': self.paths,
         'mime_type': self.mime_type,
         'created': self.created,
-        'blob': str(self.blob) if self.blob else None,
+        'blob': str(self.blob.key()) if self.blob else None,
         'modified': self.modified,
         'created_by': str(self.created_by) if self.created_by else None,
         'modified_by': str(self.modified_by) if self.modified_by else None,
@@ -515,12 +561,12 @@ def UnregisterFileFactory():
 class Files(collections.Mapping):
   """A mapping of paths to File objects."""
 
-  def __init__(self, paths=None, files=None):
+  def __init__(self, paths=None, files=None, **kwargs):
     """Constructor.
 
     Args:
       paths: An iterable of absolute filenames.
-      files: An iteratble of File objects. Required if paths not specified.
+      files: An iterable of File objects. Required if paths not specified.
     Raises:
       ValueError: If given invalid paths.
       TypeError: If given both paths and files.
@@ -534,28 +580,28 @@ class Files(collections.Mapping):
       raise ValueError('"files" must be an iterable.')
     if paths is not None:
       for path in paths:
-        self._titan_files[path] = File(path=path)
+        self._AddFile(path, File(path=path, **kwargs))
     else:
       for titan_file in files:
-        self._titan_files[titan_file.path] = titan_file
+        self._AddFile(titan_file.path, titan_file)
 
   def __delitem__(self, path):
-    del self._titan_files[path]
+    self._RemoveFile(path)
 
   def __getitem__(self, path):
     return self._titan_files[path]
 
   def __setitem__(self, path, titan_file):
     assert isinstance(titan_file, File)
-    self._titan_files[path] = titan_file
+    self._AddFile(path, titan_file)
 
   def __contains__(self, other):
     path = getattr(other, 'path', other)
     return path in self._titan_files
 
   def __iter__(self):
-    for key in self._titan_files:
-      yield key
+    for path in self._titan_files:
+      yield path
 
   def __len__(self):
     return len(self._titan_files)
@@ -571,9 +617,18 @@ class Files(collections.Mapping):
   def __repr__(self):
     return '<Files %r>' % self.keys()
 
+  def _AddFile(self, path, titan_file):
+    self._titan_files[path] = titan_file
+
+  def _RemoveFile(self, path):
+    del self._titan_files[path]
+
   def update(self, other_titan_files):
     for titan_file in other_titan_files.itervalues():
       self[titan_file.path] = titan_file
+
+  def clear(self):
+    self._titan_files = {}
 
   def Delete(self):
     """Delete all files in this container."""
@@ -581,7 +636,7 @@ class Files(collections.Mapping):
     for titan_file in self.itervalues():
       titan_file.Delete()
     # Empty the container:
-    self._titan_files = {}
+    self.clear()
     return self
 
   def Load(self):
@@ -594,6 +649,18 @@ class Files(collections.Mapping):
     for path in paths_to_clear:
       del self[path]
     return self
+
+  def Serialize(self, full=False):
+    """Serialize the File object to native Python types.
+
+    Returns:
+      A serializable dictionary of this Files object's properties, i.e. a
+      mapping of paths to serialized File objects found at a given path.
+    """
+    result = {}
+    for path, titan_file in self._titan_files.iteritems():
+      result[path] = titan_file.Serialize(full=full)
+    return result
 
   @classmethod
   def Merge(cls, first_files, second_files):
@@ -622,8 +689,8 @@ class Files(collections.Mapping):
 
   @classmethod
   def List(cls, dir_path, recursive=False, depth=None, filters=None,
-           limit=None, offset=None):
-    """Factory method to return a populated Files mapping for the given dir.
+           limit=None, offset=None, **kwargs):
+    """Factory method to return a lazy Files mapping for the given dir.
 
     Args:
       dir_path: Absolute directory path.
@@ -665,7 +732,7 @@ class Files(collections.Mapping):
 
     # TODO(user): support cursors.
     file_keys = files_query.fetch(limit=limit, offset=offset, keys_only=True)
-    titan_files = cls([key.id() for key in file_keys])
+    titan_files = cls([key.id() for key in file_keys], **kwargs)
     return titan_files
 
   @staticmethod
@@ -674,6 +741,40 @@ class Files(collections.Mapping):
       raise ValueError('"paths" must be an iterable.')
     for path in paths:
       utils.ValidateFilePath(path)
+
+class OrderedFiles(Files):
+  """An ordered mapping of paths to File objects."""
+
+  def __init__(self, *args, **kwargs):
+    self._ordered_paths = []
+    super(OrderedFiles, self).__init__(*args, **kwargs)
+
+  def _AddFile(self, path, titan_file):
+    if path not in self._titan_files:
+      self._ordered_paths.append(path)
+    super(OrderedFiles, self)._AddFile(path, titan_file)
+
+  def _RemoveFile(self, path):
+    self._ordered_paths.remove(path)
+    super(OrderedFiles, self)._RemoveFile(path)
+
+  def clear(self):
+    super(OrderedFiles, self).clear()
+    self._ordered_paths = []
+
+  def Sort(self):
+    self._ordered_paths.sort()
+
+  def __eq__(self, other):
+    result = super(OrderedFiles, self).__eq__(other)
+    # If equal, ensure order is also equal:
+    if result is True and self.keys() != other.keys():
+      return False
+    return result
+
+  def __iter__(self):
+    for path in self._ordered_paths:
+      yield path
 
 class FileProperty(ndb.GenericProperty):
   """A convenience wrapper for creating filters for Files.List.
@@ -791,20 +892,6 @@ def _GetTitanFiles(paths):
     titan_files.append(File(f.path, _file_ent=f) if f else None)
   return titan_files if is_multiple else titan_files[0], is_multiple
 
-def _GetTitanFilesOrDie(paths):
-  """Same as _GetFiles, but raises BadFileError if a path doesn't exist."""
-  file_objs, is_multiple = _GetTitanFiles(paths)
-  if not is_multiple:
-    # Single path argument.
-    if file_objs is None:
-      raise BadFileError('File does not exist: %s' % paths)
-  else:
-    # Multiple paths.
-    for i, file_obj in enumerate(file_objs):
-      if file_obj is None:
-        raise BadFileError('File does not exist: %s' % paths[i])
-  return file_objs, is_multiple
-
 def _GetFileEntities(titan_files):
   """Get _File entities from File objects; use sparingly."""
   # This function should be the only place we access the protected _file attr
@@ -819,6 +906,8 @@ def _GetFileEntities(titan_files):
 
 def _ReadContentOrBlob(titan_file):
   file_ent = _GetFileEntities(titan_file)
+  if not file_ent:
+    raise BadFileError('File does not exist: %s' % titan_file.path)
   if file_ent.content is not None:
     content = file_ent.content
   else:
@@ -830,10 +919,14 @@ def _ReadContentOrBlob(titan_file):
         blob = blobstore.BlobInfo.get(file_ent.blobs[0])
       if not isinstance(blob, blobstore.BlobInfo):
         blob = blobstore.BlobInfo(blob)
-      content = blob.open().read()
+      try:
+        content = blob.open().read()
+      except blobstore.BlobNotFoundError:
+        raise blobstore.BlobNotFoundError(
+            'Blob associated to path was not found: %s' % titan_file.path)
       files_cache.StoreBlob(file_ent.path, content)
-  if file_ent.encoding == 'utf-8':
-    return content.decode('utf-8')
+  if file_ent.encoding:
+    return content.decode(file_ent.encoding)
   return content
 
 #-------------------------------------------------------------------------------
@@ -846,7 +939,7 @@ class DeprecatedFile(object):
   DEPRECATED. DO NOT USE.
 
   Usage:
-    file_obj = File('/path/to/file.html')
+    file_ent = File('/path/to/file.html')
     file_obj.Write('Some content')
     file_obj.Touch()
     file_obj.Delete()
@@ -1209,7 +1302,7 @@ def Write(path, content=None, blob=None, mime_type=None, meta=None,
     blobstore_file = blobstore_files.open(filename, 'a')
     # Blobstore writes cannot exceed the RPC size limit, so we chunk the writes.
     while True:
-      content_chunk = content_file.read(BLOBSTORE_APPEND_CHUNK_SIZE)
+      content_chunk = content_file.read(utils.BLOBSTORE_APPEND_CHUNK_SIZE)
       if not content_chunk:
         break
       blobstore_file.write(content_chunk)

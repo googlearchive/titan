@@ -19,20 +19,14 @@ For help docs, run:
   titanfiles help [command]
 """
 
-import json
 import os
 import sys
-import time
-
-from concurrent import futures
 
 from titan.common.lib.google.apputils import appcommands
 import gflags as flags
-from titan.common.lib.google.apputils import humanize
-from titan.common.lib.google.apputils import logging
-from titan.common import colors
 from titan.files import files_client
 from titan.files.mixins import versions_client
+from titan.files.utils import titanfiles_runners
 
 FLAGS = flags.FLAGS
 
@@ -60,18 +54,9 @@ flags.DEFINE_bool(
     'insecure', False,
     'Whether or not to disable SSL.')
 
-# The cutoff size of when to upload a local file directly to blobstore.
-# This value should match files.MAX_CONTENT_SIZE.
-DIRECT_TO_BLOBSTORE_SIZE = 1 << 19  # 500 KiB
-
-class Error(Exception):
-  pass
-
-class UploadFileError(Error):
-
-  def __init__(self, message, target_path):
-    self.target_path = target_path
-    super(UploadFileError, self).__init__(message)
+flags.DEFINE_bool(
+    'quiet', False,
+    'Whether or not to show logging.')
 
 class BaseCommand(appcommands.Cmd):
   """Base class for commands."""
@@ -87,68 +72,20 @@ class BaseCommand(appcommands.Cmd):
     return '%s:%d' % (FLAGS.host, FLAGS.port) if FLAGS.port else FLAGS.host
 
   @property
-  def secure(self):
-    return False if FLAGS.insecure else True
-
-  def ThreadPoolExecutor(self):
-    return futures.ThreadPoolExecutor(max_workers=FLAGS.threads)
-
-  @property
   def remote_file_factory(self):
     if not self._remote_file_factory:
       self._remote_file_factory = files_client.RemoteFileFactory(
-          host=self.host, secure=self.secure)
+          host=self.host, secure=not FLAGS.insecure)
     return self._remote_file_factory
 
   @property
   def vcs_factory(self):
     if not self._vcs_factory:
       self._vcs_factory = versions_client.RemoteVcsFactory(
-          host=self.host, secure=self.secure)
+          host=self.host, secure=not FLAGS.insecure)
     return self._vcs_factory
 
-  def PrintError(self, msg):
-    print colors.Format('<red>ERROR</red>: %s', msg)
-
-  def PrintWarning(self, msg):
-    print colors.Format('<red>WARNING</red>: %s', msg)
-
-  def PrintJson(self, data):
-    print json.dumps(data, sort_keys=True, indent=2)
-
-  def Confirm(self, message, default=False):
-    yes = 'Y' if default else 'y'
-    no = 'n' if default else 'N'
-    result = raw_input('%s [%s/%s]: ' % (message, yes, no))
-    return True if result.lower() == yes else False
-
-class BaseCommandWithVersions(BaseCommand):
-
-  def _CommitChangesetOrExit(self, changeset_num, force=False, manifest=None):
-    """If confirmed, commits the given changeset."""
-    # Confirm action.
-    msg = 'Commit changeset %d?' % changeset_num
-    if not FLAGS.force and not self.Confirm(msg):
-      sys.exit('Commit aborted.')
-
-    start = time.time()
-    remote_vcs = self.vcs_factory.MakeRemoteVersionControlService()
-    staging_changeset = self.vcs_factory.MakeRemoteChangeset(num=changeset_num)
-
-    if manifest:
-      # We have full knowledge of the files uploaded to a changeset, associate
-      # those files to staging_changeset to ensure a strong consistency commit.
-      for path in manifest:
-        remote_file = self.remote_file_factory.MakeRemoteFile(path)
-        staging_changeset.AssociateFile(remote_file)
-      staging_changeset.FinalizeAssociatedFiles()
-
-    final_remote_changeset = remote_vcs.Commit(staging_changeset, force=force)
-    elapsed_time = time.time() - start
-    print 'Finished commit in %s.' % humanize.Duration(elapsed_time)
-    return final_remote_changeset
-
-class UploadCommand(BaseCommandWithVersions):
+class UploadCommand(BaseCommand):
   """Uploads files to a Titan Files handler.
 
   Usage:
@@ -178,111 +115,94 @@ class UploadCommand(BaseCommandWithVersions):
         'Whether or not to commit the changeset. This option requires that '
         '--changeset=new is given.',
         flag_values=flag_values)
+    flags.DEFINE_bool(
+        'confirm_manifest', False,
+        'Whether or not the current list of files given to upload can be '
+        'trusted as a complete manifest of the files in the changeset. This '
+        'allows you to combine --changeset=<num> with --commit.',
+        flag_values=flag_values)
 
   def Run(self, argv):
+    """Command runner."""
     filenames = argv[1:]
     if not filenames or not FLAGS.host:
       sys.exit('Usage: --host=example.com '
                'upload [--root_dir=.] [--target_path=/] <filename>')
 
-    # Compose mapping of absolute local path to absolute remote path.
-    FLAGS.root_dir = os.path.abspath(FLAGS.root_dir)
-    filename_to_paths = {}
-    for filename in filenames:
-      absolute_filename = os.path.join(FLAGS.root_dir, filename)
-      if not absolute_filename.startswith(FLAGS.root_dir):
-        self.PrintError('Path "%s" not contained within "%s".'
-                        % (absolute_filename, FLAGS.root_dir))
-        sys.exit()
-      remote_path = absolute_filename[len(FLAGS.root_dir) + 1:]
-      remote_path = os.path.join(FLAGS.target_path, remote_path)
-      filename_to_paths[absolute_filename] = remote_path
+    upload_runner = titanfiles_runners.UploadRunner(
+        host=FLAGS.host,
+        port=FLAGS.port,
+        remote_file_factory=self.remote_file_factory,
+        vcs_factory=self.vcs_factory,
+        api_base_path=FLAGS.api_base_path,
+        num_threads=FLAGS.threads,
+        force=FLAGS.force,
+        secure=not FLAGS.insecure,
+    )
+    upload_runner.Run(
+        filenames=filenames,
+        root_dir=FLAGS.root_dir,
+        target_path=FLAGS.target_path,
+        changeset=FLAGS.changeset,
+        commit=FLAGS.commit,
+        confirm_manifest=FLAGS.confirm_manifest,
+    )
 
-    # Confirm action.
-    print '\nUploading files to %s (%s):' % (FLAGS.host, FLAGS.api_base_path)
-    for filename, path in filename_to_paths.iteritems():
-      if FLAGS.root_dir == os.path.abspath(os.path.curdir):
-        # Strip the root_dir from view if it's already the working directory.
-        filename = '.' + filename[len(FLAGS.root_dir):]
-      print '  %s --> %s' % (filename, path)
-    if not FLAGS.force and not self.Confirm('Upload files?'):
-      sys.exit('Upload aborted.')
+class DownloadCommand(BaseCommand):
+  """Downloads files from Titan.
 
-    # Versions Mixin:
-    file_kwargs = {}
-    changeset = FLAGS.changeset
-    if changeset == 'new':
-      self.vcs_factory.ValidateClientAuth()
-      vcs = self.vcs_factory.MakeRemoteVersionControlService()
-      staging_changeset = vcs.NewStagingChangeset()
-      changeset_num = staging_changeset.num
-      print 'New staging changeset created: %d' % changeset_num
-    elif changeset:
-      changeset_num = int(changeset)
-    if changeset and changeset_num:
-      file_kwargs['changeset'] = changeset_num
-      print 'Uploading %d files to changeset %d...' % (len(filenames),
-                                                       changeset_num)
+  Usage:
+    download --file_path=<remote file path>  [target local directory]
+    download --dir_path=<remote directory path> [target local directory]
+  """
 
-    start = time.time()
-    self.remote_file_factory.ValidateClientAuth()
-    future_results = []
-    with self.ThreadPoolExecutor() as executor:
-      for filename, target_path in filename_to_paths.iteritems():
-        future = executor.submit(
-            self._UploadFile, filename, target_path, file_kwargs=file_kwargs)
-        future_results.append(future)
+  def __init__(self, name, flag_values, **kwargs):
+    super(DownloadCommand, self).__init__(name, flag_values, **kwargs)
+    # Command-specific flags.
+    flags.DEFINE_multistring(
+        'file_path', [],
+        'Remote file to download.',
+        flag_values=flag_values)
+    flags.DEFINE_string(
+        'dir_path', None,
+        'Remote directory to download.',
+        flag_values=flag_values)
+    flags.DEFINE_bool(
+        'recursive', False,
+        'Downloads from a directory recursively',
+        flag_values=flag_values)
+    flags.DEFINE_integer(
+        'depth', None,
+        'Specifies recusion depth if "recursive" is specified',
+        flag_values=flag_values)
 
-    failed = False
-    total_bytes = 0
-    for future in futures.as_completed(future_results):
-      try:
-        remote_file = future.result()
-        print 'Uploaded %s' % remote_file.real_path
-        total_bytes += remote_file.size
-      except UploadFileError as e:
-        self.PrintError('Error uploading %s. Error was: %s %s'
-                        % (e.target_path, e.__class__.__name__, str(e)))
-        failed = True
+  def Run(self, argv):
+    """Command runner."""
+    if len(argv) >= 2:
+      target = argv[1]
+    else:
+      target = None
 
-    if failed:
-      self.PrintError('Could not upload one or more files.')
-      return
+    download_runner = titanfiles_runners.DownloadRunner(
+        host=FLAGS.host,
+        port=FLAGS.port,
+        remote_file_factory=self.remote_file_factory,
+        vcs_factory=self.vcs_factory,
+        api_base_path=FLAGS.api_base_path,
+        num_threads=FLAGS.threads,
+        force=FLAGS.force,
+        secure=not FLAGS.insecure,
+        quiet=FLAGS.quiet
+    )
+    download_runner.Run(
+        file_paths=FLAGS.file_path,
+        dir_path=FLAGS.dir_path,
+        recursive=FLAGS.recursive,
+        depth=FLAGS.depth,
+        target_dir=target,
+    )
 
-    if FLAGS.commit:
-      if changeset != 'new':
-        self.PrintError('Must use --changeset=new with --commit.')
-        return
-      manifest = filename_to_paths.values()
-      self._CommitChangesetOrExit(changeset_num, manifest=manifest)
-
-    elapsed_time = time.time() - start
-    print 'Uploaded %d files (%s) in %s.' % (
-        len(filenames),
-        humanize.BinaryPrefix(total_bytes, 'B'),
-        humanize.Duration(elapsed_time))
-
-  def _UploadFile(self, filename, target_path,
-                  file_kwargs=None, method_kwargs=None):
-    """Uploads a document."""
-    try:
-      file_kwargs = file_kwargs or {}
-      remote_file = self.remote_file_factory.MakeRemoteFile(target_path,
-                                                            **file_kwargs)
-      with open(filename) as fp:
-        method_kwargs = method_kwargs or {}
-        if os.path.getsize(filename) > DIRECT_TO_BLOBSTORE_SIZE:
-          remote_file.Write(fp=fp, **method_kwargs)
-        else:
-          remote_file.Write(content=fp.read(), **method_kwargs)
-      # Load the RemoteFile to avoid synchronous fetches in the main thread.
-      _ = remote_file.real_path
-      return remote_file
-    except Exception as e:
-      logging.exception('Traceback:')
-      raise UploadFileError(e, target_path=target_path)
-
-class CommitCommand(BaseCommandWithVersions):
+class CommitCommand(BaseCommand):
   """Commit a versions Changeset.
 
   Usage:
@@ -301,31 +221,30 @@ class CommitCommand(BaseCommandWithVersions):
         flag_values=flag_values)
 
   def Run(self, argv):
+    """Command runner."""
     if not FLAGS.changeset:
       sys.exit('Usage: --host=example.com '
                'commit --changeset=<changeset num>')
 
-    # TODO(user): output which files are associated to the changeset
-    # when the /_titan/files RESTful endpoint is created.
-    if not FLAGS.force_commit:
-      self.PrintError(
-          'You are attempting to commit a changeset directly, outside of\n'
-          'an upload request. This relies on an eventually-consistent list\n'
-          'of the files, which has the the potential to miss files if you are\n'
-          'performing a commit quickly after the upload.\n'
-          '\n'
-          'You can either:\n'
-          '  Pass --force_commit to ignore this error.\n'
-          'Or:\n'
-          '  Use "upload --changeset=new --commit <filenames>" instead.')
-      return
-
-    changeset_num = int(FLAGS.changeset)
-    self._CommitChangesetOrExit(changeset_num, force=True)
+    commit_runner = titanfiles_runners.CommitRunner(
+        host=FLAGS.host,
+        port=FLAGS.port,
+        remote_file_factory=self.remote_file_factory,
+        vcs_factory=self.vcs_factory,
+        api_base_path=FLAGS.api_base_path,
+        num_threads=FLAGS.threads,
+        force=FLAGS.force,
+        secure=not FLAGS.insecure,
+    )
+    commit_runner.Run(
+        changeset=FLAGS.changeset,
+        force_commit=FLAGS.force_commit,
+    )
 
 def main(unused_argv):
   appcommands.AddCmd('upload', UploadCommand)
   appcommands.AddCmd('commit', CommitCommand)
+  appcommands.AddCmd('download', DownloadCommand)
 
 if __name__ == '__main__':
   appcommands.Run()

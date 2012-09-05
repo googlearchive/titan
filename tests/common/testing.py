@@ -17,26 +17,23 @@
 
 import base64
 import cStringIO
-import datetime
 import os
-import shutil
+import random
+import string
 import types
 import urlparse
 import mox
 from mox import stubout
+from google.appengine.api import apiproxy_stub_map
 from google.appengine.datastore import datastore_stub_util
 from google.appengine.ext import deferred
 from google.appengine.ext import testbed
-import gflags as flags
 from titan.common.lib.google.apputils import basetest
-from google.appengine.api import apiproxy_stub_map
-from google.appengine.api.blobstore import blobstore_stub
-from google.appengine.api.blobstore import file_blob_storage
-from google.appengine.api.files import file_service_stub
 from google.appengine.api.search import simple_search_stub
 from tests.common import webapp_testing
 from titan.common import hooks
 from titan.files import client
+from titan.files import dirs
 from titan.files import files_cache
 from titan.files import handlers
 from google.appengine.runtime import request_environment
@@ -86,54 +83,87 @@ class BaseTestCase(MockableTestCase):
       request_environment.PatchOsEnviron()
       os.environ.update(self._old_os_environ)
 
-    # Manually setup blobstore and files stubs (until supported in testbed).
-    #
-    # Setup base blobstore service stubs.
-    self.appid = os.environ['APPLICATION_ID'] = 'testbed-test'
-    apiproxy_stub_map.apiproxy = apiproxy_stub_map.APIProxyStubMap()
-    storage_directory = os.path.join(flags.FLAGS.test_tmpdir, 'blob_storage')
-    if os.access(storage_directory, os.F_OK):
-      shutil.rmtree(storage_directory)
-    blob_storage = file_blob_storage.FileBlobStorage(
-        storage_directory, self.appid)
-    self.blobstore_stub = blobstore_stub.BlobstoreServiceStub(blob_storage)
-    apiproxy_stub_map.apiproxy.RegisterStub('blobstore', self.blobstore_stub)
-
-    # Setup blobstore files service stubs.
-    apiproxy_stub_map.apiproxy.RegisterStub(
-        'file', file_service_stub.FileServiceStub(blob_storage))
-    file_service_stub._now_function = datetime.datetime.now
-
-    # Setup the simple search stub.
-    self.search_stub = simple_search_stub.SearchServiceStub()
-    apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
-
-    # Must come after the apiproxy stubs above.
+    # Setup and activate the testbed.
     self.testbed = testbed.Testbed()
     self.testbed.activate()
+    self.testbed.init_all_stubs()
+
     # Fake an always strongly-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
-    self.testbed.init_memcache_stub()
+
     # All task queues must be specified in common/queue.yaml.
     self.testbed.init_taskqueue_stub(root_path=os.path.dirname(__file__),
                                      _all_queues_valid=True)
-    self.testbed.setup_env(
-        app_id=self.appid,
-        user_email='titanuser@example.com',
-        user_id='1',
-        overwrite=True,
-        http_host='localhost:8080',
-    )
+
+    # Register the search stub (until included in init_all_stubs).
+    self.search_stub = simple_search_stub.SearchServiceStub()
+    apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
+
+    # Save the taskqueue_stub for use in _RunDeferredTasks.
     self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
 
+    # Save the users_stub for use in Login/Logout methods.
+    self.users_stub = self.testbed.get_stub(testbed.USER_SERVICE_NAME)
+
+    # Each time setUp is called, treat it like a different request.
+    request_id_hash = ''.join(random.sample(string.letters + string.digits, 26))
+
+    self.testbed.setup_env(
+        app_id='testbed-test',
+        user_email='titanuser@example.com',
+        user_id='1',
+        user_organization='example.com',
+        user_is_admin='0',
+        overwrite=True,
+        http_host='testbed.example.com:80',
+        request_id_hash=request_id_hash,
+        server_software='Test/1.0 (testbed)',
+    )
     super(BaseTestCase, self).setUp()
+
+    # Make this buffer negative so dir tasks are available instantly for lease.
+    self.stubs.SmartSet(dirs, 'TASKQUEUE_LEASE_ETA_BUFFER', -86400)
 
   def tearDown(self):
     if self.enable_environ_patch:
       os.environ = self._old_os_environ
     self.testbed.deactivate()
     super(BaseTestCase, self).tearDown()
+
+  def LogoutUser(self):
+    self.testbed.setup_env(
+        overwrite=True,
+        user_id='',
+        user_email='',
+    )
+    # Log out the OAuth user.
+    self.users_stub.SetOAuthUser(email=None)
+
+  def LoginNormalUser(self, email='titanuser@example.com',
+                      user_organization='example.com'):
+    self.testbed.setup_env(
+        overwrite=True,
+        user_email=email,
+        user_id='1',
+        user_organization=user_organization,
+    )
+    os.environ['USER_IS_ADMIN'] = '0'
+
+  def LoginAdminUser(self, email='titanadmin@example.com',
+                     user_organization='example.com'):
+    self.LoginNormalUser(email=email, user_organization=user_organization)
+    os.environ['USER_IS_ADMIN'] = '1'
+
+  def LoginNormalOAuthUser(self, email='titanoauthuser@example.com',
+                           user_organization='example.com'):
+    self.users_stub.SetOAuthUser(
+        email=email, domain=user_organization, is_admin=False)
+
+  def LoginAdminOAuthUser(self, email='titanoauthadmin@example.com',
+                          user_organization='example.com'):
+    self.users_stub.SetOAuthUser(
+        email=email, domain=user_organization, is_admin=True)
 
   def assertEntityEqual(self, ent, other_ent, ignore=None):
     """Assert equality of properties and dynamic properties of two entities.

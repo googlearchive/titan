@@ -27,6 +27,7 @@ from titan.common import titan_rpc
 from titan.common import utils
 
 FILE_API_PATH_BASE = '/_titan/file'
+FILES_API_PATH_BASE = '/_titan/files'
 FILE_READ_API = '/read'
 FILE_NEWBLOB_API = '/newblob'
 FILE_FINALIZEBLOB_API = '/finalizeblob'
@@ -35,6 +36,9 @@ class Error(Exception):
   pass
 
 class BadRemoteFileError(Error):
+  pass
+
+class BadRemoteFilesError(Error):
   pass
 
 class RemoteFileFactory(titan_rpc.AbstractRemoteFactory):
@@ -214,15 +218,25 @@ class RemoteFile(object):
         raise BadRemoteFileError('File does not exist: %s' % self.path)
       raise
 
+  def Delete(self):
+    self._file_data = None
+    try:
+      params = {'path': self.path}
+      url = '%s?%s' % (FILE_API_PATH_BASE, urllib.urlencode(params))
+      payload = urllib.urlencode(params)
+      response = self._titan_client.UrlFetch(url, method='DELETE',
+                                             payload=payload)
+      self._VerifyResponse(response)
+    except urllib2.HTTPError, e:
+      if e.code == 404:
+        raise BadRemoteFileError('File does not exist: %s' % self.path)
+      raise
+
   def _VerifyResponse(self, response):
     if response.status_code == 404:
       raise BadRemoteFileError('File does not exist: %s' % self.path)
     elif not 200 <= response.status_code <= 299:
       raise titan_rpc.RpcError(response.content)
-
-  def Delete(self):
-    self._file_data = None
-    raise NotImplementedError
 
 class RemoteFiles(collections.Mapping):
   """A remote imitation of files.Files."""
@@ -275,4 +289,55 @@ class RemoteFiles(collections.Mapping):
 
   def __repr__(self):
     return '<RemoteFiles %r>' % self.keys()
+
+  def clear(self):
+    self._titan_files = {}
+
+  def List(self, dir_path, recursive=False, depth=None):
+    """Method to populate the current RemoteFiles mapping for the given dir.
+
+    This method knowingly diverges from the API as it doesn't return a
+    RemoteFiles object and instead overwrites the current instance. This is due
+    to auth token restrictions.
+
+    Args:
+      dir_path: Absolute directory path.
+      recursive: Whether to list files recursively.
+      depth: If recursive, a positive integer to limit the recusion depth.
+          1 is one folder deep, 2 is two folders deep, etc.
+
+    """
+    params = [('dir_path', dir_path), ('ids_only', 'true')]
+    if recursive:
+      params.append(('recursive', 'true'))
+    if depth is not None:
+      params.append(('depth', depth))
+
+    url = '%s?%s' % (FILES_API_PATH_BASE, urllib.urlencode(params))
+
+    response = self._titan_client.UrlFetch(url)
+    self._VerifyResponse(response)
+    data = json.loads(response.content)
+
+    if self._titan_files:
+      self._titan_files = {}
+
+    for path in data['paths']:
+      self._titan_files[path] = RemoteFile(path=path,
+                                           _titan_client=self._titan_client)
+    return self
+
+  def Delete(self):
+    # TODO(user): implement batch operation. For now, the naive way:
+    for remote_file in self.itervalues():
+      remote_file.Delete()
+    # Empty the container:
+    self.clear()
+    return self
+
+  def _VerifyResponse(self, response):
+    if response.status_code == 404:
+      raise BadRemoteFilesError('Directory does not exist')
+    elif not 200 <= response.status_code <= 299:
+      raise titan_rpc.RpcError(response.content)
 

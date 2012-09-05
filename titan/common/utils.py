@@ -15,12 +15,25 @@
 
 """Common utility functions."""
 
+import cStringIO
+import errno
 import functools
+import hashlib
 import inspect
 import json
 import mimetypes
 import os
 import time
+try:
+  from google.appengine.api import files as blobstore_files
+except ImportError:
+  # Allow this module to be imported by scripts which don't depend on functions
+  # which use the App Engine libraries.
+  pass
+
+DEFAULT_CHUNK_SIZE = 1000
+
+BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19  # 500 KiB
 
 def GetCommonDirPath(paths):
   """Given an iterable of file paths, returns the top common prefix."""
@@ -40,6 +53,8 @@ def ValidateFilePath(path):
   """
   if not path or not isinstance(path, basestring) or path == '/':
     raise ValueError('Path is invalid: ' + repr(path))
+  if path.endswith('/'):
+    raise ValueError('Path cannot end with a trailing "/": %s' % path)
   _ValidateCommonPath(path)
 
 def ValidateDirPath(path):
@@ -65,6 +80,8 @@ def _ValidateCommonPath(path):
     raise ValueError('Double-dots ("..") are not allowed in path: %s' % path)
   if '\n' in path or '\r' in path:
     raise ValueError('Line-breaks are not allowed in path: %s' % path)
+  if len(path) > 500:
+    raise ValueError('Path cannot be longer than 500 characters: %s' % path)
 
 def GuessMimeType(path):
   return mimetypes.guess_type(path)[0] or 'application/octet-stream'
@@ -76,6 +93,21 @@ def SplitPath(path):
     return []
   path = os.path.split(path)[0]
   return SplitPath(path) + [path]
+
+def ChunkGenerator(iterable, chunk_size=DEFAULT_CHUNK_SIZE):
+  """Yield chunks of some iterable number of tasks at a time.
+
+  Usage:
+    for items_subset in utils.ChunkGenerator(items):
+      # do something with items_subset
+  Args:
+    iterable: An iterable.
+    chunk_size: The size of the yielded data.
+  Yields:
+    A slice of data from the iterable.
+  """
+  for i in xrange(0, len(iterable), chunk_size):
+    yield iterable[i:i + chunk_size]
 
 def ComposeMethodKwargs(func):
   """Decorator for composing all method arguments to be keyword arguments.
@@ -134,6 +166,95 @@ def ComposeMethodKwargs(func):
     return func(func_self, **composite_kwargs)
 
   return Wrapper
+
+def MakeDirs(dir_path):
+  """A thread-safe version of os.makedirs."""
+  if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
+    try:
+      os.makedirs(dir_path)
+    except OSError, e:
+      if e.errno == errno.EEXIST:
+        # The directory exists (probably from another thread creating it),
+        # but we need to keep going all the way until the tail directory.
+        MakeDirs(dir_path)
+      else:
+        raise
+
+def WriteToBlobstore(content, old_blobinfo=None):
+  """Write content to blobstore.
+
+  Args:
+    content: A byte-string.
+    old_blobinfo: An optional BlobInfo object used for comparison. If the
+        md5_hash of the old blob and the new content are equal, the
+        old blobkey is returned and nothing new is written.
+  Returns:
+    A BlobKey.
+  """
+  # Require pre-encoded content.
+  assert not isinstance(content, unicode)
+
+  # Blob de-duping: if the blob content is the same as the old file,
+  # just use the old blob key to save space and RPCs.
+  if (old_blobinfo
+      and old_blobinfo.md5_hash == hashlib.md5(content).hexdigest()):
+    return old_blobinfo.key()
+
+  # Write new blob.
+  filename = blobstore_files.blobstore.create()
+  content_file = cStringIO.StringIO(content)
+  blobstore_file = blobstore_files.open(filename, 'a')
+  # Blobstore writes cannot exceed an RPC size limit, so chunk the writes.
+  while True:
+    content_chunk = content_file.read(BLOBSTORE_APPEND_CHUNK_SIZE)
+    if not content_chunk:
+      break
+    blobstore_file.write(content_chunk)
+  blobstore_file.close()
+  blobstore_files.finalize(filename)
+  blob_key = blobstore_files.blobstore.get_blob_key(filename)
+  return blob_key
+
+def RunWithBackoff(func, runtime=60, min_backoff=1, max_backoff=10,
+                   expontential_backoff=True, stop_on_success=False):
+  """Long-running function to process multiple windows.
+
+  Does not catch errors.
+
+  Args:
+    func: The callable to run. Any null response indicates that the function
+          did not process any data and the algorithm should backoff and sleep
+          before retrying.
+    runtime: The number of seconds to run for (approximate).
+    min_backoff: The starting number of seconds to wait after null response.
+    max_backoff: Number of seconds limiting the max of expontential backoff.
+    expontential_backoff: Whether or not backoff should double.
+    stop_on_success: Whether or not to stop on the first successful run of func.
+  Returns:
+    A list of results from callable().
+  """
+  results = []
+  backoff = min_backoff
+  end_time = time.time() + runtime
+  while True:
+    result = func()
+    results.append(result)
+    if result:
+      backoff = min_backoff
+      if stop_on_success:
+        return results
+    else:
+      if time.time() + backoff > end_time:
+        # If we're about to sleep past the end times, just quit now.
+        break
+      time.sleep(backoff)
+      if expontential_backoff:
+        backoff *= 2
+      else:
+        backoff += min_backoff
+      if backoff > max_backoff:
+        backoff = max_backoff
+  return results
 
 class CustomJsonEncoder(json.JSONEncoder):
   """A custom JSON encoder to support objects providing a Serialize() method."""

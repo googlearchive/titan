@@ -44,11 +44,13 @@ def Read(filename):
     fp.close()
 
 
-def Write(filename, contents, overwrite_existing=True, mode=0666):
+def Write(filename, contents, overwrite_existing=True, mode=0666, gid=None):
   """Create a file 'filename' with 'contents', with the mode given in 'mode'.
 
   The 'mode' is modified by the umask, as in open(2).  If
   'overwrite_existing' is False, the file will be opened in O_EXCL mode.
+
+  An optional gid can be specified.
 
   Args:
     filename: str; the name of the file
@@ -56,6 +58,7 @@ def Write(filename, contents, overwrite_existing=True, mode=0666):
     overwrite_existing: bool; whether or not to allow the write if the file
                         already exists
     mode: int; permissions with which to create the file (default is 0666 octal)
+    gid: int; group id with which to create the file
   """
   flags = os.O_WRONLY | os.O_TRUNC | os.O_CREAT
   if not overwrite_existing:
@@ -65,9 +68,11 @@ def Write(filename, contents, overwrite_existing=True, mode=0666):
     os.write(fd, contents)
   finally:
     os.close(fd)
+  if gid is not None:
+    os.chown(filename, -1, gid)
 
 
-def AtomicWrite(filename, contents, mode=0666):
+def AtomicWrite(filename, contents, mode=0666, gid=None):
   """Create a file 'filename' with 'contents' atomically.
 
   As in Write, 'mode' is modified by the umask.  This creates and moves
@@ -76,18 +81,23 @@ def AtomicWrite(filename, contents, mode=0666):
 
   This is very similar to the prodlib function with the same name.
 
+  An optional gid can be specified.
+
   Args:
     filename: str; the name of the file
     contents: str; the data to write to the file
     mode: int; permissions with which to create the file (default is 0666 octal)
+    gid: int; group id with which to create the file
   """
-  (fd, tmp_filename) = tempfile.mkstemp(dir=os.path.dirname(filename))
+  fd, tmp_filename = tempfile.mkstemp(dir=os.path.dirname(filename))
   try:
     os.write(fd, contents)
   finally:
     os.close(fd)
   try:
     os.chmod(tmp_filename, mode)
+    if gid is not None:
+      os.chown(tmp_filename, -1, gid)
     os.rename(tmp_filename, filename)
   except OSError, exc:
     try:

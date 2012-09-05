@@ -28,13 +28,14 @@ from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
 from titan.common import sharded_cache
 from titan.files import files
+from titan.common import utils
 
 # Imports for deprecated test case code.
 from google.appengine.api import memcache
 from titan.files import files_cache
 
 # Content larger than the arbitrary max content size and the 1MB RPC limit.
-LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB
+LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB.
 
 class FileTestCase(testing.BaseTestCase):
 
@@ -120,7 +121,10 @@ class FileTestCase(testing.BaseTestCase):
     # Properties: paths, mime_type, created, modified, blob, created_by,
     # modified_by, and size.
     titan_file = files.File('/foo/bar/baz.html')
+    # Check bool handling:
+    self.assertFalse(titan_file)
     titan_file.Write('')
+    self.assertTrue(titan_file)
     self.assertEqual(titan_file.paths, ['/', '/foo', '/foo/bar'])
     self.assertEqual(titan_file.mime_type, 'text/html')
     self.assertTrue(isinstance(titan_file.created, datetime.datetime))
@@ -157,6 +161,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.File, None)
     self.assertRaises(ValueError, files.File, '')
     self.assertRaises(ValueError, files.File, 'bar.html')
+    self.assertRaises(ValueError, files.File, '/a/b/')
     self.assertRaises(ValueError, files.File, '/a//b')
     self.assertRaises(ValueError, files.File, '..')
     self.assertRaises(ValueError, files.File, '/a/../b')
@@ -234,6 +239,35 @@ class FileTestCase(testing.BaseTestCase):
     # self.assertEqual(hashlib.md5(LARGE_FILE_CONTENT).hexdigest(),
     #                 titan_file.md5_hash)
     self.assertRaises(AttributeError, lambda: titan_file.md5_hash)
+
+    # De-duping check: verify the blob key doesn't change if the content
+    # doesn't change.
+    old_blob_key = blob_key
+    # Monkey-patch the md5_hash property for testing.
+    # See note about file_service_stub below.
+    self.stubs.SmartSet(titan_file.blob.__class__, 'md5_hash', property(
+        lambda _: hashlib.md5(LARGE_FILE_CONTENT).hexdigest()))
+    titan_file = files.File('/foo/bar.html').Write(content=LARGE_FILE_CONTENT)
+    blob_key = titan_file.blob.key()
+    self.assertEqual(old_blob_key, blob_key)
+    self.assertEqual(LARGE_FILE_CONTENT, titan_file.content)
+    self.assertIsNone(titan_file._file_ent.content)
+    self.assertEqual(LARGE_FILE_CONTENT, files.File('/foo/bar.html').content)
+    self.stubs.SmartUnsetAll()
+
+    # Write with a blob key and encoding; verify proper decoding.
+    encoded_foo = u'f♥♥'.encode('utf-8')
+    blob_key = utils.WriteToBlobstore(encoded_foo)
+    titan_file = files.File('/foo/bar.html')
+    # Verify that without encoding, the encoded bytestring is returned.
+    titan_file.Write(blob=blob_key)
+    self.assertEqual(encoded_foo, titan_file.content)
+    # Verify that with encoding, a unicode string is returned.
+    titan_file.Write(blob=blob_key, encoding='utf-8')
+    self.assertEqual(u'f♥♥', titan_file.content)
+    # Argument error handling for mixing encoding and unicode content:
+    self.assertRaises(TypeError, titan_file.Write, content=u'Test',
+                      encoding='utf-8')
 
     # Make sure the blob is deleted with the file:
     titan_file.Delete()
@@ -347,6 +381,24 @@ class FileTestCase(testing.BaseTestCase):
 
     # Error handling:
     self.assertRaises(AssertionError, files.File('/foo.html').CopyTo, '/test')
+
+  def testMoveTo(self):
+    files.File('/foo.html').Write('Test', meta={'color': 'blue'})
+    files.File('/foo.html').MoveTo(files.File('/bar/qux.html'))
+    self.assertFalse(files.Exists('/foo.html'))
+    self.assertTrue(files.Exists('/bar/qux.html'))
+
+    # Blob instead of content.
+    files.File('/foo.html').Write(blob=self.blob_key, meta={'flag': False})
+    files.File('/foo.html').MoveTo(files.File('/bar/qux.html'))
+    titan_file = files.File('/bar/qux.html')
+    blob_content = self.blob_reader.read()
+    self.assertEqual(blob_content, titan_file.content)
+    self.assertEqual('text/html', titan_file.mime_type)
+    self.assertEqual(False, titan_file.meta.flag)
+    self.assertRaises(AttributeError, lambda: titan_file.meta.color)
+
+    self.assertRaises(AssertionError, files.File('/foo.html').MoveTo, '/test')
 
   def testRegisterFileFactory(self):
 
@@ -469,6 +521,58 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.Files.List, '/',
                       recursive=True, depth=0)
 
+  def testOrderedFiles(self):
+    # Create files for testing.
+    root_level = files.OrderedFiles([
+        # These need to be alphabetically ordered here because they will be
+        # usually returned that way from queries inside files.Files.List(),
+        # except for when other filters are applied.
+        '/bar',
+        '/baz',
+        '/foo',
+    ])
+    for titan_file in root_level.itervalues():
+      titan_file.Write('')
+
+    # Verify that equality handles order checking. Do this first to make sure
+    # that following assertEqual() calls are also checking for order.
+    root_level_same_order = files.OrderedFiles([
+        # Intentionally not the same order, to test Sort() right below.
+        '/baz',
+        '/foo',
+        '/bar',
+    ])
+    root_level_same_order.Sort()
+    root_level_different_order = files.OrderedFiles([
+        '/foo',
+        '/baz',
+        '/bar',
+    ])
+    self.assertEqual(root_level, root_level_same_order)
+    self.assertNotEqual(root_level, root_level_different_order)
+    self.assertNotEqual(files.OrderedFiles([]), root_level)
+
+    # Test adding, removing, and updating.
+    new_root_level = files.OrderedFiles([
+        '/bar',
+        '/baz',
+        '/foo',
+    ])
+    new_root_level['/qux'] = files.File('/qux')
+    self.assertNotEqual(root_level, new_root_level)
+    del new_root_level['/qux']
+    self.assertEqual(root_level, new_root_level)
+
+    new_root_level.update(files.Files(['/qux']))
+    self.assertNotEqual(root_level, new_root_level)
+    del new_root_level['/qux']
+    self.assertEqual(root_level, new_root_level)
+
+    # Test files.OrderedFiles.List().
+    self.assertEqual(root_level, files.OrderedFiles.List('/'))
+    self.assertNotEqual(root_level_different_order,
+                        files.OrderedFiles.List('/'))
+
   def testGet(self):
     files.File('/foo').Write('')
     files.File('/bar').Write('')
@@ -494,6 +598,52 @@ class FilesTestCase(testing.BaseTestCase):
 
     # Error handling.
     self.assertRaises(files.BadFileError, files.Files(['/fake', '/qux']).Delete)
+
+  def testSerialize(self):
+    # Serialize().
+    first_file = files.File('/foo/bar').Write('foobar')
+    second_file = files.File('/foo/bat/baz').Write('foobatbaz')
+    first_file_data = {
+        u'name': u'bar',
+        u'path': u'/foo/bar',
+        u'paths': [u'/', u'/foo'],
+        u'real_path': u'/foo/bar',
+        u'mime_type': u'application/octet-stream',
+        u'created': first_file.created,
+        u'modified': first_file.modified,
+        u'content': u'foobar',
+        u'blob': None,
+        u'created_by': u'titanuser@example.com',
+        u'modified_by': u'titanuser@example.com',
+        u'meta': {},
+        u'md5_hash': hashlib.md5('foobar').hexdigest(),
+        u'size': len('foobar'),
+    }
+    second_file_data = {
+        u'name': u'baz',
+        u'path': u'/foo/bat/baz',
+        u'paths': [u'/', u'/foo', u'/foo/bat'],
+        u'real_path': u'/foo/bat/baz',
+        u'mime_type': u'application/octet-stream',
+        u'created': second_file.created,
+        u'modified': second_file.modified,
+        u'content': u'foobatbaz',
+        u'blob': None,
+        u'created_by': u'titanuser@example.com',
+        u'modified_by': u'titanuser@example.com',
+        u'meta': {},
+        u'md5_hash': hashlib.md5('foobatbaz').hexdigest(),
+        u'size': len('foobatbaz'),
+    }
+    self.maxDiff = None
+    expected_data = {
+        first_file_data['path']: first_file_data,
+        second_file_data['path']: second_file_data,
+    }
+
+    self.assertEqual(expected_data,
+                     files.Files.List(dir_path='/foo/',
+                                      recursive=True).Serialize(full=True))
 
 #-------------------------------------------------------------------------------
 # YARR, THERE BE DEPRECATED CODE BELOW. Will be removed!

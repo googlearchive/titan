@@ -17,6 +17,7 @@
 
 from tests.common import testing
 
+import datetime
 import time
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
@@ -37,21 +38,9 @@ class DirManagerTest(testing.BaseTestCase):
   def testEndToEnd(self):
     files.RegisterFileFactory(lambda *args, **kwargs: DirManagingFile)
 
-    # Make the ETA buffer negative so tasks are available instantly for lease.
-    self.stubs.SmartSet(dirs, 'TASKQUEUE_LEASE_ETA_BUFFER',
-                        -(dirs.TASKQUEUE_LEASE_ETA_BUFFER * 86400))
-    # Make time.time() return a constant (to guarantee tasks are all created
-    # in the same window, so they can be processed with a single call).
-    now = time.time()
-    self.stubs.Set(dirs.time, 'time', lambda: now)
-
     files.File('/a/b/foo').Write('')
     files.File('/a/b/bar').Write('')
     files.File('/a/d/foo').Write('')
-
-    # Run the consumer (the cron job).
-    dir_task_consumer = dirs.DirTaskConsumer()
-    dir_task_consumer.ProcessNextWindow()
 
     # List root dir.
     self.assertEqual(dirs.Dirs(['/a']), dirs.Dirs.List('/'))
@@ -63,18 +52,49 @@ class DirManagerTest(testing.BaseTestCase):
     self.assertEqual(dirs.Dirs([]), dirs.Dirs.List('/fake/dir'))
 
     # Test deleting directories.
+    self.assertTrue(dirs.Dir('/a/d').exists)
     files.File('/a/d/foo').Delete()
-    dir_task_consumer = dirs.DirTaskConsumer()
-    dir_task_consumer.ProcessNextWindow()
+    self.assertFalse(dirs.Dir('/a/d').exists)
     # List /a.
     self.assertEqual(dirs.Dirs(['/a/b']), dirs.Dirs.List('/a/'))
     self.assertEqual(dirs.Dirs(['/a']), dirs.Dirs.List('/'))
     # Delete the remaining files and list again.
     files.File('/a/b/foo').Delete()
     files.File('/a/b/bar').Delete()
-    dir_task_consumer = dirs.DirTaskConsumer()
-    dir_task_consumer.ProcessNextWindow()
     self.assertEqual(dirs.Dirs([]), dirs.Dirs.List('/'))
+
+    # Verify behavior of SetMeta and meta.
+    self.assertRaises(
+        dirs.InvalidDirectoryError,
+        lambda: dirs.Dir('/a/b').SetMeta({'flag': True}))
+    self.assertRaises(
+        dirs.InvalidMetaError,
+        lambda: dirs.Dir('/a/b').SetMeta({'name': 'foo'}))
+
+    files.File('/a/b/foo').Write('')
+    # Also, weakly test execution path of ProcessWindowsWithBackoff.
+    dir_task_consumer = dirs.DirTaskConsumer()
+    dir_task_consumer.ProcessWindowsWithBackoff(runtime=2)
+    titan_dir = dirs.Dir('/a/b')
+    self.assertRaises(AttributeError, lambda: titan_dir.meta.flag)
+
+    titan_dir.SetMeta(meta={'flag': True})
+    titan_dir = dirs.Dir('/a/b')
+    self.assertTrue(titan_dir.meta.flag)
+
+    # Verify properties.
+    self.assertEqual('b', titan_dir.name)
+    self.assertEqual('/a/b', titan_dir.path)
+
+  def testModifiedPath(self):
+    # Test Serialize().
+    now = datetime.datetime.now()
+    expected = {
+        'path': '/foo',
+        'modified': now,
+        'action': dirs._STATUS_AVAILABLE,
+    }
+    self.assertEqual(expected, dirs.ModifiedPath(**expected).Serialize())
 
   def testComputeAffectedDirs(self):
     dir_service = dirs.DirService()
@@ -136,6 +156,23 @@ class DirManagerTest(testing.BaseTestCase):
         'dirs_with_deletes': set(),
     }
     self.assertEqual(expected_affected_dirs, affected_dirs)
+
+  def testInitializeDirsFromCurrentState(self):
+    # Don't register the factory before doing this (so the dirs aren't created):
+    files.File('/a/b/foo').Write('')
+    files.File('/a/b/bar').Write('')
+    files.File('/a/d/foo').Write('')
+
+    # Force the initializer to run twice by making batch size < len(files).
+    # This does not test the respawning code path.
+    self.stubs.SmartSet(dirs, 'INITIALIZER_BATCH_SIZE', 2)
+
+    self.assertFalse(dirs.Dir('/a').exists)
+    dirs.InitializeDirsFromCurrentState()
+    self._RunDeferredTasks('default')
+    self.assertTrue(dirs.Dir('/a').exists)
+    self.assertTrue(dirs.Dir('/a/b').exists)
+    self.assertTrue(dirs.Dir('/a/d').exists)
 
 if __name__ == '__main__':
   basetest.main()

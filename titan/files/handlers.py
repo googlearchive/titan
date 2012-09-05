@@ -33,6 +33,7 @@ from google.appengine.ext.webapp import blobstore_handlers
 from google.appengine.ext.webapp import util
 from titan.common import hooks
 from titan.common import utils
+from titan.files import dirs
 from titan.files import files
 
 class BaseHandler(webapp.RequestHandler):
@@ -199,8 +200,8 @@ class ListDirHandler(BaseHandler):
     # Get and validate extra parameters exposed by service layers.
     valid_params = hooks.GetValidParams(
         hook_name='http-list-dir', request_params=self.request.params)
-    dirs, file_objs = files.ListDir(path, **valid_params)
-    return self.WriteJsonResponse({'dirs': dirs, 'files': file_objs})
+    dir_paths, file_objs = files.ListDir(path, **valid_params)
+    return self.WriteJsonResponse({'dirs': dir_paths, 'files': file_objs})
 
 class DirExistsHandler(BaseHandler):
   """Handler to check the existence of a directory."""
@@ -225,6 +226,8 @@ class FileHandler(BaseHandler):
     except ValueError:
       self.error(400)
       return
+    # TODO(user): Remove this when adding _protected flag.
+    file_kwargs.pop('admin_override', None)
 
     titan_file = files.File(path, **file_kwargs)
     if not titan_file.exists:
@@ -246,6 +249,8 @@ class FileHandler(BaseHandler):
     except ValueError:
       self.error(400)
       return
+    # TODO(user): Remove this when adding _protected flag.
+    file_kwargs.pop('admin_override', None)
 
     if blob is not None:
       # Convert any string keys to BlobKey instances.
@@ -279,10 +284,61 @@ class FileHandler(BaseHandler):
     except ValueError:
       self.error(400)
       return
+    # TODO(user): Remove this when adding _protected flag.
+    file_kwargs.pop('admin_override', None)
     try:
       files.File(path, **file_kwargs).Delete(**method_kwargs)
     except files.BadFileError:
       self.error(404)
+
+class FilesHandler(BaseHandler):
+  """Handler to return files or a list of files."""
+
+  def get(self):
+    """GET handler."""
+    paths = self.request.get_all('path', [])
+    dir_path = self.request.get('dir_path', None)
+
+    if dir_path and paths or not dir_path and not paths:
+      self.error(400)
+      self.response.out.write('Exactly one of "path" or "dir_path" '
+                              'parameters must be given.')
+      return
+
+    if paths:
+      titan_files = files.Files(paths=paths)
+      for titan_file in titan_files.itervalues():
+        if not titan_file.exists:
+          self.error(400)
+          self.response.out.write('One or more of the requested files does '
+                                  'not exist')
+          return
+    elif dir_path:
+      recursive = self.request.get('recursive', 'false')
+      recursive = False if recursive == 'false' else True
+      ids_only = self.request.get('ids_only', 'false')
+      ids_only = False if ids_only == 'false' else True
+      depth = self.request.get('depth', None)
+      if depth:
+        try:
+          depth = int(depth)
+        except ValueError:
+          self.error(400)
+          self.response.out.write('Invalid depth parameter')
+      try:
+        titan_files = files.OrderedFiles.List(dir_path=dir_path,
+                                              recursive=recursive,
+                                              depth=depth)
+        if ids_only:
+          result = {'paths': titan_files.keys()}
+          self.WriteJsonResponse(result)
+          return
+      except ValueError:
+        self.error(400)
+        logging.exception('Invalid parameter')
+        return
+
+    self.WriteJsonResponse(titan_files)
 
 class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
   """Handler to return contents of a file."""
@@ -295,6 +351,8 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     except ValueError:
       self.error(400)
       return
+    # TODO(user): Remove this when adding _protected flag.
+    file_kwargs.pop('admin_override', None)
     titan_file = files.File(path, **file_kwargs)
     if not titan_file.exists:
       self.error(404)
@@ -308,6 +366,16 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
       self.send_blob(blob_key, content_type=str(titan_file.mime_type))
     else:
       self.response.out.write(titan_file.content)
+
+class DirsProcessDataHandler(BaseHandler):
+  """Dirs handler."""
+
+  def get(self):
+    """GET handler; must be GET because it is run from a cron job."""
+    runtime = self.request.get('runtime', dirs.DEFAULT_CRON_RUNTIME_SECONDS)
+    dir_task_consumer = dirs.DirTaskConsumer()
+    results = dir_task_consumer.ProcessWindowsWithBackoff(runtime=int(runtime))
+    self.WriteJsonResponse(results)
 
 def _GetExtraParams(request_params):
   """Returns a two-tuple of (file_kwargs, method_kwargs)."""
@@ -327,9 +395,12 @@ def _GetExtraParams(request_params):
 
 URL_MAP = (
     ('/_titan/file', FileHandler),
+    ('/_titan/files', FilesHandler),
     ('/_titan/file/read', FileReadHandler),
     ('/_titan/file/newblob', NewBlobHandler),
     ('/_titan/file/finalizeblob', FinalizeBlobHandler),
+
+    ('/_titan/dirs/processdata', DirsProcessDataHandler),
 
     # Deprecated API:
     ('/_titan/exists', ExistsHandler),

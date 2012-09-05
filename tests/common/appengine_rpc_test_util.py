@@ -19,9 +19,11 @@ import logging
 import StringIO
 import urllib2
 
-from google.appengine.tools import appengine_rpc
+from google.appengine.tools.appengine_rpc import AbstractRpcServer
+from google.appengine.tools.appengine_rpc import HttpRpcServer
+from google.appengine.tools.appengine_rpc import HttpRpcServerWithOAuth2Suggestion
 
-class TestRpcServer(appengine_rpc.AbstractRpcServer):
+class TestRpcServerMixin(object):
   """Provides a mocked-out version of HttpRpcServer for testing purposes."""
 
   def set_strict(self, strict=True):
@@ -34,7 +36,7 @@ class TestRpcServer(appengine_rpc.AbstractRpcServer):
     Returns:
       A MockOpener object.
     """
-    return TestRpcServer.MockOpener()
+    return TestRpcServerMixin.MockOpener()
 
   class MockResponse(object):
     """A mocked out response object for testing purposes."""
@@ -53,7 +55,7 @@ class TestRpcServer(appengine_rpc.AbstractRpcServer):
       self.msg = ""
 
       if self.headers is None:
-        self.headers = []
+        self.headers = {}
 
     def info(self):
       return self.headers
@@ -126,7 +128,7 @@ class TestRpcServer(appengine_rpc.AbstractRpcServer):
         raise Exception('No response found for url: %s (%s)' % (url, full_url))
       else:
         logging.debug("Using generic blank response for: %s" % full_url)
-        response = TestRpcServer.MockResponse("")
+        response = TestRpcServerMixin.MockResponse("")
       if "Set-Cookie" in response.headers:
         self.cookie = response.headers["Set-Cookie"]
 
@@ -176,3 +178,38 @@ class TestRpcServer(appengine_rpc.AbstractRpcServer):
         response_funcs: A list of response functions.
       """
       self.ordered_responses[url] = response_funcs
+
+class TestRpcServer(TestRpcServerMixin, AbstractRpcServer):
+  pass
+
+class TestHttpRpcServer(TestRpcServerMixin, HttpRpcServer):
+  pass
+
+class TestHttpRpcServerWithOAuth2Suggestion(TestRpcServerMixin,
+                                            HttpRpcServerWithOAuth2Suggestion):
+  pass
+
+class UrlLibRequestResponseStub(object):
+  def __init__(self, headers=None):
+    self.headers = {}
+    if headers:
+      self.headers = headers
+
+  def add_header(self, header, value):
+    # Note that this does not preserve header order.
+    # If that's a problem for your tests, add some functionality :)
+    self.headers[header] = value
+
+class UrlLibRequestStub(UrlLibRequestResponseStub):
+  pass
+
+class UrlLibResponseStub(UrlLibRequestResponseStub, StringIO.StringIO):
+  def __init__(self, body, headers, url, code, msg):
+    UrlLibRequestResponseStub.__init__(self, headers)
+    if body:
+      StringIO.StringIO.__init__(self, body)
+    else:
+      StringIO.StringIO.__init__(self, "")
+    self.url = url
+    self.code = code
+    self.msg = msg

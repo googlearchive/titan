@@ -5,7 +5,13 @@ handlers:
   # This handler should not require login.
   secure: always
 
-- url: /_titan/file.*
+- url: /_titan/dirs/processdata
+  script: titan.files.handlers.application
+  # Require admin login for the cron job.
+  login: admin
+  secure: always
+
+- url: /_titan/(?:file|files|dir|dirs).*
   script: titan.files.handlers.application
   login: admin
   secure: always

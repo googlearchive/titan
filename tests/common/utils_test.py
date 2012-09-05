@@ -15,11 +15,15 @@
 
 """Tests for utils.py."""
 
+from tests.common import testing
+
+import hashlib
+from google.appengine.ext import blobstore
 from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
 from titan.common import utils
 
-class UtilsTestCase(basetest.TestCase):
+class UtilsTestCase(testing.BaseTestCase):
 
   def testGetCommonDirPath(self):
     paths = ['/foo/bar/baz/test.html', '/foo/bar/test.html']
@@ -70,6 +74,52 @@ class UtilsTestCase(basetest.TestCase):
     self.assertEqual('1-True-False', child.Method(foo=1, bar=True))
     self.assertEqual('1-True-True', child.Method(foo=1, bar=True, baz=True))
     self.assertEqual('1-True-False', child.Method(bar=True, foo=1))
+
+  def testRunWithBackoff(self):
+    # Returning None forces exponential backoff to occur, and within 5 seconds
+    # the callable should be called ~3 times.
+    results = utils.RunWithBackoff(func=lambda: None, runtime=5)
+    # Weakly verify it fits in some arbitrary range:
+    self.assertGreater(len(results), 1)
+    self.assertLess(len(results), 6)
+
+    # Test stop_on_success.
+    results = utils.RunWithBackoff(func=lambda: True, stop_on_success=True)
+    self.assertEqual([True], results)
+
+  def testChunkGenerator(self):
+    nums = range(0, 2501)
+
+    # Verify default chunk size.
+    new_nums = []
+    for i, some_nums in enumerate(utils.ChunkGenerator(nums)):
+      new_nums += some_nums
+    # Should have processed in 3 chunks (0, 1, 2):
+    self.assertEqual(2, i)
+    self.assertListEqual(new_nums, nums)
+
+    # Verify chunk size bigger than input.
+    new_nums = []
+    for i, some_nums in enumerate(utils.ChunkGenerator(nums, chunk_size=5000)):
+      new_nums += some_nums
+    # Should have processed in 1 chunk:
+    self.assertEqual(0, i)
+    self.assertListEqual(new_nums, nums)
+
+  def testWriteToBlobstore(self):
+    # There are stronger tests for the behavior of this in files_test.
+    old_blob_key = utils.WriteToBlobstore('Blobstore!')
+    self.assertTrue(old_blob_key)
+
+    old_blobinfo = blobstore.BlobInfo.get(old_blob_key)
+    # Monkey-patch the md5_hash property for testing.
+    # See note about file_service_stub in files_test.
+    self.stubs.SmartSet(old_blobinfo.__class__, 'md5_hash', property(
+        lambda _: hashlib.md5('Blobstore!').hexdigest()))
+    new_blob_key = utils.WriteToBlobstore('Blobstore!',
+                                          old_blobinfo=old_blobinfo)
+    self.assertEqual(new_blob_key, old_blob_key)
+    self.stubs.SmartUnsetAll()
 
 def main(unused_argv):
   basetest.main()

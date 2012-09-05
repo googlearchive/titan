@@ -15,11 +15,15 @@
 
 import collections
 import datetime
+import gc
 import json
+import logging
 import os
 import time
 
+from google.appengine import runtime
 from google.appengine.api import taskqueue
+from google.appengine.ext import deferred
 from google.appengine.ext import ndb
 
 from titan.common import utils
@@ -30,9 +34,24 @@ TASKQUEUE_NAME = 'titan-dirs'
 TASKQUEUE_LEASE_SECONDS = 2 * WINDOW_SIZE_SECONDS
 TASKQUEUE_LEASE_MAX_TASKS = 1000
 TASKQUEUE_LEASE_ETA_BUFFER = TASKQUEUE_LEASE_SECONDS
+DEFAULT_CRON_RUNTIME_SECONDS = 60
+INITIALIZER_BATCH_SIZE = 100
+INITIALIZER_NUM_BATCHES = 50
 
 _STATUS_AVAILABLE = 1
 _STATUS_DELETED = 2
+
+class Error(Exception):
+  pass
+
+class InvalidDirectoryError(Error):
+  pass
+
+class InvalidMetaError(Error):
+  pass
+
+class RespawnSignalError(Error):
+  pass
 
 class DirManagerMixin(files.File):
   """Mixin to initiate directory update tasks when files change."""
@@ -66,6 +85,12 @@ class DirManagerMixin(files.File):
         tag=str(window),
         eta=current_task_eta)
     task.add(queue_name=TASKQUEUE_NAME)
+
+    # Evil, but really really convenient. If in test or dev_appserver, just
+    # update the directory entities synchronously with the request.
+    if os.environ.get('SERVER_SOFTWARE', '').startswith(('Dev', 'Test')):
+      dir_task_consumer = DirTaskConsumer()
+      dir_task_consumer.ProcessNextWindow()
 
 class DirTaskConsumer(object):
   """Service which consumes and processes path-modification tasks."""
@@ -111,9 +136,24 @@ class DirTaskConsumer(object):
     affected_dirs = dir_service.ComputeAffectedDirs(modified_paths)
     dir_service.UpdateAffectedDirs(**affected_dirs)
 
-    queue.delete_tasks(tasks)
+    for tasks_to_delete in utils.ChunkGenerator(tasks):
+      queue.delete_tasks(tasks_to_delete)
 
     return modified_paths
+
+  def ProcessWindowsWithBackoff(self, runtime=DEFAULT_CRON_RUNTIME_SECONDS):
+    """Long-running function to process multiple windows.
+
+    Args:
+      runtime: How long to process data for.
+    Returns:
+      A list of results from ProcessNextWindow().
+    """
+    results = utils.RunWithBackoff(
+        func=self.ProcessNextWindow,
+        runtime=runtime,
+        max_backoff=TASKQUEUE_LEASE_SECONDS)
+    return results
 
 class ModifiedPath(object):
   """Simple container for metadata about the type of path modification."""
@@ -134,6 +174,14 @@ class ModifiedPath(object):
     self.modified = modified
     self.action = action
 
+  def Serialize(self):
+    results = {
+        'path': self.path,
+        'modified': self.modified,
+        'action': self.action,
+    }
+    return results
+
 class DirService(object):
   """Service for managing directory entities."""
 
@@ -151,6 +199,10 @@ class DirService(object):
     sorted_paths = sorted(modified_paths, key=lambda path: path.modified)
     new_modified_paths = {}
     for modified_path in sorted_paths:
+      if modified_path.path.startswith('/_titan/ver/'):
+        # Small integration with versions mixin: don't create directories
+        # for versioned file paths. See note in _CreateAllDirsWithRespawn.
+        continue
       new_modified_paths[modified_path.path] = modified_path
     sorted_paths = sorted(new_modified_paths.values(),
                           key=lambda path: path.modified)
@@ -193,7 +245,8 @@ class DirService(object):
     #   3. The directory path is not present in dirs_with_adds.
     dirs_paths_to_delete = []
     for path in dirs_with_deletes:
-      if path in dirs_with_adds or files.Files.List(path, limit=1):
+      if path in dirs_with_adds or files.Files.List(path, limit=1,
+                                                    _internal=True):
         # The directory is marked for addition, or files still exist in it.
         continue
       subdirs = Dirs.List(path, limit=2)
@@ -221,6 +274,9 @@ class DirService(object):
       if path in existing_dirs:
         # Existing directory, mark as deleted.
         ent = existing_dirs[path]
+        if ent.status == _STATUS_DELETED:
+          # Skip this entity entirely if it's already correct.
+          continue
         ent.status = _STATUS_DELETED
       else:
         # Missing directory entity, create a new one and mark as deleted.
@@ -238,6 +294,9 @@ class DirService(object):
       if path in existing_dirs:
         # Existing directory, make sure it's marked as available.
         ent = existing_dirs[path]
+        if ent.status == _STATUS_AVAILABLE:
+          # Skip this entity entirely if it's already correct.
+          continue
         ent.status = _STATUS_AVAILABLE
       else:
         # Missing directory entity, create a new one and mark as available.
@@ -251,7 +310,8 @@ class DirService(object):
       # Whitespace. Important.
       changed_dir_ents.append(ent)
 
-    ndb.put_multi(changed_dir_ents)
+    for dir_ents in utils.ChunkGenerator(changed_dir_ents, chunk_size=100):
+      ndb.put_multi(dir_ents)
 
 class Dir(object):
   """A simple directory."""
@@ -260,11 +320,58 @@ class Dir(object):
 
   def __init__(self, path):
     Dir.ValidatePath(path)
-    self.path = path
+    # Strip trailing slash.
+    if path != '/' and path.endswith('/'):
+      path = path[:-1]
+    self._path = path
+    self._name = os.path.basename(self.path)
+    self._meta = None
+    self._dir_ent = None
+
+  @property
+  def _dir(self):
+    """Internal property that allows lazy-loading of the public properties."""
+    if not self._dir_ent:
+      self._dir_ent = _TitanDir.get_by_id(self.path)
+      if not self._dir_ent or self._dir_ent.status == _STATUS_DELETED:
+        raise InvalidDirectoryError('Directory does not exist: %s' % self.path)
+    return self._dir_ent
+
+  @property
+  def path(self):
+    return self._path
+
+  @property
+  def meta(self):
+    """Dir meta data."""
+    if self._meta:
+      return self._meta
+    meta = {}
+    for key in self._dir.meta_properties:
+      meta[key] = getattr(self._dir, key)
+    self._meta = utils.DictAsObject(meta)
+    return self._meta
+
+  @property
+  def exists(self):
+    try:
+      return bool(self._dir)
+    except InvalidDirectoryError:
+      return False
+
+  @property
+  def name(self):
+    return self._name
 
   @staticmethod
   def ValidatePath(path):
     return utils.ValidateDirPath(path)
+
+  def SetMeta(self, meta):
+    _TitanDir.ValidateMetaProperties(meta)
+    for key, value in meta.iteritems():
+      setattr(self._dir, key, value)
+    self._dir.put()
 
 class Dirs(collections.Mapping):
   """A mapping of directory paths to Dir objects."""
@@ -327,7 +434,7 @@ class Dirs(collections.Mapping):
       path: An absolute directory path.
       limit: An integer limiting the number of sub-directories returned.
     Returns:
-      A populated Dirs mapping.
+      A lazy Dirs mapping.
     """
     Dir.ValidatePath(path)
 
@@ -341,6 +448,84 @@ class Dirs(collections.Mapping):
     dir_keys = dirs_query.fetch(limit=limit, keys_only=True)
     titan_dirs = cls([key.id() for key in dir_keys])
     return titan_dirs
+
+def InitializeDirsFromCurrentState(taskqueue_name='default'):
+  """Spawns task to create all directories from current file state.
+
+  This is potentially expensive because it must touch every Titan File in
+  existence.
+
+  Args:
+    taskqueue_name: The name of the taskqueue which will be used.
+  """
+  deferred.defer(_CreateAllDirsWithRespawn, _queue=taskqueue_name)
+
+def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
+  """A long-running, dir-creation task which respawns until completion."""
+  now = datetime.datetime.now()
+  # Turn off the in-context cache to avoid OOM issues (since query results are
+  # cached by default).
+  ctx = ndb.get_context()
+  ctx.set_cache_policy(False)
+  try:
+    count = 0
+    more = True
+    dir_service = DirService()
+    query = files._TitanFile.query()
+
+    while more:
+      if not cursor:
+        # First run.
+        ents, cursor, more = query.fetch_page(INITIALIZER_BATCH_SIZE)
+      else:
+        ents, cursor, more = query.fetch_page(
+            INITIALIZER_BATCH_SIZE, start_cursor=cursor)
+      modified_paths = []
+      for ent in ents:
+        if not include_versioned_dirs and ent.path.startswith('/_titan/ver/'):
+          # Skip versioned paths since there is already much metadata around
+          # discovering file versions in a changeset, and also because
+          # microversions can create very numerous, duplicate, deep
+          # directory trees.
+          # NOTE: can't skip these entities by adding an inequality to the
+          # query because of the cursor handling, so skip them manually here.
+          continue
+        try:
+          modified_path = ModifiedPath(
+              path=ent.path,
+              modified=now,
+              action=ModifiedPath.WRITE,
+          )
+        except ValueError:
+          # Skip any old, invalid files which may end in a trailing slash. :(
+          logging.error('Skipping invalid path: %s', repr(ent.path))
+          continue
+        modified_paths.append(modified_path)
+
+      if modified_paths:
+        affected_dirs = dir_service.ComputeAffectedDirs(modified_paths)
+        if affected_dirs['dirs_with_adds']:
+          dir_service.UpdateAffectedDirs(**affected_dirs)
+          logging.info('Created directories: \n%s',
+                       '\n'.join(sorted(list(affected_dirs['dirs_with_adds']))))
+
+      # Save the second-to-last cursor, because if we exceed the deadline above,
+      # we need to restart the last update.
+      penultimate_cursor = cursor
+      count += 1
+
+      # Attempt to avoid OOM errors.
+      gc.collect()
+      if count >= INITIALIZER_NUM_BATCHES:
+        raise RespawnSignalError
+  except (runtime.DeadlineExceededError, RespawnSignalError):
+    try:
+      taskqueue_name = os.environ['HTTP_X_APPENGINE_QUEUENAME']
+      deferred.defer(
+          _CreateAllDirsWithRespawn,
+          cursor=penultimate_cursor, _queue=taskqueue_name)
+    except:
+      logging.exception('Unable to finish creating directories!')
 
 class _TitanDir(ndb.Expando):
   """Model for representing a dir; don't use directly outside of this module.
@@ -363,12 +548,36 @@ class _TitanDir(ndb.Expando):
       default=_STATUS_AVAILABLE,
       choices=[_STATUS_AVAILABLE, _STATUS_DELETED])
 
+  BASE_PROPERTIES = frozenset((
+      'name',
+      'parent_path',
+      'parent_paths',
+      'status',
+  ))
+
   def __repr__(self):
     return '<_TitanDir: %s>' % self.key.id()
 
   @property
   def path(self):
     return self.key.id()
+
+  @property
+  def meta_properties(self):
+    """A dictionary containing any expando properties."""
+    meta_properties = self.to_dict()
+    for name in self.BASE_PROPERTIES:
+      meta_properties.pop(name)
+    return meta_properties
+
+  @staticmethod
+  def ValidateMetaProperties(meta):
+    """Verify that meta properties are valid."""
+    if not meta:
+      return
+    for key in meta:
+      if key in _TitanDir.BASE_PROPERTIES:
+        raise InvalidMetaError('Invalid name for meta property: "%s"' % key)
 
 def _GetWindow(timestamp=None, window_size=WINDOW_SIZE_SECONDS):
   """Get the window for the given unix time and window size."""

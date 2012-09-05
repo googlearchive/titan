@@ -268,9 +268,13 @@ class VersionsTest(testing.BaseTestCase):
     # List all versions of a file, backwards!
     file_versions = self.vcs.GetFileVersions('/foo')
     self.assertEqual(17, file_versions[0].changeset.num)
+    self.assertEqual(16, file_versions[0].content_changeset.num)
     self.assertEqual(15, file_versions[1].changeset.num)
+    self.assertEqual(14, file_versions[1].content_changeset.num)
     self.assertEqual(13, file_versions[2].changeset.num)
+    self.assertEqual(12, file_versions[2].content_changeset.num)
     self.assertEqual(11, file_versions[3].changeset.num)
+    self.assertEqual(10, file_versions[3].content_changeset.num)
     self.assertEqual(FILE_CREATED, file_versions[0].status)
     self.assertEqual(FILE_DELETED, file_versions[1].status)
     self.assertEqual(FILE_EDITED, file_versions[2].status)

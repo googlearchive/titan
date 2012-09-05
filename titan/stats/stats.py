@@ -62,6 +62,7 @@ import logging
 import os
 import time
 from google.appengine.api import taskqueue
+from titan.common import utils
 from titan.files import files
 
 # The bucket size for an aggregation window, in number of seconds.
@@ -217,7 +218,7 @@ def SaveCounters(counters, timestamp=None, eta=None):
         Defaults to the counter's window time + TASKQUEUE_LEASE_BUFFER_SECONDS.
   Raises:
     ValueError: if passed an empty list of counters.
-  Result:
+  Returns:
     A dictionary mapping counter keys to finalized data.
   """
   counters = counters if hasattr(counters, '__iter__') else [counters]
@@ -347,7 +348,10 @@ class Aggregator(object):
 
     # Save data, then delete tasks whose data we have consumed.
     self._SaveAggregateData(aggregate_data)
-    queue.delete_tasks(tasks)
+
+    # Delete tasks in maximum-sized chunks.
+    for tasks_to_delete in utils.ChunkGenerator(tasks):
+      queue.delete_tasks(tasks_to_delete)
 
     return aggregate_data
 
@@ -359,22 +363,10 @@ class Aggregator(object):
     Returns:
       A list of results from ProcessNextWindow().
     """
-    results = []
-    backoff = 1
-    end_time = time.time() + (total_runtime_minutes * 60)
-    while True:
-      result = self.ProcessNextWindow()
-      results.append(result)
-      if result:
-        backoff = 1
-      else:
-        if time.time() + backoff > end_time:
-          # If we're about to sleep past the end times, just quit now.
-          break
-        time.sleep(backoff)
-        backoff *= 2
-        if backoff > DEFAULT_WINDOW_SIZE:
-          backoff = DEFAULT_WINDOW_SIZE
+    results = utils.RunWithBackoff(
+        func=self.ProcessNextWindow,
+        runtime=total_runtime_minutes * 60,
+        max_backoff=DEFAULT_WINDOW_SIZE)
     return results
 
   def _SaveAggregateData(self, aggregate_data):
@@ -383,10 +375,10 @@ class Aggregator(object):
     window_datetime = datetime.datetime.utcfromtimestamp(window)
     for counter_name, counter_value in aggregate_data['counters'].iteritems():
       path = _MakeLogPath(window_datetime, counter_name)
-      file_obj = files.Get(path)
+      titan_file = files.File(path)
       content = []
-      if file_obj:
-        content = json.loads(file_obj.content)
+      if titan_file.exists:
+        content = json.loads(titan_file.content)
 
       # O(n) replicate and remove duplicate window data, so new data overwrites
       # already present window data (might happen with failed tasks).
@@ -408,7 +400,7 @@ class Aggregator(object):
           'stats_counter_name': counter_name,
           'stats_date': date,
       }
-      files.Write(path, content=json.dumps(content), meta=meta)
+      titan_file.Write(content=json.dumps(content), meta=meta)
 
 class CountersService(object):
   """A service class to retrieve permanently stored counter stats."""
@@ -420,6 +412,8 @@ class CountersService(object):
       counter_names: An iterable of counter names.
       start_date: A datetime.date object. Defaults to the current day.
       end_date: A datetime.date object. Defaults to current day.
+    Raises:
+      ValueError: if end time is greater than start time.
     Returns:
       A dictionary mapping counter_names to a list of counter data. For example:
       {
@@ -442,24 +436,25 @@ class CountersService(object):
         end_date.year, end_date.month, end_date.day)
 
     # Get all files within the range.
-    file_objs = []
+    titan_files = files.OrderedFiles([])
     for counter_name in counter_names:
       filters = [
-          ('stats_counter_name =', counter_name),
-          ('stats_date >=', start_date),
-          ('stats_date <=', end_date),
+          files.FileProperty('stats_counter_name') == counter_name,
+          files.FileProperty('stats_date') >= start_date,
+          files.FileProperty('stats_date') <= end_date,
       ]
-      new_file_objs = files.ListFiles(BASE_DIR, recursive=True, filters=filters)
-      file_objs.extend(new_file_objs)
+      new_titan_files = files.OrderedFiles.List(BASE_DIR, recursive=True,
+                                                filters=filters)
+      titan_files.update(new_titan_files)
 
     final_counter_data = {}
-    for file_obj in files.SmartFileList(file_objs):
+    for titan_file in titan_files.itervalues():
       # Since JSON only represents lists, convert each inner-list back
       # to a two-tuple.
-      counter_data = json.loads(file_obj.content)
+      counter_data = json.loads(titan_file.content)
       counter_data = [tuple(d) for d in counter_data]
 
-      _, counter_name = _ParseLogPath(file_obj.path)
+      _, counter_name = _ParseLogPath(titan_file.path)
       if not counter_name in final_counter_data:
         final_counter_data[counter_name] = []
       final_counter_data[counter_name].extend(counter_data)

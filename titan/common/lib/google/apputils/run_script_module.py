@@ -211,7 +211,7 @@ def RunScriptModule(module):
   try:
     sys.stdout.flush()
     os.execv(program, args)
-  except EnvironmentError, e:
+  except EnvironmentError as e:
     if not getattr(e, 'filename', None):
       e.filename = program  # Add info to error message
     raise

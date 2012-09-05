@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import types
+import urlparse
 
 
 # unittest2 is a backport of Python 2.7's unittest for Python 2.6, so
@@ -742,6 +743,19 @@ class TestCase(unittest.TestCase):
         CheckEqual(a, a)
       for a, b in itertools.product(group, group):
         CheckEqual(a, b)
+
+  def assertUrlEqual(self, a, b):
+    """Asserts that urls are equal, ignoring ordering of query params."""
+    parsed_a = urlparse.urlparse(a)
+    parsed_b = urlparse.urlparse(b)
+    self.assertEqual(parsed_a.scheme, parsed_b.scheme)
+    self.assertEqual(parsed_a.netloc, parsed_b.netloc)
+    self.assertEqual(parsed_a.path, parsed_b.path)
+    self.assertEqual(parsed_a.fragment, parsed_b.fragment)
+    self.assertItemsEqual(parsed_a.params.split(';'),
+                          parsed_b.params.split(';'))
+    self.assertDictEqual(urlparse.parse_qs(parsed_a.query),
+                         urlparse.parse_qs(parsed_b.query))
 
   def getRecordedProperties(self):
     """Return any properties that the user has recorded."""

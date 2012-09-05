@@ -134,7 +134,7 @@ class GoogleTest(test.test):
 
         # basetest.main() should always call sys.exit, so this is very bad.
         return False
-      except SystemExit, e:
+      except SystemExit as e:
         returncode, = e.args
         return not returncode
       except:

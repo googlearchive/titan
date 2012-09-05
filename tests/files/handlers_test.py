@@ -30,6 +30,7 @@ from titan.common.lib.google.apputils import basetest
 from tests.common import webapp_testing
 from titan.files import files
 from titan.files import handlers
+from titan.common import utils
 
 # Content which will be stored in blobstore.
 LARGE_FILE_CONTENT = 'a' * (files.MAX_CONTENT_SIZE + 1)
@@ -69,6 +70,11 @@ class HandlersTest(testing.BaseTestCase):
                             expect_errors=True)
     self.assertEqual(404, response.status_int)
     self.assertEqual('', response.body)
+
+  def testDirsProcessDataHandler(self):
+    response = self.app.get('/_titan/dirs/processdata?runtime=1')
+    self.assertEqual(200, response.status_int)
+    self.assertIn(json.dumps({}), response.body)
 
   def testFileHandlerPost(self):
     params = {
@@ -120,6 +126,77 @@ class HandlersTest(testing.BaseTestCase):
     }
     response = self.app.post('/_titan/file', params, expect_errors=True)
     self.assertEqual(400, response.status_int)
+
+  def testFilesHandlerPaths(self):
+    first_file = files.File('/foo/bar').Write('foobar')
+    second_file = files.File('/abc/baz').Write('abcbaz')
+
+    response = self.app.get('/_titan/files', [('path', '/abc/baz'),
+                                              ('path', '/foo/bar')])
+
+    expected_titan_files = files.Files(files=[first_file, second_file])
+
+    self.assertEqual(200, response.status_int)
+    expected_data = json.loads(self._DumpJson(expected_titan_files))
+    self.assertEqual(expected_data, json.loads(response.body))
+
+    response = self.app.get('/_titan/files', {'path': '/foo/bar',
+                                              'dir_path': '/foo'},
+                            expect_errors=True)
+    self.assertEqual(400, response.status_int)
+
+    response = self.app.get('/_titan/files', {}, expect_errors=True)
+
+    self.assertEqual(400, response.status_int)
+
+    response = self.app.get('/_titan/files', {'path': '/does/not/exist'},
+                            expect_errors=True)
+
+    self.assertEqual(400, response.status_int)
+
+  def testFilesHandlerDir(self):
+    files.File('/abc/def/ghi').Write('abc')
+    files.File('/abc/456/10/22/34').Write('abc123')
+    files.File('/abc/123').Write('abcdef')
+
+    response = self.app.get('/_titan/files', {'dir_path': '/abc/def/'})
+    expected_titan_files = files.Files.List(dir_path='/abc/def/')
+
+    self.assertEqual(200, response.status_int)
+    expected_data = json.loads(self._DumpJson(expected_titan_files))
+    self.assertEqual(expected_data, json.loads(response.body))
+
+    response = self.app.get('/_titan/files', {'dir_path': '/abc',
+                                              'recursive': 'true'})
+    expected_titan_files = files.Files.List(dir_path='/abc/', recursive=True)
+
+    self.assertEqual(200, response.status_int)
+    expected_data = json.loads(self._DumpJson(expected_titan_files))
+    self.assertEqual(expected_data, json.loads(response.body))
+
+    response = self.app.get('/_titan/files', {'dir_path': '/abc/', 'depth': '2',
+                                              'recursive': 'True'})
+
+    expected_titan_files = files.Files.List(dir_path='/abc/', depth=2,
+                                            recursive=True)
+
+    self.assertEqual(200, response.status_int)
+    expected_data = json.loads(self._DumpJson(expected_titan_files))
+    self.assertEqual(expected_data, json.loads(response.body))
+
+    response = self.app.get('/_titan/files', {'dir_path': '/no/file/here'})
+
+    self.assertEqual(200, response.status_int)
+    self.assertEqual({}, json.loads(response.body))
+
+    params = {'dir_path': '/abc', 'recursive': 'true', 'ids_only': 'true'}
+    response = self.app.get('/_titan/files', params)
+
+    expected_paths = ['/abc/123', '/abc/456/10/22/34', '/abc/def/ghi']
+    expected_paths = {'paths': expected_paths}
+
+    self.assertEqual(200, response.status_int)
+    self.assertEqual(expected_paths, json.loads(response.body))
 
   def testFileReadHandler(self):
     files.File('/foo/bar').Write('foobar')
@@ -173,6 +250,9 @@ class HandlersTest(testing.BaseTestCase):
     # Verify that requests with BadFileError return 404.
     response = self.app.delete('/_titan/file?path=/fake', expect_errors=True)
     self.assertEqual(404, response.status_int)
+
+  def _DumpJson(self, obj):
+    return json.dumps(obj, cls=utils.CustomJsonEncoder)
 
 # DEPRECATED CODE BELOW. Will be removed soon.
 
