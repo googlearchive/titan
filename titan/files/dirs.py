@@ -29,9 +29,9 @@ from google.appengine.ext import ndb
 from titan.common import utils
 from titan.files import files
 
-WINDOW_SIZE_SECONDS = 1
+WINDOW_SIZE_SECONDS = 10
 TASKQUEUE_NAME = 'titan-dirs'
-TASKQUEUE_LEASE_SECONDS = 2 * WINDOW_SIZE_SECONDS
+TASKQUEUE_LEASE_SECONDS = 3 * WINDOW_SIZE_SECONDS  # 30 second leasing buffer.
 TASKQUEUE_LEASE_MAX_TASKS = 1000
 TASKQUEUE_LEASE_ETA_BUFFER = TASKQUEUE_LEASE_SECONDS
 DEFAULT_CRON_RUNTIME_SECONDS = 60
@@ -57,23 +57,47 @@ class DirManagerMixin(files.File):
   """Mixin to initiate directory update tasks when files change."""
 
   def Write(self, *args, **kwargs):
+    async = kwargs.pop('_dir_manager_async', True)
     result = super(DirManagerMixin, self).Write(*args, **kwargs)
-    self.AddTitanDirUpdateTask(action=_STATUS_AVAILABLE)
+    # Update parent dirs synchronously (the actual directory update RPC is
+    # asynchronous, to effectively ignore write contention issues which will
+    # rarely occur when many parent dirs don't exist and a large set of files
+    # with common parent parents are concurrently created).
+    self.UpdateTitanDirs(async=async)
     return result
 
   def Delete(self, *args, **kwargs):
     result = super(DirManagerMixin, self).Delete(*args, **kwargs)
-    self.AddTitanDirUpdateTask(action=_STATUS_DELETED)
+    # Update dirs eventually.
+    self.AddTitanDirDeleteTask()
     return result
 
-  def AddTitanDirUpdateTask(self, action):
-    """Add a task to the pull queue about which path was modified and how."""
+  def UpdateTitanDirs(self, async=True):
+    """Updates parent path directories to make sure they exist."""
+    modified_path = ModifiedPath(
+        path=self.path,
+        modified=time.time(),
+        action=_STATUS_AVAILABLE,
+    )
+    dir_service = DirService()
+    affected_dirs_kwargs = dir_service.ComputeAffectedDirs([modified_path])
+
+    # Evil, but really really convenient. If in test or dev_appserver, just
+    # update the directory entities synchronously with the request.
+    if os.environ.get('SERVER_SOFTWARE', '').startswith(('Dev', 'Test')):
+      async = False
+
+    affected_dirs_kwargs['async'] = async
+    dir_service.UpdateAffectedDirs(**affected_dirs_kwargs)
+
+  def AddTitanDirDeleteTask(self):
+    """Add a task to the pull queue about which path was deleted."""
     now = time.time()
     window = _GetWindow(now)
     path_data = {
         'path': self.path,
         'modified': now,
-        'action': action,
+        'action': _STATUS_DELETED,
     }
     # Important: unlock tasks in the same window at the same time, and
     # after the window itself has passed.
@@ -230,7 +254,7 @@ class DirService(object):
     }
     return affected_dirs
 
-  def UpdateAffectedDirs(self, dirs_with_adds, dirs_with_deletes):
+  def UpdateAffectedDirs(self, dirs_with_adds, dirs_with_deletes, async=False):
     """Manage changes to _TitanDir entities computed by ComputeAffectedDirs."""
     # Order deletes by depth first. This isn't actually by depth, but all we
     # need to guarantee here is that paths with common subdirs are deleted
@@ -311,7 +335,10 @@ class DirService(object):
       changed_dir_ents.append(ent)
 
     for dir_ents in utils.ChunkGenerator(changed_dir_ents, chunk_size=100):
-      ndb.put_multi(dir_ents)
+      if not async:
+        ndb.put_multi(dir_ents)
+      else:
+        ndb.put_multi_async(dir_ents)
 
 class Dir(object):
   """A simple directory."""
