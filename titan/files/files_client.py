@@ -30,7 +30,6 @@ FILE_API_PATH_BASE = '/_titan/file'
 FILES_API_PATH_BASE = '/_titan/files'
 FILE_READ_API = '/read'
 FILE_NEWBLOB_API = '/newblob'
-FILE_FINALIZEBLOB_API = '/finalizeblob'
 
 class Error(Exception):
   pass

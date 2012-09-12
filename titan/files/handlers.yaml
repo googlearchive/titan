@@ -1,6 +1,6 @@
 handlers:
 
-- url: /_titan/finalizeblob
+- url: /_titan/file/finalizeblob
   script: titan.files.handlers.application
   # This handler should not require login.
   secure: always
@@ -12,12 +12,6 @@ handlers:
   secure: always
 
 - url: /_titan/(?:file|files|dir|dirs).*
-  script: titan.files.handlers.application
-  login: admin
-  secure: always
-
-# TODO: deprecated v1 API, remove this when migration is complete.
-- url: /_titan/.*
   script: titan.files.handlers.application
   login: admin
   secure: always

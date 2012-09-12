@@ -94,6 +94,44 @@ def SplitPath(path):
   path = os.path.split(path)[0]
   return SplitPath(path) + [path]
 
+def MakeDestinationPathsMap(source_paths, destination_dir_path,
+                            strip_prefix=None):
+  """Create a mapping of source paths to destination paths.
+
+  Args:
+    source_paths: An iterable of absolute paths.
+    destination_dir_path: A destination directory path.
+    strip_prefix: A path prefix to strip from source paths.
+  Raises:
+    ValueError: On invalid input of source_paths or strip_prefix.
+  Returns:
+    A mapping of source paths to destination paths.
+  """
+  # Assume that source_paths and destination_dir_path have already been
+  # validated to avoid re-processing (and since they'd fail at lower layers).
+  if not hasattr(source_paths, '__iter__'):
+    raise ValueError(
+        '"source_paths" must be an iterable. Got: %r' % source_paths)
+
+  # Add trailing slash to destination_dir_path and strip_prefix if not present.
+  if not destination_dir_path.endswith('/'):
+    destination_dir_path += '/'
+  if strip_prefix and not strip_prefix.endswith('/'):
+    strip_prefix += '/'
+  elif not strip_prefix:
+    strip_prefix = '/'
+
+  destination_map = {}
+  for source_path in source_paths:
+    if not source_path.startswith(strip_prefix):
+      raise ValueError(
+          'Mismatch of source_paths and strip_prefix: could not strip '
+          '%r from source path %r.' % (strip_prefix, source_path))
+    temp_source_path = source_path[len(strip_prefix):]
+    destination_path = destination_dir_path + temp_source_path
+    destination_map[source_path] = destination_path
+  return destination_map
+
 def ChunkGenerator(iterable, chunk_size=DEFAULT_CHUNK_SIZE):
   """Yield chunks of some iterable number of tasks at a time.
 

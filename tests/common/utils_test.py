@@ -17,7 +17,6 @@
 
 from tests.common import testing
 
-import hashlib
 from google.appengine.ext import blobstore
 from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
@@ -44,6 +43,45 @@ class UtilsTestCase(testing.BaseTestCase):
     expected = ['/', '/path', '/path/to', '/path/to/some']
     self.assertEqual(expected, utils.SplitPath('/path/to/some/file.txt'))
     self.assertEqual(expected, utils.SplitPath('/path/to/some/file'))
+
+  def testMakeDestinationPathsMap(self):
+    source_paths = [
+        '/foo',
+        '/a/foo',
+        '/a/b/foo',
+        '/c/foo',
+    ]
+    expected = {
+        '/foo': '/x/foo',
+        '/a/foo': '/x/a/foo',
+        '/a/b/foo': '/x/a/b/foo',
+        '/c/foo': '/x/c/foo',
+    }
+    destination_map = utils.MakeDestinationPathsMap(source_paths, '/x')
+    self.assertEqual(expected, destination_map)
+
+    # Test strip_prefix.
+    source_paths = [
+        '/a/foo',
+        '/a/b/foo',
+    ]
+    expected = {
+        '/a/foo': '/x/foo',
+        '/a/b/foo': '/x/b/foo',
+    }
+    destination_map = utils.MakeDestinationPathsMap(
+        source_paths, destination_dir_path='/x', strip_prefix='/a')
+    self.assertEqual(expected, destination_map)
+    # With trailing slashes should be equivalent.
+    destination_map = utils.MakeDestinationPathsMap(
+        source_paths, destination_dir_path='/x/', strip_prefix='/a/')
+    self.assertEqual(expected, destination_map)
+
+    # Error handling.
+    self.assertRaises(ValueError, utils.MakeDestinationPathsMap, '/a/b', '/x')
+    self.assertRaises(
+        ValueError,
+        utils.MakeDestinationPathsMap, ['/a/b'], '/x/', strip_prefix='/fake')
 
   def testComposeMethodKwargs(self):
 
@@ -112,10 +150,6 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertTrue(old_blob_key)
 
     old_blobinfo = blobstore.BlobInfo.get(old_blob_key)
-    # Monkey-patch the md5_hash property for testing.
-    # See note about file_service_stub in files_test.
-    self.stubs.SmartSet(old_blobinfo.__class__, 'md5_hash', property(
-        lambda _: hashlib.md5('Blobstore!').hexdigest()))
     new_blob_key = utils.WriteToBlobstore('Blobstore!',
                                           old_blobinfo=old_blobinfo)
     self.assertEqual(new_blob_key, old_blob_key)

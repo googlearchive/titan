@@ -1,11 +1,11 @@
-# Example queue.yaml for Titan and it's services.
+# Example queue.yaml for Titan and it's mixins.
 # The queues defined here are also necessary for the testing environment.
 
 queue:
 - name: default
   rate: 50/s
 
-# For services/microversions.py.
+# For files/mixins/microversions.py.
 - name: microversions
   rate: 100/s
   max_concurrent_requests: 2
@@ -17,7 +17,3 @@ queue:
 # For files/dirs.py.
 - name: titan-dirs
   mode: pull
-
-# For services/full_text_search.py.
-- name: full-text-search
-  rate: 100/s

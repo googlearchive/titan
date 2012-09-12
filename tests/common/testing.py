@@ -16,12 +16,10 @@
 """Base test case classes for App Engine."""
 
 import base64
-import cStringIO
 import os
 import random
 import string
 import types
-import urlparse
 import mox
 from mox import stubout
 from google.appengine.api import apiproxy_stub_map
@@ -30,31 +28,9 @@ from google.appengine.ext import deferred
 from google.appengine.ext import testbed
 from titan.common.lib.google.apputils import basetest
 from google.appengine.api.search import simple_search_stub
-from tests.common import webapp_testing
-from titan.common import hooks
-from titan.files import client
 from titan.files import dirs
-from titan.files import files_cache
-from titan.files import handlers
 from google.appengine.runtime import request_environment
-from tests.common import appengine_rpc_test_util
-
-def DisableCaching(func):
-  """Decorator for disabling the files_cache module for a test case."""
-
-  def Wrapper(self, *args, **kwargs):
-    # Stub out each function in files_cache.
-    func_return_none = lambda *args, **kwargs: None
-    for attr in dir(files_cache):
-      if isinstance(getattr(files_cache, attr), types.FunctionType):
-        self.stubs.Set(files_cache, attr, func_return_none)
-
-    # Stub special packed return from files_cache.GetFiles.
-    self.stubs.Set(files_cache, 'GetFiles',
-                   lambda *args, **kwargs: (None, False))
-    func(self, *args, **kwargs)
-
-  return Wrapper
+from google.appengine.runtime import runtime
 
 class MockableTestCase(basetest.TestCase):
   """Base test case supporting stubs and mox."""
@@ -255,73 +231,3 @@ class BaseTestCase(MockableTestCase):
     for task in tasks:
       deferred.run(base64.b64decode(task['body']))
     self.taskqueue_stub.FlushQueue(queue)
-
-class TitanClientStub(appengine_rpc_test_util.TestRpcServer,
-                      client.TitanClient):
-  """Mocks out RPC openers for Titan."""
-
-  def __init__(self, *args, **kwargs):
-    super(client.TitanClient, self).__init__(*args, **kwargs)
-    self.handlers = dict(handlers.URL_MAP)  # {'/path': Handler}
-    for url_path in self.handlers:
-      self.opener.AddResponse(
-          'https://%s%s' % (args[0], url_path), self.HandleRequest)
-
-  def ValidateClientAuth(self, test=False):
-    # Mocked out entirely, but testable by calling with test=True.
-    if test:
-      super(TitanClientStub, self).ValidateClientAuth()
-
-  def HandleRequest(self, request):
-    """Handles Titan requests by passing to the appropriate webapp handler.
-
-    Args:
-      request: A urllib2.Request object.
-    Returns:
-      A appengine_rpc_test_util.TestRpcServer.MockResponse object.
-    """
-    url = urlparse.urlparse(request.get_full_url())
-    environ = webapp_testing.WebAppTestCase.GetDefaultEnvironment()
-    method = request.get_method()
-
-    if method == 'GET':
-      environ['QUERY_STRING'] = url.query
-    elif method == 'POST':
-      environ['REQUEST_METHOD'] = 'POST'
-      post_data = request.get_data()
-      environ['wsgi.input'] = cStringIO.StringIO(post_data)
-      environ['CONTENT_LENGTH'] = len(post_data)
-
-    handler_class = self.handlers.get(url.path)
-    if not handler_class:
-      return self.MockResponse('Not found: %s' % url.path, code=404)
-
-    handler = webapp_testing.WebAppTestCase.CreateRequestHandler(
-        handler_factory=handler_class, env=environ)
-    if method == 'GET':
-      handler.get()
-    elif method == 'POST':
-      handler.post()
-    else:
-      raise NotImplementedError('%s method is not supported' % method)
-    result = self.MockResponse(handler.response.out.getvalue(),
-                               code=handler.response.status,
-                               headers=handler.response.headers)
-    return result
-
-class ServicesTestCase(BaseTestCase):
-  """Base test class for Titan service tests."""
-
-  def tearDown(self):
-    hooks._global_hooks = {}
-    hooks._global_service_configs = {}
-    hooks._global_services_order = []
-    super(ServicesTestCase, self).tearDown()
-
-  def EnableServices(self, services):
-    """Let tests define a custom set of TITAN_SERVICES."""
-    hooks.LoadServices(services)
-
-  def SetServiceConfig(self, service_name, config):
-    """Proxy to set a config object for a given service."""
-    hooks.SetServiceConfig(service_name, config)
