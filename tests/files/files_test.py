@@ -364,6 +364,13 @@ class FileTestCase(testing.BaseTestCase):
 
     # Error handling:
     self.assertRaises(AssertionError, files.File('/foo.html').CopyTo, '/test')
+    self.assertRaises(files.CopyFileError, files.File('/fake').CopyTo,
+                      files.File('/test/fake'))
+    # Verify that the exception is populated with the failed destination file.
+    try:
+      files.File('/fake').CopyTo(files.File('/test/fake'))
+    except files.CopyFileError as e:
+      self.assertEqual('/test/fake', e.titan_file.path)
 
   def testMoveTo(self):
     files.File('/foo.html').Write('Test', meta={'color': 'blue'})
@@ -558,28 +565,52 @@ class FilesTestCase(testing.BaseTestCase):
                         files.OrderedFiles.List('/'))
 
   def testCopyTo(self):
+    # Populate the in-context cache by reading the file before creation.
+    self.assertFalse(files.File('/x/b/foo').exists)
+
     files.File('/foo').Write('')
     files.File('/a/foo').Write('')
     files.File('/a/b/foo').Write('')
     files.File('/c/foo').Write('')
 
-    result_files = files.Files()
-    files.Files.List('/').CopyTo(dir_path='/x', result_files=result_files)
+    copied_files = files.Files()
+    failed_files = files.Files()
+    files.Files.List('/').CopyTo(dir_path='/x', copied_files=copied_files,
+                                 failed_files=failed_files)
     expected_paths = [
         '/x/foo',
     ]
-    self.assertSameElements(expected_paths, result_files.keys())
+    self.assertSameElements(expected_paths, copied_files.keys())
+    self.assertEqual([], failed_files.keys())
     titan_files = files.Files.List('/a/', recursive=True)
-    titan_files.CopyTo('/x', strip_prefix='/a/', result_files=result_files)
+    titan_files.CopyTo('/x', strip_prefix='/a/', copied_files=copied_files)
     expected_paths = [
         '/x/foo',
         '/x/b/foo',
     ]
-    self.assertSameElements(expected_paths, result_files.keys())
+    self.assertSameElements(expected_paths, copied_files.keys())
     # With trailing slashes should be the same.
-    result_files.clear()
-    titan_files.CopyTo('/x/', strip_prefix='/a/', result_files=result_files)
-    self.assertSameElements(expected_paths, result_files.keys())
+    copied_files.clear()
+    titan_files.CopyTo('/x/', strip_prefix='/a/', copied_files=copied_files)
+    self.assertSameElements(expected_paths, copied_files.keys())
+
+    copied_files = files.Files()
+    failed_files = files.Files()
+    files_paths = ['/foo', '/fake']
+    self.assertRaises(files.CopyFilesError, files.Files(files_paths).CopyTo,
+                      dir_path='/x', copied_files=copied_files,
+                      failed_files=failed_files)
+    expected_paths = [
+        '/x/foo',
+    ]
+    failed_paths = [
+        '/x/fake',
+    ]
+    self.assertSameElements(expected_paths, copied_files.keys())
+    self.assertSameElements(failed_paths, failed_files.keys())
+
+    # Verify that the NDB in-context cache was cleared correctly.
+    self.assertTrue(files.File('/x/b/foo').exists)
 
   def testGet(self):
     files.File('/foo').Write('')

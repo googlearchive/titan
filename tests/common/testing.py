@@ -19,7 +19,6 @@ import base64
 import os
 import random
 import string
-import types
 import mox
 from mox import stubout
 from google.appengine.api import apiproxy_stub_map
@@ -118,6 +117,7 @@ class BaseTestCase(MockableTestCase):
 
   def LoginNormalUser(self, email='titanuser@example.com',
                       user_organization='example.com'):
+    self.LogoutUser()
     self.testbed.setup_env(
         overwrite=True,
         user_email=email,
@@ -128,16 +128,19 @@ class BaseTestCase(MockableTestCase):
 
   def LoginAdminUser(self, email='titanadmin@example.com',
                      user_organization='example.com'):
+    self.LogoutUser()
     self.LoginNormalUser(email=email, user_organization=user_organization)
     os.environ['USER_IS_ADMIN'] = '1'
 
   def LoginNormalOAuthUser(self, email='titanoauthuser@example.com',
                            user_organization='example.com'):
+    self.LogoutUser()
     self.users_stub.SetOAuthUser(
         email=email, domain=user_organization, is_admin=False)
 
   def LoginAdminOAuthUser(self, email='titanoauthadmin@example.com',
                           user_organization='example.com'):
+    self.LogoutUser()
     self.users_stub.SetOAuthUser(
         email=email, domain=user_organization, is_admin=True)
 

@@ -12,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# This code must be source compatible with Python 2.6 through 3.3.
 
 """Import this module to add a hook to call pdb on uncaught exceptions.
 
@@ -48,7 +50,7 @@ def _DebugHandler(exc_class, value, tb):
     import pdb
     # we are in interactive mode, print the exception...
     traceback.print_exception(exc_class, value, tb)
-    print
+    sys.stdout.write('\n')
     # ...then start the debugger in post-mortem mode.
     pdb.pm()
 
@@ -56,5 +58,6 @@ def _DebugHandler(exc_class, value, tb):
 def Init():
   # Must back up old excepthook.
   global old_excepthook  # pylint: disable-msg=W0603
-  old_excepthook = sys.excepthook
-  sys.excepthook = _DebugHandler
+  if old_excepthook is None:
+    old_excepthook = sys.excepthook
+    sys.excepthook = _DebugHandler

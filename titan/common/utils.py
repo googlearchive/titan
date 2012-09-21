@@ -20,7 +20,10 @@ import errno
 import functools
 import hashlib
 import inspect
-import json
+try:
+  import json
+except ImportError:
+  import simplejson as json
 import mimetypes
 import os
 import time
@@ -328,6 +331,11 @@ class DictAsObject(object):
     except KeyError:
       raise AttributeError("'%s' object has no attribute '%s'"
                            % (self.__class__.__name__, name))
+
+  def __eq__(self, other):
+    if not hasattr(other, 'Serialize'):
+      return False
+    return self.Serialize() == other.Serialize()
 
   def Serialize(self):
     return self._data.copy()

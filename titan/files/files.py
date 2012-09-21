@@ -32,6 +32,8 @@ Usage:
   files.Files.ValidatePaths(['/some/file', '/other/file'])
 """
 
+from __future__ import with_statement
+
 try:
   # Load appengine_config here to guarantee that custom factories can be
   # registered before any File operation takes place.
@@ -74,6 +76,11 @@ class BadFileError(Error):
 
 class InvalidMetaError(Error):
   pass
+
+class CopyFileError(Error):
+
+  def __init__(self, titan_file):
+    self.titan_file = titan_file
 
 class CopyFilesError(Error):
   pass
@@ -462,15 +469,20 @@ class File(object):
     assert isinstance(destination_file, File)
     logging.info('Copying Titan file: %s --> %s', self.real_path,
                  destination_file.real_path)
-    if destination_file.exists:
-      # TODO(user): make this DeleteAsync when available.
-      destination_file.Delete()
-    destination_file.Write(
-        content=self._file.content,
-        blob=self._file.blob,
-        mime_type=self.mime_type,
-        meta=self.meta.Serialize())
-    return self
+    try:
+      if not self.exists:
+        raise BadFileError('File does not exist: %s' % self.real_path)
+      if destination_file.exists:
+        # TODO(user): make this DeleteAsync when available.
+        destination_file.Delete()
+      destination_file.Write(
+          content=self._file.content,
+          blob=self._file.blob,
+          mime_type=self.mime_type,
+          meta=self.meta.Serialize())
+      return self
+    except:
+      raise CopyFileError(destination_file)
 
   def MoveTo(self, destination_file):
     """Move this and all of its properties to a different path.
@@ -642,7 +654,8 @@ class Files(collections.Mapping):
     return self
 
   def CopyTo(self, dir_path, strip_prefix=None, timeout=None,
-             result_files=None, max_workers=DEFAULT_MAX_WORKERS, **kwargs):
+             copied_files=None, failed_files=None,
+             max_workers=DEFAULT_MAX_WORKERS, **kwargs):
     """Copy current files to the given dir_path.
 
     Args:
@@ -651,8 +664,10 @@ class Files(collections.Mapping):
       timeout: The number of seconds to wait for futures to complete.
           If timeout is given and expires, the function will return
           without error but operations will continue in the background.
-      result_files: An optional Files object which will be populated
+      copied_files: An optional Files object which will be populated
           with the destination File objects created during the copy.
+      failed_files: An optional Files object which will be populated
+          with the source files that failed to copy.
     Returns:
       Self-reference.
     """
@@ -665,8 +680,8 @@ class Files(collections.Mapping):
       for source_path, destination_path in destination_map.iteritems():
         source_file = self[source_path]
         destination_file = File(destination_path, **kwargs)
-        if result_files is not None:
-          result_files[destination_file.path] = destination_file
+        if copied_files is not None:
+          copied_files[destination_file.path] = destination_file
         future = executor.submit(source_file.CopyTo, destination_file)
         future_results.append(future)
       futures.wait(future_results, timeout=timeout)
@@ -674,9 +689,18 @@ class Files(collections.Mapping):
     for future in future_results:
       try:
         future.result()
-      except Exception as e:
+      except CopyFileError, e:
+        if failed_files is not None:
+          failed_files[e.titan_file.path] = e.titan_file
+        # Remove the failed file from successfully copied files collection.
+        if copied_files is not None:
+          del copied_files[e.titan_file.path]
         logging.exception('Failed to copy file:')
         errors.append(e)
+
+    # Important: clear the in-context cache since we changed state in threads.
+    ndb.get_context().clear_cache()
+
     if errors:
       raise CopyFilesError(
           'Failed to copy files: \n%s' % '\n'.join([str(e) for e in errors]))

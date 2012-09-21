@@ -20,7 +20,10 @@ try:
 except ImportError:
   pass
 
-import json
+try:
+  import json
+except ImportError:
+  import simplejson as json
 import logging
 import time
 import urllib

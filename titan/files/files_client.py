@@ -128,15 +128,18 @@ class RemoteFile(object):
   @property
   def blob(self):
     # Different API: returns string key instead of BlobKey object.
-    return self.file_data['name']
+    return self.file_data['blob']
 
   @property
   def created_by(self):
     # Different API: return email address instead of User object.
+    # TODO(user): migrate this and files to use Titan Users.
     return self.file_data['created_by']
 
   @property
   def modified_by(self):
+    # Different API: return email address instead of User object.
+    # TODO(user): migrate this and files to use Titan Users.
     return self.file_data['modified_by']
 
   @property
@@ -199,7 +202,7 @@ class RemoteFile(object):
                                   headers=headers)
         response = opener.open(request)
         # Pull the blobkey out of the query params and fall through
-        # to the call to /_titan/write.
+        # to the POST to /_titan/file.
         url = response.geturl()
         response_params = urlparse.parse_qs(urlparse.urlparse(url).query)
 
