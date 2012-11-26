@@ -20,22 +20,22 @@ try:
 except ImportError:
   pass
 
-try:
-  import json
-except ImportError:
-  import simplejson as json
+import json
 import logging
 import time
 import urllib
+
+import webapp2
 from google.appengine.api import blobstore
-from google.appengine.ext import webapp
 from google.appengine.ext.webapp import blobstore_handlers
-from google.appengine.ext.webapp import util
+
 from titan.common import utils
 from titan.files import dirs
 from titan.files import files
 
-class BaseHandler(webapp.RequestHandler):
+_ENABLE_EXCEPTION_LOGGING = True
+
+class BaseHandler(webapp2.RequestHandler):
   """Base handler for Titan API handlers."""
 
   def WriteJsonResponse(self, data, **kwargs):
@@ -60,7 +60,12 @@ class FileHandler(BaseHandler):
     # TODO(user): Remove this when adding _protected flag.
     file_kwargs.pop('admin_override', None)
 
-    titan_file = files.File(path, **file_kwargs)
+    try:
+      titan_file = files.File(path, **file_kwargs)
+    except (TypeError, ValueError):
+      self.error(400)
+      _MaybeLogException('Bad request:')
+      return
     if not titan_file.exists:
       self.error(404)
       return
@@ -105,7 +110,7 @@ class FileHandler(BaseHandler):
       self.error(404)
     except (TypeError, ValueError):
       self.error(400)
-      logging.exception('Bad request:')
+      _MaybeLogException('Bad request:')
 
   def delete(self):
     """DELETE handler."""
@@ -121,6 +126,9 @@ class FileHandler(BaseHandler):
       files.File(path, **file_kwargs).Delete(**method_kwargs)
     except files.BadFileError:
       self.error(404)
+    except (TypeError, ValueError):
+      self.error(400)
+      _MaybeLogException('Bad request:')
 
 class FilesHandler(BaseHandler):
   """Handler to return files or a list of files."""
@@ -137,13 +145,14 @@ class FilesHandler(BaseHandler):
       return
 
     if paths:
-      titan_files = files.Files(paths=paths)
-      for titan_file in titan_files.itervalues():
-        if not titan_file.exists:
-          self.error(400)
-          self.response.out.write('One or more of the requested files does '
-                                  'not exist')
-          return
+      try:
+        titan_files = files.Files(paths=paths)
+        # Get rid of non-existent files so they are not serialized.
+        titan_files.Load()
+      except (TypeError, ValueError):
+        self.error(400)
+        _MaybeLogException('Bad request:')
+        return
     elif dir_path:
       recursive = self.request.get('recursive', 'false')
       recursive = False if recursive == 'false' else True
@@ -166,7 +175,7 @@ class FilesHandler(BaseHandler):
           return
       except ValueError:
         self.error(400)
-        logging.exception('Invalid parameter')
+        _MaybeLogException('Invalid parameter')
         return
 
     self.WriteJsonResponse(titan_files)
@@ -184,7 +193,12 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
       return
     # TODO(user): Remove this when adding _protected flag.
     file_kwargs.pop('admin_override', None)
-    titan_file = files.File(path, **file_kwargs)
+    try:
+      titan_file = files.File(path, **file_kwargs)
+    except (TypeError, ValueError):
+      self.error(400)
+      _MaybeLogException('Bad request:')
+      return
     if not titan_file.exists:
       self.error(404)
       return
@@ -208,6 +222,8 @@ class FileNewBlobHandler(BaseHandler):
 class FileFinalizeBlobHandler(blobstore_handlers.BlobstoreUploadHandler):
   """Handler to finalize a blob, returning the blobkey."""
 
+  # Be careful here; this handler does NOT require authentication.
+
   def get(self):
     # This is a noop, just here as an unauthenticated final endpoint for the
     # internal-to-blobstore redirect below.
@@ -215,6 +231,9 @@ class FileFinalizeBlobHandler(blobstore_handlers.BlobstoreUploadHandler):
 
   def post(self):
     uploads = self.get_uploads('file')
+    if not uploads:
+      self.error(400)
+      return
     blob = str(uploads[0].key())
     # Magic: BlobstoreUploadHandlers must return redirects, so we pass the
     # blobkey back as a query param. The client should followup with a call
@@ -248,7 +267,11 @@ def _GetExtraParams(request_params):
       raise ValueError('Invalid param: %r' % key)
   return file_kwargs, method_kwargs
 
-URL_MAP = (
+def _MaybeLogException(message):
+  if _ENABLE_EXCEPTION_LOGGING:
+    logging.exception(message)
+
+ROUTES = (
     ('/_titan/file', FileHandler),
     ('/_titan/files', FilesHandler),
     ('/_titan/file/read', FileReadHandler),
@@ -257,10 +280,4 @@ URL_MAP = (
 
     ('/_titan/dirs/processdata', DirsProcessDataHandler),
 )
-application = webapp.WSGIApplication(URL_MAP, debug=False)
-
-def main():
-  util.run_wsgi_app(application)
-
-if __name__ == '__main__':
-  main()
+application = webapp2.WSGIApplication(ROUTES, debug=False)

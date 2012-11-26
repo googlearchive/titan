@@ -45,12 +45,12 @@ class RemoteFileFactory(titan_rpc.AbstractRemoteFactory):
 
   def MakeRemoteFile(self, *args, **kwargs):
     """Should be used to create all RemoteFile objects."""
-    kwargs['_titan_client'] = self.titan_client
+    kwargs['_titan_client'] = self.titan_client.Copy()
     return RemoteFile(*args, **kwargs)
 
   def MakeRemoteFiles(self, *args, **kwargs):
     """Should be used to create all RemoteFiles objects."""
-    kwargs['_titan_client'] = self.titan_client
+    kwargs['_titan_client'] = self.titan_client.Copy()
     return RemoteFiles(*args, **kwargs)
 
 class RemoteFile(object):
@@ -196,6 +196,7 @@ class RemoteFile(object):
         content_generator, headers = encode.multipart_encode(params)
         # Make custom opener to support multipart POST requests.
         opener = urllib2.build_opener()
+        opener.add_handler(streaminghttp.StreamingHTTPHandler())
         opener.add_handler(streaminghttp.StreamingHTTPSHandler())
         # Upload directly to the blobstore URL, avoiding authentication.
         request = urllib2.Request(write_blob_url, data=content_generator,
@@ -244,7 +245,7 @@ class RemoteFiles(collections.Mapping):
   """A remote imitation of files.Files."""
 
   def __init__(self, paths=None, files=None, **kwargs):
-    self._titan_client = kwargs.pop('_titan_client')
+    self._titan_client = kwargs.get('_titan_client')
     if paths is not None and files is not None:
       raise TypeError('Exactly one of "paths" or "files" args must be given.')
     self._titan_files = {}
@@ -254,14 +255,13 @@ class RemoteFiles(collections.Mapping):
       raise ValueError('"files" must be an iterable.')
     if paths is not None:
       for path in paths:
-        self._titan_files[path] = RemoteFile(path=path,
-                                             _titan_client=self._titan_client)
-    else:
+        self._AddFile(path, RemoteFile(path=path, **kwargs))
+    elif files is not None:
       for titan_file in files:
-        self._titan_files[titan_file.path] = titan_file
+        self._AddFile(titan_file.path, titan_file)
 
   def __delitem__(self, path):
-    del self._titan_files[path]
+    self._RemoveFile(path)
 
   def __getitem__(self, path):
     return self._titan_files[path]
@@ -291,6 +291,12 @@ class RemoteFiles(collections.Mapping):
 
   def __repr__(self):
     return '<RemoteFiles %r>' % self.keys()
+
+  def _AddFile(self, path, titan_file):
+    self._titan_files[path] = titan_file
+
+  def _RemoveFile(self, path):
+    del self._titan_files[path]
 
   def clear(self):
     self._titan_files = {}

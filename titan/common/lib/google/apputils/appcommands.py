@@ -278,10 +278,7 @@ class Cmd(object):
       try:
         argv = ParseFlagsWithUsage(argv)
         # Run command
-        if FLAGS.run_with_pdb:
-          ret = pdb.runcall(self.Run, argv)
-        else:
-          ret = self.Run(argv)
+        ret = self.Run(argv)
         if ret is None:
           ret = 0
         else:
@@ -646,7 +643,10 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
   # Show the command help (none, one specific, or all)
   for name in cmd_names:
     command = GetCommandByName(name)
-    cmd_help = command.CommandGetHelp(GetCommandArgv(), cmd_names=cmd_names)
+    try:
+      cmd_help = command.CommandGetHelp(GetCommandArgv(), cmd_names=cmd_names)
+    except Exception as error:
+      cmd_help = "Internal error for command '%s': %s." % (name, str(error))
     cmd_help = cmd_help.strip()
     all_names = ', '.join([name] + (command.CommandGetAliases() or []))
     if len(all_names) + 1 >= len(prefix) or not cmd_help:
@@ -735,15 +735,14 @@ def GetCommand(command_required):
   return command
 
 
-def _CommandsStart():
+def _CommandsStart(unused_argv):
   """Main initialization.
 
-  This initializes flag values, and calls __main__.main().  Only non-flag
-  arguments are passed to main().  The return value of main() is used as the
-  exit status.
-
+  Calls __main__.main(), and then the command indicated by the first
+  non-flag argument, or 'help' if no argument was given. Only non-flag
+  arguments are passed to main(). If main does not call sys.exit, the
+  return value of the command is used as the exit status.
   """
-  app.RegisterAndParseFlagsWithUsage()
   # The following is supposed to return after registering additional commands
   try:
     sys.modules['__main__'].main(GetCommandArgv())
@@ -770,7 +769,11 @@ def Run():
     app.run()
   """
   app.parse_flags_with_usage = ParseFlagsWithUsage
-  app.really_start = _CommandsStart
+  original_really_start = app.really_start
+
+  def InterceptReallyStart():
+    original_really_start(main=_CommandsStart)
+  app.really_start = InterceptReallyStart
   app.usage = _ReplacementAppUsage
   return app.run()
 

@@ -21,10 +21,11 @@ tests.
 
 __author__ = 'dborowitz@google.com (Dave Borowitz)'
 
-import commands
+import collections
 import difflib
 import getpass
 import itertools
+import json
 import os
 import re
 import subprocess
@@ -375,6 +376,10 @@ class TestCase(unittest.TestCase):
       msg = missing_msg
     self.fail(msg)
 
+  # TODO(user): Provide an assertItemsEqual method when our super class
+  # does not provide one.  That method went away in Python 3.2 (renamed
+  # to assertCountEqual, or is that different? investigate).
+
   def assertSameElements(self, expected_seq, actual_seq, msg=None):
     """Assert that two sequences have the same elements (in any order).
 
@@ -480,32 +485,54 @@ class TestCase(unittest.TestCase):
       message:  The message to be printed if the test fails.
     """
     if isinstance(regexes, basestring):
-      self.fail('regexes is a string; it needs to be a list of strings.')
+      self.fail('regexes is a string; use assertRegexpMatches instead.')
     if not regexes:
       self.fail('No regexes specified.')
 
-    regex = '(?:%s)' % ')|(?:'.join(regexes)
+    regex_type = type(regexes[0])
+    for regex in regexes[1:]:
+      if type(regex) is not regex_type:
+        self.fail('regexes list must all be the same type.')
+
+    if regex_type is bytes and isinstance(actual_str, unicode):
+      regexes = [regex.decode('utf-8') for regex in regexes]
+      regex_type = unicode
+    elif regex_type is unicode and isinstance(actual_str, bytes):
+      regexes = [regex.encode('utf-8') for regex in regexes]
+      regex_type = bytes
+
+    if regex_type is unicode:
+      regex = u'(?:%s)' % u')|(?:'.join(regexes)
+    elif regex_type is bytes:
+      regex = b'(?:' + (b')|(?:'.join(regexes)) + b')'
+    else:
+      self.fail('Only know how to deal with unicode str or bytes regexes.')
 
     if not re.search(regex, actual_str, re.MULTILINE):
-      self.fail(message or ('String "%s" does not contain any of these '
+      self.fail(message or ('"%s" does not contain any of these '
                             'regexes: %s.' % (actual_str, regexes)))
 
-  def assertCommandSucceeds(self, command, regexes=[''], env=None,
+  def assertCommandSucceeds(self, command, regexes=(b'',), env=None,
                             close_fds=True):
     """Asserts that a shell command succeeds (i.e. exits with code 0).
 
     Args:
       command: List or string representing the command to run.
-      regexes: List of regular expression strings.
+      regexes: List of regular expression byte strings that match success.
       env: Dictionary of environment variable settings.
       close_fds: Whether or not to close all open fd's in the child after
         forking.
     """
     (ret_code, err) = GetCommandStderr(command, env, close_fds)
 
+    # Accommodate code which listed their output regexes w/o the b'' prefix by
+    # converting them to bytes for the user.
+    if isinstance(regexes[0], unicode):
+      regexes = [regex.encode('utf-8') for regex in regexes]
+
     command_string = GetCommandString(command)
-    self.assert_(
-        ret_code == 0,
+    self.assertEqual(
+        ret_code, 0,
         'Running command\n'
         '%s failed with error code %s and message\n'
         '%s' % (
@@ -536,9 +563,14 @@ class TestCase(unittest.TestCase):
     """
     (ret_code, err) = GetCommandStderr(command, env, close_fds)
 
+    # Accommodate code which listed their output regexes w/o the b'' prefix by
+    # converting them to bytes for the user.
+    if isinstance(regexes[0], unicode):
+      regexes = [regex.encode('utf-8') for regex in regexes]
+
     command_string = GetCommandString(command)
-    self.assert_(
-        ret_code != 0,
+    self.assertNotEqual(
+        ret_code, 0,
         'The following command succeeded while expected to fail:\n%s' %
         _QuoteLongString(command_string))
     self.assertRegexMatch(
@@ -568,7 +600,7 @@ class TestCase(unittest.TestCase):
     """
     try:
       callable_obj(*args, **kwargs)
-    except expected_exception, err:
+    except expected_exception as err:
       self.assert_(predicate(err),
                    '%r does not match predicate %r' % (err, predicate))
     else:
@@ -593,7 +625,7 @@ class TestCase(unittest.TestCase):
     """
     try:
       callable_obj(*args, **kwargs)
-    except expected_exception, err:
+    except expected_exception as err:
       actual_exception_message = str(err)
       self.assert_(expected_exception_message == actual_exception_message,
                    'Exception message does not match.\n'
@@ -752,10 +784,71 @@ class TestCase(unittest.TestCase):
     self.assertEqual(parsed_a.netloc, parsed_b.netloc)
     self.assertEqual(parsed_a.path, parsed_b.path)
     self.assertEqual(parsed_a.fragment, parsed_b.fragment)
-    self.assertItemsEqual(parsed_a.params.split(';'),
-                          parsed_b.params.split(';'))
+    self.assertEqual(sorted(parsed_a.params.split(';')),
+                     sorted(parsed_b.params.split(';')))
     self.assertDictEqual(urlparse.parse_qs(parsed_a.query),
                          urlparse.parse_qs(parsed_b.query))
+
+  def assertSameStructure(self, a, b, aname='a', bname='b', msg=None):
+    """Asserts that two values contain the same structural content.
+
+    The two arguments should be data trees consisting of trees of dicts and
+    lists. They will be deeply compared by walking into the contents of dicts
+    and lists; other items will be compared using the == operator.
+    If the two structures differ in content, the failure message will indicate
+    the location within the structures where the first difference is found.
+    This may be helpful when comparing large structures.
+
+    Args:
+      a: The first structure to compare.
+      b: The second structure to compare.
+      aname: Variable name to use for the first structure in assertion messages.
+      bname: Variable name to use for the second structure.
+      msg: Additional text to include in the failure message.
+    """
+
+    # Accumulate all the problems found so we can report all of them at once
+    # rather than just stopping at the first
+    problems = []
+
+    _WalkStructureForProblems(a, b, aname, bname, problems)
+
+    # Avoid spamming the user toooo much
+    max_problems_to_show = self.maxDiff / 80
+    if len(problems) > max_problems_to_show:
+      problems = problems[0:max_problems_to_show-1] + ['...']
+
+    if problems:
+      failure_message = '; '.join(problems)
+      if msg:
+        failure_message += (': ' + msg)
+      self.fail(failure_message)
+
+  def assertJsonEqual(self, first, second, msg=None):
+    """Asserts that the JSON objects defined in two strings are equal.
+
+    A summary of the differences will be included in the failure message
+    using assertSameStructure.
+
+    Args:
+      first: A string contining JSON to decode and compare to second.
+      second: A string contining JSON to decode and compare to first.
+      msg: Additional text to include in the failure message.
+    """
+    try:
+      first_structured = json.loads(first)
+    except ValueError as e:
+      raise ValueError('could not decode first JSON value %s: %s' %
+                       (first, e))
+
+    try:
+      second_structured = json.loads(second)
+    except ValueError as e:
+      raise ValueError('could not decode second JSON value %s: %s' %
+                       (second, e))
+
+    self.assertSameStructure(first_structured, second_structured,
+                             aname='first', bname='second', msg=msg)
 
   def getRecordedProperties(self):
     """Return any properties that the user has recorded."""
@@ -973,9 +1066,48 @@ def StopCapturing():
 
 def _WriteTestData(data, filename):
   """Write data into file named filename."""
-  fd = os.open(filename, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0600)
+  fd = os.open(filename, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+  if not isinstance(data, (bytes, bytearray)):
+    data = data.encode('utf-8')
   os.write(fd, data)
   os.close(fd)
+
+
+def _WalkStructureForProblems(a, b, aname, bname, problem_list):
+  """The recursive comparison behind assertSameStructure."""
+  if type(a) != type(b):
+    problem_list.append('%s is a %r but %s is a %r' %
+                        (aname, type(a), bname, type(b)))
+    # If they have different types there's no point continuing
+    return
+
+  if isinstance(a, collections.Mapping):
+    for k in a:
+      if k in b:
+        _WalkStructureForProblems(a[k], b[k],
+                                  '%s[%r]' % (aname, k), '%s[%r]' % (bname, k),
+                                  problem_list)
+      else:
+        problem_list.append('%s has [%r] but %s does not' % (aname, k, bname))
+    for k in b:
+      if k not in a:
+        problem_list.append('%s lacks [%r] but %s has it' % (aname, k, bname))
+
+  # Strings are Sequences but we'll just do those with regular !=
+  elif isinstance(a, collections.Sequence) and not isinstance(a, basestring):
+    minlen = min(len(a), len(b))
+    for i in xrange(minlen):
+      _WalkStructureForProblems(a[i], b[i],
+                                '%s[%d]' % (aname, i), '%s[%d]' % (bname, i),
+                                problem_list)
+    for i in xrange(minlen, len(a)):
+      problem_list.append('%s has [%i] but %s does not' % (aname, i, bname))
+    for i in xrange(minlen, len(b)):
+      problem_list.append('%s lacks [%i] but %s has it' % (aname, i, bname))
+
+  else:
+    if a != b:
+      problem_list.append('%s is %r but %s is %r' % (aname, a, bname, b))
 
 
 class OutputDifferedError(AssertionError):
@@ -987,17 +1119,20 @@ class DiffFailureError(Exception):
 
 
 def _Diff(lhs, rhs):
-  """Run standard unix 'diff' against two files."""
-
-  cmd = '${TEST_DIFF:-diff} %s %s' % (commands.mkarg(lhs), commands.mkarg(rhs))
-  (status, output) = commands.getstatusoutput(cmd)
-  if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 1:
-    # diff outputs must be the same as c++ and shell
-    raise OutputDifferedError('\nRunning %s\n%s\nTest output differed '
-                              'from golden file\n' % (cmd, output))
-  elif not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-    raise DiffFailureError('\nRunning %s\n%s\nFailure diffing test output '
-                           'with golden file\n' % (cmd, output))
+  """Given two pathnames, compare two files.  Raise if they differ."""
+  try:
+    with open(lhs, 'rb') as lhs_f:
+      with open(rhs, 'rb') as rhs_f:
+        diff_text = ''.join(
+            difflib.unified_diff(lhs_f.readlines(), rhs_f.readlines()))
+    if not diff_text:
+      return True
+    raise OutputDifferedError('\nComparing %s and %s\nTest output differed '
+                              'from golden file:\n%s' % (lhs, rhs, diff_text))
+  except EnvironmentError as error:
+    # Unable to read the files.
+    raise DiffFailureError('\nComparing %s and %s\nFailure diffing test output '
+                           'with golden file: %s\n' % (lhs, rhs, error))
 
 
 def DiffTestStringFile(data, golden):
@@ -1009,11 +1144,11 @@ def DiffTestStringFile(data, golden):
 
 def DiffTestStrings(data1, data2):
   """Diff two strings."""
-  data1_file = os.path.join(FLAGS.test_tmpdir, 'provided_1.dat')
-  _WriteTestData(data1, data1_file)
-  data2_file = os.path.join(FLAGS.test_tmpdir, 'provided_2.dat')
-  _WriteTestData(data2, data2_file)
-  _Diff(data1_file, data2_file)
+  diff_text = ''.join(
+      difflib.unified_diff(data1.splitlines(True), data2.splitlines(True)))
+  if not diff_text:
+    return
+  raise OutputDifferedError('\nTest strings differed:\n%s' % diff_text)
 
 
 def DiffTestFiles(testgen, golden):
@@ -1074,6 +1209,11 @@ def _QuoteLongString(s):
   Returns:
     The quoted string.
   """
+  if isinstance(s, (bytes, bytearray)):
+    try:
+      s = s.decode('utf-8')
+    except UnicodeDecodeError:
+      s = str(s)
   return ('8<-----------\n' +
           s + '\n' +
           '----------->8\n')

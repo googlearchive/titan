@@ -26,6 +26,7 @@ import cStringIO
 import mimetools
 import urllib2
 
+import webapp2
 import webtest
 
 from titan.common import titan_rpc
@@ -33,7 +34,7 @@ from titan.common import titan_rpc
 class TitanClientStub(titan_rpc.TitanClient):
 
   def __init__(self, *args, **kwargs):
-    self._stub_handlers = kwargs.pop('stub_handlers')
+    self._wsgi_apps = kwargs.pop('stub_wsgi_apps')
     super(TitanClientStub, self).__init__(*args, **kwargs)
 
   def ValidateClientAuth(self):
@@ -42,17 +43,25 @@ class TitanClientStub(titan_rpc.TitanClient):
 
   def _GetOpener(self):
     opener = super(TitanClientStub, self)._GetOpener()
-    opener.add_handler(
-        HijackAllRequestsHandler(stub_handlers=self._stub_handlers))
+    opener.add_handler(HijackAllRequestsHandler(self._wsgi_apps))
     return opener
 
 class HijackAllRequestsHandler(urllib2.BaseHandler):
   """A urllib2 handler which pipes all requests through webtest."""
 
-  def __init__(self, stub_handlers):
+  def __init__(self, wsgi_applications):
     # BaseHandler has no __init__ and is an old-style class,
     # so don't use super() here.
-    self.test_app = webtest.TestApp(stub_handlers)
+    self._wsgi_apps = wsgi_applications
+
+  def _GetTestAppFromUrlPath(self, url_path):
+    test_request = webapp2.Request.blank(url_path)
+    for wsgi_app in self._wsgi_apps:
+      if wsgi_app.router.match(test_request):
+        return webtest.TestApp(wsgi_app)
+    raise ValueError(
+        "url_path %r doesn't match any of the registered wsgi applications."
+        % url_path)
 
   def default_open(self, req):
     """urllib2.BaseHandler method called before any protocol methods.
@@ -73,19 +82,20 @@ class HijackAllRequestsHandler(urllib2.BaseHandler):
     url_path = req.get_selector()
     headers = req.headers
     payload = req.get_data() if req.has_data() else None
+    test_app = self._GetTestAppFromUrlPath(url_path)
 
     # 1. urllib2 request/response --> webtest request/response.
     if method == 'GET':
-      response = self.test_app.get(
+      response = test_app.get(
           url_path, headers=headers, expect_errors=True)
     elif method == 'POST':
-      response = self.test_app.post(
+      response = test_app.post(
           url_path, payload, headers=headers, expect_errors=True)
     elif method == 'PUT':
-      response = self.test_app.put(
+      response = test_app.put(
           url_path, payload, headers=headers, expect_errors=True)
     elif method == 'DELETE':
-      response = self.test_app.delete(
+      response = test_app.delete(
           url_path, headers=headers, expect_errors=True)
     else:
       raise NotImplementedError('Method not implemented: %s' % method)

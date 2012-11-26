@@ -80,6 +80,13 @@ class InvalidMetaError(Error):
 class CopyFileError(Error):
 
   def __init__(self, titan_file):
+    super(CopyFileError, self).__init__()
+    self.titan_file = titan_file
+
+class MoveFileError(Error):
+
+  def __init__(self, titan_file):
+    super(MoveFileError, self).__init__()
     self.titan_file = titan_file
 
 class CopyFilesError(Error):
@@ -458,11 +465,12 @@ class File(object):
     self._meta = None
     return self
 
-  def CopyTo(self, destination_file):
+  def CopyTo(self, destination_file, exclude_meta=None):
     """Copy this and all of its properties to a different path.
 
     Args:
       destination_file: A File object of the destination path.
+      exclude_meta: A list of meta keywords to exclude in the destination file.
     Returns:
       Self-reference.
     """
@@ -475,13 +483,22 @@ class File(object):
       if destination_file.exists:
         # TODO(user): make this DeleteAsync when available.
         destination_file.Delete()
+
+      # Copy meta attributes, except ones that are excluded.
+      meta = self.meta.Serialize()
+      if exclude_meta:
+        for key in exclude_meta:
+          if key in meta:
+            del meta[key]
+
       destination_file.Write(
           content=self._file.content,
           blob=self._file.blob,
           mime_type=self.mime_type,
-          meta=self.meta.Serialize())
+          meta=meta)
       return self
     except:
+      logging.exception('Error copying file: %s', self.path)
       raise CopyFileError(destination_file)
 
   def MoveTo(self, destination_file):
@@ -495,9 +512,13 @@ class File(object):
     assert isinstance(destination_file, File)
     logging.info('Moving Titan file: %s --> %s', self.real_path,
                  destination_file.real_path)
-    self.CopyTo(destination_file)
-    self.Delete(_delete_old_blob=False)
-    return self
+    try:
+      self.CopyTo(destination_file)
+      self.Delete(_delete_old_blob=False)
+      return self
+    except:
+      logging.exception('Error moving file: %s', self.path)
+      raise MoveFileError(destination_file)
 
   def Serialize(self, full=False):
     """Serialize the File object to native Python types.
@@ -653,9 +674,7 @@ class Files(collections.Mapping):
     self.clear()
     return self
 
-  def CopyTo(self, dir_path, strip_prefix=None, timeout=None,
-             copied_files=None, failed_files=None,
-             max_workers=DEFAULT_MAX_WORKERS, **kwargs):
+  def CopyTo(self, dir_path, **kwargs):
     """Copy current files to the given dir_path.
 
     Args:
@@ -664,46 +683,35 @@ class Files(collections.Mapping):
       timeout: The number of seconds to wait for futures to complete.
           If timeout is given and expires, the function will return
           without error but operations will continue in the background.
-      copied_files: An optional Files object which will be populated
+      result_files: An optional Files object which will be populated
           with the destination File objects created during the copy.
       failed_files: An optional Files object which will be populated
           with the source files that failed to copy.
+      max_workers: Number of workers to forge in threading.
     Returns:
       Self-reference.
     """
-    utils.ValidateDirPath(dir_path)
-    destination_map = utils.MakeDestinationPathsMap(
-        self.keys(), destination_dir_path=dir_path, strip_prefix=strip_prefix)
+    self._MoveOrCopyTo(dir_path, is_move=False, **kwargs)
+    return self
 
-    future_results = []
-    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-      for source_path, destination_path in destination_map.iteritems():
-        source_file = self[source_path]
-        destination_file = File(destination_path, **kwargs)
-        if copied_files is not None:
-          copied_files[destination_file.path] = destination_file
-        future = executor.submit(source_file.CopyTo, destination_file)
-        future_results.append(future)
-      futures.wait(future_results, timeout=timeout)
-    errors = []
-    for future in future_results:
-      try:
-        future.result()
-      except CopyFileError, e:
-        if failed_files is not None:
-          failed_files[e.titan_file.path] = e.titan_file
-        # Remove the failed file from successfully copied files collection.
-        if copied_files is not None:
-          del copied_files[e.titan_file.path]
-        logging.exception('Failed to copy file:')
-        errors.append(e)
+  def MoveTo(self, dir_path, **kwargs):
+    """Move current files to the given dir_path.
 
-    # Important: clear the in-context cache since we changed state in threads.
-    ndb.get_context().clear_cache()
-
-    if errors:
-      raise CopyFilesError(
-          'Failed to copy files: \n%s' % '\n'.join([str(e) for e in errors]))
+    Args:
+      dir_path: The destination dir_path.
+      strip_prefix: The directory prefix to strip from source paths.
+      timeout: The number of seconds to wait for futures to complete.
+          If timeout is given and expires, the function will return
+          without error but operations will continue in the background.
+      result_files: An optional Files object which will be populated
+          with the destination File objects created during the move.
+      failed_files: An optional Files object which will be populated
+          with the source files that failed to move.
+      max_workers: Number of workers to forge in threading.
+    Returns:
+      Self-reference.
+    """
+    self._MoveOrCopyTo(dir_path, is_move=True, **kwargs)
     return self
 
   def Load(self):
@@ -720,6 +728,8 @@ class Files(collections.Mapping):
   def Serialize(self, full=False):
     """Serialize the File object to native Python types.
 
+    Args:
+      full: Whether to return a full representation of the files.
     Returns:
       A serializable dictionary of this Files object's properties, i.e. a
       mapping of paths to serialized File objects found at a given path.
@@ -728,6 +738,45 @@ class Files(collections.Mapping):
     for path, titan_file in self._titan_files.iteritems():
       result[path] = titan_file.Serialize(full=full)
     return result
+
+  def _MoveOrCopyTo(self, dir_path, is_move=False, strip_prefix=None,
+                    timeout=None, result_files=None, failed_files=None,
+                    max_workers=DEFAULT_MAX_WORKERS, **kwargs):
+    """This encapsulate repeated logic for CopyTo and MoveTo methods."""
+    utils.ValidateDirPath(dir_path)
+    destination_map = utils.MakeDestinationPathsMap(
+        self.keys(), destination_dir_path=dir_path, strip_prefix=strip_prefix)
+
+    future_results = []
+    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+      for source_path, destination_path in destination_map.iteritems():
+        source_file = self[source_path]
+        destination_file = File(destination_path, **kwargs)
+        if result_files is not None:
+          result_files[destination_file.path] = destination_file
+        file_method = source_file.MoveTo if is_move else source_file.CopyTo
+        future = executor.submit(file_method, destination_file)
+        future_results.append(future)
+      futures.wait(future_results, timeout=timeout)
+    errors = []
+    for future in future_results:
+      try:
+        future.result()
+      except (CopyFileError, MoveFileError) as e:
+        if failed_files is not None:
+          failed_files[e.titan_file.path] = e.titan_file
+        # Remove the failed file from successfully copied files collection.
+        if result_files is not None:
+          del result_files[e.titan_file.path]
+        logging.exception('Operation failed:')
+        errors.append(e)
+
+    # Important: clear the in-context cache since we changed state in threads.
+    ndb.get_context().clear_cache()
+
+    if errors:
+      raise CopyFilesError(
+          'Failed to copy files: \n%s' % '\n'.join([str(e) for e in errors]))
 
   @classmethod
   def Merge(cls, first_files, second_files):

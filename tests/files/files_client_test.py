@@ -28,7 +28,7 @@ class TestableRemoteFileFactory(files_client.RemoteFileFactory):
   """A RemoteFileFactory with a stubbed-out TitanClient."""
 
   def _GetTitanClient(self, **kwargs):
-    kwargs['stub_handlers'] = handlers.application
+    kwargs['stub_wsgi_apps'] = [handlers.application]
     return titan_rpc_stub.TitanClientStub(**kwargs)
 
 class FilesClientTestCase(testing.BaseTestCase):
@@ -83,6 +83,41 @@ class FilesClientTestCase(testing.BaseTestCase):
     self.assertFalse(remote_file.exists)
 
     # TODO(user): add tests for large files and fp argument.
+
+  def testRemoteFiles(self):
+    actual_file = files.File('/a/foo')
+    actual_file.Write('foo!', meta={'flag': False})
+    remote_file = self.remote_file_factory.MakeRemoteFile('/a/foo')
+
+    remote_files = self.remote_file_factory.MakeRemoteFiles()
+    self.assertEqual([], remote_files.keys())
+    remote_files = self.remote_file_factory.MakeRemoteFiles([])
+    self.assertEqual([], remote_files.keys())
+    remote_files = self.remote_file_factory.MakeRemoteFiles(['/a/foo'])
+    self.assertEqual(['/a/foo'], remote_files.keys())
+    remote_files = self.remote_file_factory.MakeRemoteFiles(files=[remote_file])
+    self.assertEqual(['/a/foo'], remote_files.keys())
+
+    # Test mapping properties.
+    remote_files['/a/bar'] = self.remote_file_factory.MakeRemoteFile('/a/bar')
+    self.assertSameElements(['/a/foo', '/a/bar'], remote_files.keys())
+    del remote_files['/a/bar']
+    self.assertEqual(['/a/foo'], remote_files.keys())
+    self.assertIn('/a/foo', remote_files)
+    self.assertEqual(1, len(remote_files))
+    remote_files.clear()
+    self.assertEqual(0, len(remote_files))
+
+    # Test List().
+    # Different remote API: List is not a class method due to authentication.
+    remote_files = self.remote_file_factory.MakeRemoteFiles()
+    remote_files.List('/', recursive=True)
+    self.assertEqual(['/a/foo'], remote_files.keys())
+
+    # Test Delete().
+    remote_files.Delete()
+    actual_file = files.File('/a/foo')
+    self.assertFalse(actual_file.exists)
 
 if __name__ == '__main__':
   basetest.main()

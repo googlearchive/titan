@@ -219,6 +219,33 @@ class VersionsTest(testing.BaseTestCase):
     self.assertRaises(versions.ChangesetError, titan_file.Write, '')
     self.assertRaises(versions.ChangesetError, titan_file.Delete)
 
+  def testCommitManyFiles(self):
+    # Regression test for "operating on too many entity groups in a
+    # single transaction" error. This usually happens through the HTTP API
+    # when lazy file objects are created from the manifest and then end up
+    # being evaluated one-by-one inside the Commit code path. Since File objects
+    # are all root entities, this results in the above error.
+    test_user = users.User('test@example.com')
+    changeset = self.vcs.NewStagingChangeset(created_by=test_user)
+    for i in range(100):
+      files.File('/foo%s' % i, changeset=changeset).Write(str(i))
+    changeset.FinalizeAssociatedFiles()
+    # Recreate the changeset from scratch, and reassociate lazy file objects.
+    changeset = versions.Changeset(changeset.num)
+    for i in range(100):
+      changeset.AssociateFile(files.File('/foo%s' % i, changeset=changeset))
+    changeset.FinalizeAssociatedFiles()
+    self.vcs.Commit(changeset)
+
+    # Test again, but test the ListFiles code path with force=True.
+    changeset = self.vcs.NewStagingChangeset(created_by=test_user)
+    for i in range(100):
+      files.File('/foo%s' % i, changeset=changeset).Write(str(i))
+    changeset.FinalizeAssociatedFiles()
+    # Recreate the changeset from scratch, and reassociate lazy file objects.
+    changeset = versions.Changeset(changeset.num)
+    self.vcs.Commit(changeset, force=True)
+
   def testGetChangeset(self):
     self.assertRaises(versions.ChangesetError,
                       self.vcs.GetLastSubmittedChangeset)

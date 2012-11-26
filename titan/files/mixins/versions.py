@@ -13,11 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Titan version control system, including atomic commits of groups of files.
-
-Documentation:
-  http://code.google.com/p/titan-files/wiki/VersionsService
-"""
+"""Titan version control system, including atomic commits of groups of files."""
 
 import logging
 import re
@@ -47,16 +43,16 @@ _CHANGESET_COUNTER_NAME = 'num_changesets'
 class Error(Exception):
   pass
 
-class ChangesetError(Error):
+class ChangesetError(Error, ValueError):
   pass
 
 class InvalidChangesetError(ChangesetError):
   pass
 
-class FileVersionError(Error):
+class FileVersionError(Error, ValueError):
   pass
 
-class CommitError(Error):
+class CommitError(Error, ValueError):
   pass
 
 class FileVersioningMixin(files.File):
@@ -107,6 +103,7 @@ class FileVersioningMixin(files.File):
 
     # A changeset exists, so real_path will resolve correctly. Fall through to
     # finding the file entity normally.
+    # pylint: disable=protected-access
     return super(FileVersioningMixin, self)._file
 
   @property
@@ -267,7 +264,11 @@ class Changeset(object):
       raise ChangesetError(
           'Cannot guarantee strong consistency when associated file paths '
           'have not been finalized. Perhaps you want ListFiles?')
-    return files.Files(files=self._associated_files)
+    titan_files = files.Files(files=self._associated_files)
+    # Force File objects to load so that they are not lazily loaded inside
+    # of the commit transaction.
+    titan_files.Load()
+    return titan_files
 
   def ListFiles(self):
     """Queries and returns a Files object containing this changeset's files.

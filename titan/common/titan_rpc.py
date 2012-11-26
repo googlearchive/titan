@@ -129,10 +129,9 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     """Test the stored credentials, may raise AuthenticationError."""
     try:
       if self._HostIsDevAppServer():
+        self._DevAppServerAuthenticate()
+        self.orig_headers.update(self.extra_headers)
         return
-      credentials = self.auth_function()
-      self._GetAuthToken(credentials[0], credentials[1])
-      # Valid credentials, call _Authenticate to populate self state.
       self._Authenticate()
     except appengine_rpc.ClientLoginError, e:
       error = ('Error %d: %s %s' %
@@ -155,6 +154,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
 
   def _CreateRequest(self, url, data=None):
     """Overrides the base method to allow different HTTP methods to be used."""
+    # pylint: disable=protected-access
     request = super(TitanClient, self)._CreateRequest(url, data=data)
     method = 'POST' if data else 'GET'
     if self.method:
@@ -199,7 +199,7 @@ class AbstractRemoteFactory(object):
           source=self.source,
           secure=self.secure,
           **self.kwargs)
-    return self._titan_client.Copy()
+    return self._titan_client
 
   def _GetTitanClient(self, **kwargs):
     return TitanClient(**kwargs)

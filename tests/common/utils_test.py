@@ -44,6 +44,20 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertEqual(expected, utils.SplitPath('/path/to/some/file.txt'))
     self.assertEqual(expected, utils.SplitPath('/path/to/some/file'))
 
+  def testSafeJoin(self):
+    self.assertEqual('foo/bar', utils.SafeJoin('foo', 'bar'))
+    self.assertEqual('foo/bar/baz/', utils.SafeJoin('foo', 'bar', 'baz/'))
+    self.assertEqual('foo.html', utils.SafeJoin('', 'foo.html'))
+    self.assertEqual('/foo/bar', utils.SafeJoin('/foo', 'bar'))
+    self.assertEqual('/foo/bar/baz.html',
+                     utils.SafeJoin('/foo', 'bar', 'baz.html'))
+    self.assertEqual('/foo/bar////baz.html',
+                     utils.SafeJoin('/foo', 'bar////', 'baz.html'))
+
+    self.assertRaises(ValueError, utils.SafeJoin, '/foo', '/bar')
+    self.assertRaises(ValueError, utils.SafeJoin, 'foo', '/bar', 'baz')
+    self.assertRaises(ValueError, utils.SafeJoin, 'foo', 'bar', '/baz')
+
   def testMakeDestinationPathsMap(self):
     source_paths = [
         '/foo',

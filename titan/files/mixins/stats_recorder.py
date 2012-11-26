@@ -13,11 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Enable Titan Stats recording of all core file operations.
-
-Documentation:
-  http://code.google.com/p/titan-files/wiki/StatsRecorderMixin
-"""
+"""Enable Titan Stats recording of all core file operations."""
 
 import random
 

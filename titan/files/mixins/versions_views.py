@@ -79,7 +79,8 @@ class ChangesetCommitHandler(AbstractBaseHandler):
       self.error(400)
       logging.exception('Bad request:')
 
-application = webapp2.WSGIApplication((
+ROUTES = (
     ('/_titan/files/versions/changeset', ChangesetHandler),
     ('/_titan/files/versions/changeset/commit', ChangesetCommitHandler),
-), debug=False)
+)
+application = webapp2.WSGIApplication(ROUTES, debug=False)

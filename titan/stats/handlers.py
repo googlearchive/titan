@@ -108,8 +108,8 @@ def _ParseRequestParams(request):
   }
   return result
 
-URL_MAP = (
+ROUTES = (
     ('/_titan/stats/counterdata', CounterDataHandler),
     ('/_titan/stats/graph', GraphHandler),
 )
-application = webapp2.WSGIApplication(URL_MAP, debug=False)
+application = webapp2.WSGIApplication(ROUTES, debug=False)

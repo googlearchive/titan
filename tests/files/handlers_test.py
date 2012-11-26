@@ -66,6 +66,11 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(404, response.status_int)
     self.assertEqual('', response.body)
 
+    response = self.app.get('/_titan/file', {'path': 'bad-path'},
+                            expect_errors=True)
+    self.assertEqual(400, response.status_int)
+    self.assertEqual('', response.body)
+
   def testDirsProcessDataHandler(self):
     response = self.app.get('/_titan/dirs/processdata?runtime=1')
     self.assertEqual(200, response.status_int)
@@ -96,7 +101,7 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(201, response.status_int)
     self.assertEqual('some-blob-key', str(files.File('/foo/bar')._file.blob))
 
-    # Verify that update requests with BadFileError return a 404.
+    # Non-existent file.
     params = {
         'path': '/fake',
         'mime_type': 'new/mimetype',
@@ -126,27 +131,27 @@ class HandlersTest(testing.BaseTestCase):
     first_file = files.File('/foo/bar').Write('foobar')
     second_file = files.File('/abc/baz').Write('abcbaz')
 
-    response = self.app.get('/_titan/files', [('path', '/abc/baz'),
-                                              ('path', '/foo/bar')])
+    paths = [
+        ('path', '/abc/baz'),
+        ('path', '/foo/bar'),
+        ('path', '/fake'),
+    ]
+    response = self.app.get('/_titan/files', paths)
 
     expected_titan_files = files.Files(files=[first_file, second_file])
-
-    self.assertEqual(200, response.status_int)
     expected_data = json.loads(self._DumpJson(expected_titan_files))
+    self.assertEqual(200, response.status_int)
     self.assertEqual(expected_data, json.loads(response.body))
 
+    # Invalid arguments.
     response = self.app.get('/_titan/files', {'path': '/foo/bar',
                                               'dir_path': '/foo'},
                             expect_errors=True)
     self.assertEqual(400, response.status_int)
 
-    response = self.app.get('/_titan/files', {}, expect_errors=True)
-
-    self.assertEqual(400, response.status_int)
-
-    response = self.app.get('/_titan/files', {'path': '/does/not/exist'},
+    # Invalid path.
+    response = self.app.get('/_titan/files', {'path': 'bad-path'},
                             expect_errors=True)
-
     self.assertEqual(400, response.status_int)
 
   def testFilesHandlerDir(self):
@@ -212,9 +217,24 @@ class HandlersTest(testing.BaseTestCase):
     self.assertTrue('X-AppEngine-BlobKey' in response.headers)
     self.assertEqual('', response.body)
 
-    # Verify that requests with BadFileError return 404.
+    # Non-existent file.
     response = self.app.get('/_titan/file/read', {'path': '/fake'},
                             expect_errors=True)
+    self.assertEqual(404, response.status_int)
+
+    # Invalid path.
+    response = self.app.get('/_titan/file/read', {'path': 'bad-path'},
+                            expect_errors=True)
+    self.assertEqual(400, response.status_int)
+
+  def testFileHandlerDelete(self):
+    files.File('/foo/bar').Write('foobar')
+    response = self.app.delete('/_titan/file?path=/foo/bar')
+    self.assertEqual(200, response.status_int)
+    self.assertFalse(files.File('/foo/bar').exists)
+
+    # Verify that requests with BadFileError return 404.
+    response = self.app.delete('/_titan/file?path=/fake', expect_errors=True)
     self.assertEqual(404, response.status_int)
 
   def testWriteBlob(self):
@@ -236,16 +256,6 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(302, response.status_int)
     self.assertIn('fake-blob-key', response.headers['Location'])
     self.mox.VerifyAll()
-
-  def testFileHandlerDelete(self):
-    files.File('/foo/bar').Write('foobar')
-    response = self.app.delete('/_titan/file?path=/foo/bar')
-    self.assertEqual(200, response.status_int)
-    self.assertFalse(files.File('/foo/bar').exists)
-
-    # Verify that requests with BadFileError return 404.
-    response = self.app.delete('/_titan/file?path=/fake', expect_errors=True)
-    self.assertEqual(404, response.status_int)
 
   def _DumpJson(self, obj):
     return json.dumps(obj, cls=utils.CustomJsonEncoder)

@@ -97,6 +97,35 @@ def SplitPath(path):
   path = os.path.split(path)[0]
   return SplitPath(path) + [path]
 
+def SafeJoin(base, *paths):
+  """A safe version of os.path.join.
+
+  The os.path.join() method opens a directory traversal vulnerability when a
+  user-supplied input begins with a slash. With this method, any intermediary
+  path that starts with slash will raise an error.
+
+  Args:
+    base: Base directory.
+    **paths: List of paths to join.
+  Returns:
+    pass
+  Raises:
+    ValueError: If any intermediate path starts with a slash.
+  """
+  result = base
+  for path in paths:
+    # Prevent directory traversal attacks by preventing intermediate paths that
+    # start with a slash.
+    if path.startswith('/'):
+      raise ValueError('Intermediate path cannot start with \'/\': %s' % path)
+
+    # pylint: disable-msg=g-explicit-bool-comparison
+    if result == '' or result.endswith('/'):
+      result += path
+    else:
+      result += '/' + path
+  return result
+
 def MakeDestinationPathsMap(source_paths, destination_dir_path,
                             strip_prefix=None):
   """Create a mapping of source paths to destination paths.

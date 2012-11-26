@@ -466,7 +466,7 @@ def _GetWindow(timestamp=None, window_size=DEFAULT_WINDOW_SIZE):
 
 def _MakeLogPath(date, counter_name):
   # Make a path like: /_titan/stats/counters/2015/05/15/page/view/data-10s.json
-  path = os.path.join(
+  path = utils.SafeJoin(
       BASE_DIR, str(date.year), str(date.month), str(date.day),
       counter_name, DATA_FILENAME)
   return path

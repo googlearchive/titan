@@ -350,6 +350,19 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual('Test', titan_file.content)
     self.assertEqual('blue', titan_file.meta.color)
 
+    # Exclude some meta properties.
+    meta = {
+        'color': 'blue',
+        'size': 'large',
+        'full_name': 'John Doe',
+    }
+    titan_file = files.File('/meta.html').Write('hello', meta=meta)
+    dest_file = files.File('/meta2.html')
+    titan_file.CopyTo(dest_file, exclude_meta=['full_name'])
+    self.assertEqual('blue', dest_file.meta.color)
+    self.assertEqual('large', dest_file.meta.size)
+    self.assertRaises(AttributeError, lambda: dest_file.meta.full_name)
+
     # Blobs instead of content.
     files.File('/foo.html').Delete()
     files.File('/foo.html').Write(blob=self.blob_key, meta={'flag': False})
@@ -573,32 +586,32 @@ class FilesTestCase(testing.BaseTestCase):
     files.File('/a/b/foo').Write('')
     files.File('/c/foo').Write('')
 
-    copied_files = files.Files()
+    result_files = files.Files()
     failed_files = files.Files()
-    files.Files.List('/').CopyTo(dir_path='/x', copied_files=copied_files,
+    files.Files.List('/').CopyTo(dir_path='/x', result_files=result_files,
                                  failed_files=failed_files)
     expected_paths = [
         '/x/foo',
     ]
-    self.assertSameElements(expected_paths, copied_files.keys())
+    self.assertSameElements(expected_paths, result_files.keys())
     self.assertEqual([], failed_files.keys())
     titan_files = files.Files.List('/a/', recursive=True)
-    titan_files.CopyTo('/x', strip_prefix='/a/', copied_files=copied_files)
+    titan_files.CopyTo('/x', strip_prefix='/a/', result_files=result_files)
     expected_paths = [
         '/x/foo',
         '/x/b/foo',
     ]
-    self.assertSameElements(expected_paths, copied_files.keys())
+    self.assertSameElements(expected_paths, result_files.keys())
     # With trailing slashes should be the same.
-    copied_files.clear()
-    titan_files.CopyTo('/x/', strip_prefix='/a/', copied_files=copied_files)
-    self.assertSameElements(expected_paths, copied_files.keys())
+    result_files.clear()
+    titan_files.CopyTo('/x/', strip_prefix='/a/', result_files=result_files)
+    self.assertSameElements(expected_paths, result_files.keys())
 
-    copied_files = files.Files()
+    result_files = files.Files()
     failed_files = files.Files()
     files_paths = ['/foo', '/fake']
     self.assertRaises(files.CopyFilesError, files.Files(files_paths).CopyTo,
-                      dir_path='/x', copied_files=copied_files,
+                      dir_path='/x', result_files=result_files,
                       failed_files=failed_files)
     expected_paths = [
         '/x/foo',
@@ -606,8 +619,51 @@ class FilesTestCase(testing.BaseTestCase):
     failed_paths = [
         '/x/fake',
     ]
-    self.assertSameElements(expected_paths, copied_files.keys())
+    self.assertSameElements(expected_paths, result_files.keys())
     self.assertSameElements(failed_paths, failed_files.keys())
+
+    # Verify that the NDB in-context cache was cleared correctly.
+    self.assertTrue(files.File('/x/b/foo').exists)
+
+  def testMoveTo(self):
+    # Populate the in-context cache by reading the file before creation.
+    self.assertFalse(files.File('/x/b/foo').exists)
+
+    files.File('/foo').Write('')
+    files.File('/a/foo').Write('')
+    files.File('/a/b/foo').Write('')
+    files.File('/c/foo').Write('')
+
+    result_files = files.Files()
+    titan_files = files.Files.List('/a/', recursive=True)
+    titan_files.MoveTo('/x', strip_prefix='/a/', result_files=result_files)
+    expected_paths = [
+        '/x/foo',
+        '/x/b/foo',
+    ]
+    self.assertSameElements(expected_paths, result_files.keys())
+
+    # Verify files has been deleted from the old directory.
+    self.assertFalse(files.File('/a/foo').exists)
+    self.assertFalse(files.File('/a/b/foo').exists)
+
+    result_files = files.Files()
+    failed_files = files.Files()
+    files_paths = ['/foo', '/fake']
+    self.assertRaises(files.CopyFilesError, files.Files(files_paths).MoveTo,
+                      dir_path='/x', result_files=result_files,
+                      failed_files=failed_files)
+    expected_paths = [
+        '/x/foo',
+    ]
+    failed_paths = [
+        '/x/fake',
+    ]
+    self.assertSameElements(expected_paths, result_files.keys())
+    self.assertSameElements(failed_paths, failed_files.keys())
+
+    # Verify files has been deleted from the old directory.
+    self.assertFalse(files.File('/foo').exists)
 
     # Verify that the NDB in-context cache was cleared correctly.
     self.assertTrue(files.File('/x/b/foo').exists)
