@@ -23,6 +23,7 @@ from google.appengine.ext import ndb
 from titan.common import strong_counters
 from titan.common import utils
 from titan.files import files
+from titan.users import users
 
 CHANGESET_NEW = 'new'
 CHANGESET_PRE_SUBMIT = 'pre-submit'
@@ -84,8 +85,24 @@ class FileVersioningMixin(files.File):
       # Support integer changeset argument.
       self.changeset = Changeset(self.changeset)
 
+    # Overrides for created_by and modified_by.
+    self._created_by_override = kwargs.get('_created_by_override', None)
+    self._modified_by_override = kwargs.get('_modified_by_override', None)
+
   def __repr__(self):
     return '<File %s (cs:%r)>' % (self._path, getattr(self, 'changeset', None))
+
+  def _GetCreatedByUser(self):
+    if self._created_by_override:
+      return self._created_by_override
+    # pylint: disable=protected-access
+    return super(FileVersioningMixin, self)._GetCreatedByUser()
+
+  def _GetModifiedByUser(self):
+    if self._modified_by_override:
+      return self._modified_by_override
+    # pylint: disable=protected-access
+    return super(FileVersioningMixin, self)._GetModifiedByUser()
 
   @property
   def _file(self):
@@ -105,6 +122,28 @@ class FileVersioningMixin(files.File):
     # finding the file entity normally.
     # pylint: disable=protected-access
     return super(FileVersioningMixin, self)._file
+
+  @property
+  def created_by(self):
+    created_by = super(FileVersioningMixin, self).created_by
+    if not self._file.created_by:
+      # Backwards-compatibility: before microversions had user passthrough,
+      # files were written within tasks without a user. For these files, we
+      # incur an extra RPC and fetch the data from the changelist instead.
+      return self.changeset.created_by
+    return created_by
+
+  @property
+  def modified_by(self):
+    modified_by = super(FileVersioningMixin, self).modified_by
+    if not self._file.modified_by:
+      # Backwards-compatibility: before microversions had user passthrough,
+      # files were written within tasks without a user. For these files, we
+      # incur an extra RPC and fetch the data from the changelist instead.
+      #
+      # NOTE: This is correctly "created_by" and not "modified_by".
+      return self.changeset.created_by
+    return modified_by
 
   @property
   def real_path(self):
@@ -343,7 +382,7 @@ class _Changeset(ndb.Model):
     created: datetime.datetime object of when this entity was created.
     status: A string status of the changeset.
     linked_changeset: A reference between staging and finalized changesets.
-    created_by: A users.User object of the user who created the changeset.
+    created_by: A users.TitanUser object of the user who created the changeset.
   """
   num = ndb.IntegerProperty(required=True)
   created = ndb.DateTimeProperty(auto_now_add=True)
@@ -353,7 +392,7 @@ class _Changeset(ndb.Model):
                                        CHANGESET_DELETED,
                                        CHANGESET_DELETED_BY_SUBMIT])
   linked_changeset = ndb.KeyProperty(kind='_Changeset')
-  created_by = ndb.UserProperty(auto_current_user_add=True)
+  created_by = users.TitanUserProperty()
 
   def __repr__(self):
     return '<_Changeset %d status:%s>' % (self.num, self.status)
@@ -461,7 +500,7 @@ class _FileVersion(ndb.Model):
     key.id(): '<changeset num>:<path>', such as '123:/foo.html'.
     path: The Titan File path.
     changeset_num: The changeset number in which the file was changed.
-    changeset_created_by: A users.User object of who created the changeset.
+    changeset_created_by: A users.TitanUser object of who created the changeset.
     created: datetime.datetime object of when the entity was created.
     status: The edit type of the file at this version.
   """
@@ -470,7 +509,7 @@ class _FileVersion(ndb.Model):
   # and decreases the number of files that can be committed at once.
   path = ndb.StringProperty()
   changeset_num = ndb.IntegerProperty()
-  changeset_created_by = ndb.UserProperty()
+  changeset_created_by = users.TitanUserProperty()
   created = ndb.DateTimeProperty(auto_now_add=True)
   status = ndb.StringProperty(required=True,
                               choices=[FILE_CREATED, FILE_EDITED, FILE_DELETED])
@@ -521,7 +560,7 @@ class VersionControlService(object):
     """Create a new staging changeset with a unique number ID.
 
     Args:
-      created_by: A users.User object, will default to the current user.
+      created_by: A users.TitanUser object, will default to the current user.
     Returns:
       A Changeset.
     """
@@ -539,6 +578,8 @@ class VersionControlService(object):
         parent=_Changeset.GetRootKey())
     if created_by:
       changeset_ent.created_by = created_by
+    else:
+      changeset_ent.created_by = users.GetCurrentUser()
     changeset_ent.put()
     return Changeset(num=new_changeset_num, changeset_ent=changeset_ent)
 

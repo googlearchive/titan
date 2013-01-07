@@ -255,10 +255,10 @@ class RemoteFiles(collections.Mapping):
       raise ValueError('"files" must be an iterable.')
     if paths is not None:
       for path in paths:
-        self._AddFile(path, RemoteFile(path=path, **kwargs))
+        self._AddFile(RemoteFile(path=path, **kwargs))
     elif files is not None:
       for titan_file in files:
-        self._AddFile(titan_file.path, titan_file)
+        self._AddFile(titan_file)
 
   def __delitem__(self, path):
     self._RemoveFile(path)
@@ -292,8 +292,8 @@ class RemoteFiles(collections.Mapping):
   def __repr__(self):
     return '<RemoteFiles %r>' % self.keys()
 
-  def _AddFile(self, path, titan_file):
-    self._titan_files[path] = titan_file
+  def _AddFile(self, titan_file):
+    self._titan_files[titan_file.path] = titan_file
 
   def _RemoveFile(self, path):
     del self._titan_files[path]

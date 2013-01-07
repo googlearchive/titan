@@ -31,6 +31,10 @@ from titan.files import dirs
 from google.appengine.runtime import request_environment
 from google.appengine.runtime import runtime
 
+# Replace start_new_thread with a version where new threads inherit os.environ
+# from their creator thread.
+runtime.PatchStartNewThread()
+
 class MockableTestCase(basetest.TestCase):
   """Base test case supporting stubs and mox."""
 
@@ -48,6 +52,7 @@ class BaseTestCase(MockableTestCase):
   """Base test case for tests requiring Datastore, Memcache, or Blobstore."""
 
   def setUp(self, enable_environ_patch=True):
+    """Initializes the App Engine stubs."""
     # Evil os-environ patching which mirrors dev_appserver and production.
     # This patch turns os.environ into a thread-local object, which also happens
     # to support storing more than just strings. This patch must come first.
@@ -61,7 +66,23 @@ class BaseTestCase(MockableTestCase):
     # Setup and activate the testbed.
     self.testbed = testbed.Testbed()
     self.testbed.activate()
-    self.testbed.init_all_stubs()
+    # Don't use init_all_stubs here because we need to exclude the unused
+    # Images API due to conflicts with the PIL library and virtualenv tests.
+    # http://stackoverflow.com/questions/2485295
+    self.testbed.init_app_identity_stub()
+    self.testbed.init_blobstore_stub()
+    self.testbed.init_capability_stub()
+    self.testbed.init_channel_stub()
+    # self.testbed.init_datastore_v3_stub()  # Done below.
+    self.testbed.init_files_stub()
+    # self.testbed.init_images_stub()  # Intentionally excluded.
+    self.testbed.init_logservice_stub()
+    self.testbed.init_mail_stub()
+    self.testbed.init_memcache_stub()
+    self.testbed.init_taskqueue_stub()
+    self.testbed.init_urlfetch_stub()
+    self.testbed.init_user_stub()
+    self.testbed.init_xmpp_stub()
 
     # Fake an always strongly-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
@@ -92,6 +113,7 @@ class BaseTestCase(MockableTestCase):
         user_is_admin='0',
         overwrite=True,
         http_host='testbed.example.com:80',
+        default_version_hostname='testbed.example.com',
         request_id_hash=request_id_hash,
         server_software='Test/1.0 (testbed)',
     )
@@ -143,6 +165,11 @@ class BaseTestCase(MockableTestCase):
     self.LogoutUser()
     self.users_stub.SetOAuthUser(
         email=email, domain=user_organization, is_admin=True)
+
+  def LoginTaskAdminUser(self):
+    # Tasks are run with an anonymous admin user.
+    self.LogoutUser()
+    os.environ['USER_IS_ADMIN'] = '1'
 
   def assertEntityEqual(self, ent, other_ent, ignore=None):
     """Assert equality of properties and dynamic properties of two entities.
@@ -234,3 +261,4 @@ class BaseTestCase(MockableTestCase):
     for task in tasks:
       deferred.run(base64.b64decode(task['body']))
     self.taskqueue_stub.FlushQueue(queue)
+

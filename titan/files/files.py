@@ -25,14 +25,12 @@ Usage:
   titan_file.CopyTo(files.File('/destination/file'))
   files.File.ValidatePath('/some/file')
 
-  titan_files = files.Files.Get(['/some/file', '/other/file'])
   titan_files = files.Files.List('/some/dir')
   titan_files.CopyTo('/destination/', strip_prefix='/some')
+  titan_files.Load()
   titan_files.Delete()
   files.Files.ValidatePaths(['/some/file', '/other/file'])
 """
-
-from __future__ import with_statement
 
 try:
   # Load appengine_config here to guarantee that custom factories can be
@@ -42,17 +40,10 @@ except ImportError:
   appengine_config = None
 
 import collections
-import hashlib
-import os
-
-# TODO(user): remove when all apps use python2.7. Until then,
-# this lets apps use the normal API but not files.Files.
-if os.environ.get('APPENGINE_RUNTIME') == 'python':
-  # For Python 2.5 import compatibility, monkey patch dict as Mapping (evil).
-  collections.Mapping = getattr(collections, 'Mapping', dict)
-
 import datetime
+import hashlib
 import logging
+import os
 
 from concurrent import futures
 from google.appengine.ext import blobstore
@@ -60,6 +51,7 @@ from google.appengine.ext import ndb
 
 from titan.common import utils
 from titan.files import files_cache
+from titan.users import users
 
 # Arbitrary cutoff for when content will be stored in blobstore.
 # This value should be mirrored by titan_client.DIRECT_TO_BLOBSTORE_SIZE.
@@ -123,8 +115,8 @@ class File(object):
         check for 'blob' and use webapp's send_blob() to avoid loading the
         content blob into app memory.
     exists: Boolean of if the file exists.
-    created_by: A users.User object of who first created the file, or None.
-    modified_by: A users.User object of who last modified the file, or None.
+    created_by: A users.TitanUser for who first created the file, or None.
+    modified_by: A users.TitanUser for who last modified the file, or None.
     size: The number of bytes of this file's content.
     md5_hash: Pre-computed md5 hash of the file's content.
     meta: An object exposing File metadata as attributes. Use the Write()
@@ -185,6 +177,8 @@ class File(object):
   @property
   def _file(self):
     """Internal property that allows lazy-loading of the public properties."""
+    # NOTE: this is not the only way _file_ent can be set on this object.
+    # Because of this, don't rely on .is_loaded for limiting permission checks.
     try:
       if self._file_ent:
         return self._file_ent
@@ -335,6 +329,26 @@ class File(object):
       content = None
     return content, blob
 
+  def _GetCreatedByUser(self):
+    """Returns the user that should be saved when a file is first created.
+
+    Can be overridden by subclasses.
+
+    Returns:
+      A users.TitanUser object.
+    """
+    return users.GetCurrentUser()
+
+  def _GetModifiedByUser(self):
+    """Returns the user that should be saved when a file is modified.
+
+    Can be overridden by subclasses.
+
+    Returns:
+      A users.TitanUser object.
+    """
+    return users.GetCurrentUser()
+
   # TODO(user): remove _delete_old_blob, refactor into versions subclass.
   def Write(self, content=None, blob=None, mime_type=None, meta=None,
             encoding=None, _delete_old_blob=True):
@@ -401,6 +415,8 @@ class File(object):
           blob=blob,
           # Backwards-compatibility with deprecated "blobs" property:
           blobs=[],
+          created_by=self._GetCreatedByUser(),
+          modified_by=self._GetModifiedByUser(),
           md5_hash=None if blob else hashlib.md5(content).hexdigest(),
       )
       # Add meta attributes.
@@ -410,6 +426,8 @@ class File(object):
       self._file.put()
     else:
       # Updating an existing _File.
+      self._file.modified_by = self._GetModifiedByUser()
+
       if mime_type and self._file.mime_type != mime_type:
         self._file.mime_type = mime_type
 
@@ -615,10 +633,10 @@ class Files(collections.Mapping):
       raise ValueError('"files" must be an iterable.')
     if paths is not None:
       for path in paths:
-        self._AddFile(path, File(path=path, **kwargs))
+        self._AddFile(File(path=path, **kwargs))
     elif files is not None:
       for titan_file in files:
-        self._AddFile(titan_file.path, titan_file)
+        self._AddFile(titan_file)
 
   def __delitem__(self, path):
     self._RemoveFile(path)
@@ -627,8 +645,9 @@ class Files(collections.Mapping):
     return self._titan_files[path]
 
   def __setitem__(self, path, titan_file):
-    assert isinstance(titan_file, File)
-    self._AddFile(path, titan_file)
+    raise AttributeError('Cannot directly set items on %s instance. '
+                         'Try the update() method instead.'
+                         % self.__class__.__name__)
 
   def __contains__(self, other):
     path = getattr(other, 'path', other)
@@ -652,15 +671,16 @@ class Files(collections.Mapping):
   def __repr__(self):
     return '<Files %r>' % self.keys()
 
-  def _AddFile(self, path, titan_file):
-    self._titan_files[path] = titan_file
+  def _AddFile(self, titan_file):
+    # Use .path here to allow virtual file path, not forcing real_path.
+    self._titan_files[titan_file.path] = titan_file
 
   def _RemoveFile(self, path):
     del self._titan_files[path]
 
   def update(self, other_titan_files):
     for titan_file in other_titan_files.itervalues():
-      self[titan_file.path] = titan_file
+      self._AddFile(titan_file)
 
   def clear(self):
     self._titan_files = {}
@@ -715,12 +735,20 @@ class Files(collections.Mapping):
     return self
 
   def Load(self):
-    """If not loaded, load associated paths and removing non-existing ones."""
-    # TODO(user): optimize this. For now, the naive way:
+    """If not loaded, load associated paths and remove non-existing ones."""
+    # pylint: disable=protected-access
+    real_path_to_paths = {f.real_path: f.path for f in self.itervalues()}
+    file_ents = _GetTitanFileEnts(real_path_to_paths.keys())
     paths_to_clear = []
-    for path, titan_file in self._titan_files.iteritems():
-      if not titan_file.exists:
+    for real_path in real_path_to_paths:
+      path = real_path_to_paths[real_path]
+      if real_path not in file_ents:
+        # Remove non-existent files.
         paths_to_clear.append(path)
+      else:
+        # Inject the fetched file entity into the current File object.
+        self[path]._file_ent = file_ents[real_path]
+
     for path in paths_to_clear:
       del self[path]
     return self
@@ -753,7 +781,7 @@ class Files(collections.Mapping):
         source_file = self[source_path]
         destination_file = File(destination_path, **kwargs)
         if result_files is not None:
-          result_files[destination_file.path] = destination_file
+          result_files.update(Files(files=[destination_file]))
         file_method = source_file.MoveTo if is_move else source_file.CopyTo
         future = executor.submit(file_method, destination_file)
         future_results.append(future)
@@ -764,7 +792,7 @@ class Files(collections.Mapping):
         future.result()
       except (CopyFileError, MoveFileError) as e:
         if failed_files is not None:
-          failed_files[e.titan_file.path] = e.titan_file
+          failed_files.update(Files(files=[e.titan_file]))
         # Remove the failed file from successfully copied files collection.
         if result_files is not None:
           del result_files[e.titan_file.path]
@@ -786,24 +814,6 @@ class Files(collections.Mapping):
     return new_titan_files
 
   @classmethod
-  def Get(cls, paths):
-    """Factory method to get Files containing only the given files which exist.
-
-    Files will be pre-loaded.
-
-    Args:
-      paths: An iterable of absolute paths.
-    Returns:
-      A Files mapping containing existing files.
-    """
-    Files.ValidatePaths(paths)
-    titan_file_objs, _ = _GetTitanFiles(paths)
-    # Filter out non-existent files:
-    titan_file_objs = [f for f in titan_file_objs if f]
-    titan_files = cls(files=titan_file_objs)
-    return titan_files
-
-  @classmethod
   def List(cls, dir_path, recursive=False, depth=None, filters=None,
            limit=None, offset=None, **kwargs):
     """Factory method to return a lazy Files mapping for the given dir.
@@ -821,35 +831,31 @@ class Files(collections.Mapping):
     Returns:
       A populated Files mapping.
     """
-    if depth is not None and depth <= 0:
-      raise ValueError('depth argument must be a positive integer.')
-    if filters is not None and not hasattr(filters, '__iter__'):
-      raise ValueError('"filters" must be an iterable.')
-    utils.ValidateDirPath(dir_path)
-
-    # Strip trailing slash.
-    if dir_path != '/' and dir_path.endswith('/'):
-      dir_path = dir_path[:-1]
-
-    files_query = _TitanFile.query()
-    if recursive:
-      files_query = files_query.filter(_TitanFile.paths == dir_path)
-      if depth is not None:
-        dir_path_depth = 0 if dir_path == '/' else dir_path.count('/')
-        depth_filter = _TitanFile.depth <= dir_path_depth + depth
-        files_query = files_query.filter(depth_filter)
-      files_query = files_query.filter(_TitanFile.paths == dir_path)
-    else:
-      files_query = files_query.filter(_TitanFile.dir_path == dir_path)
-
-    if filters:
-      for ndb_filter in filters:
-        files_query = files_query.filter(ndb_filter)
-
+    files_query = _CreateFilesQuery(dir_path, recursive=recursive, depth=depth,
+                                    filters=filters)
     # TODO(user): support cursors.
     file_keys = files_query.fetch(limit=limit, offset=offset, keys_only=True)
     titan_files = cls([key.id() for key in file_keys], **kwargs)
     return titan_files
+
+  @staticmethod
+  def Count(dir_path, recursive=False, depth=None, filters=None):
+    """Factory method to count the number of files within a directory.
+
+    Args:
+      dir_path: Absolute directory path.
+      recursive: Whether to list files recursively.
+      depth: If recursive, a positive integer to limit the recursion depth.
+          1 is one folder deep, 2 is two folders deep, etc.
+      filters: An iterable of FileProperty objects.
+    Raises:
+      ValueError: If given an invalid depth argument.
+    Returns:
+      A count of files that match the query.
+    """
+    files_query = _CreateFilesQuery(dir_path, recursive=recursive, depth=depth,
+                                    filters=filters)
+    return files_query.count()
 
   @staticmethod
   def ValidatePaths(paths):
@@ -865,10 +871,11 @@ class OrderedFiles(Files):
     self._ordered_paths = []
     super(OrderedFiles, self).__init__(*args, **kwargs)
 
-  def _AddFile(self, path, titan_file):
-    if path not in self._titan_files:
-      self._ordered_paths.append(path)
-    super(OrderedFiles, self)._AddFile(path, titan_file)
+  def _AddFile(self, titan_file):
+    if titan_file.path not in self._titan_files:
+      self._ordered_paths.append(titan_file.path)
+    # pylint: disable=protected-access
+    super(OrderedFiles, self)._AddFile(titan_file)
 
   def _RemoveFile(self, path):
     self._ordered_paths.remove(path)
@@ -921,8 +928,8 @@ class _TitanFile(ndb.Expando):
     content: Byte string of the file's contents.
     blob: If content is null, a BlobKey pointing to the file.
     blobs: Deprecated; use "blob" instead.
-    created_by: A users.User object of who first created the file, or None.
-    modified_by: A users.User object of who last modified the file, or None.
+    created_by: A users.TitanUser of who first created the file, or None.
+    modified_by: A users.TitanUser of who last modified the file, or None.
     md5_hash: Pre-computed md5 hash of the entity's content or blob.
   """
   name = ndb.StringProperty()
@@ -937,8 +944,8 @@ class _TitanFile(ndb.Expando):
   blob = ndb.BlobKeyProperty()
   # Deprecated; use "blob" instead.
   blobs = ndb.BlobKeyProperty(repeated=True)
-  created_by = ndb.UserProperty(auto_current_user_add=True)
-  modified_by = ndb.UserProperty(auto_current_user=True)
+  created_by = users.TitanUserProperty()
+  modified_by = users.TitanUserProperty()
   md5_hash = ndb.StringProperty(indexed=False)
 
   BASE_PROPERTIES = frozenset((
@@ -989,26 +996,24 @@ class _TitanFile(ndb.Expando):
 
 # ------------------------------------------------------------------------------
 
-def _GetTitanFiles(paths):
-  """Get a non-lazy File object or a list of non-lazy File objects, or None.
+def _GetTitanFileEnts(paths):
+  """Internal method for getting _File entities.
 
   Args:
     paths: An already-validated list of absolute filenames.
   Returns:
-    A single File object or list of File objects.
+    An OrderedDict mapping paths to file entities which exist.
   """
-  is_multiple = hasattr(paths, '__iter__')
-
-  # Wrap all the _TitanFile entities in <File> objects.
-  paths = paths if is_multiple else [paths]
   file_ents = ndb.get_multi([ndb.Key(_TitanFile, path) for path in paths])
-  titan_files = []
+  # Use an OrderedDict to preserve the alphabetical ordering from the query.
+  file_objs = collections.OrderedDict()
   for f in file_ents:
-    titan_files.append(File(f.path, _file_ent=f) if f else None)
-  return titan_files if is_multiple else titan_files[0], is_multiple
+    if f:
+      file_objs[f.path] = f
+  return file_objs
 
 def _GetFileEntities(titan_files):
-  """Get _File entities from File objects; use sparingly."""
+  """Get _TitanFile entities from File objects; use sparingly."""
   # This function should be the only place we access the protected _file attr
   # on File objects. This centralizes the high coupling to one location.
   is_multiple = hasattr(titan_files, '__iter__')
@@ -1018,6 +1023,33 @@ def _GetFileEntities(titan_files):
   for titan_file in titan_files:
     file_ents.append(titan_file._file if titan_file else None)
   return file_ents
+
+def _CreateFilesQuery(dir_path, recursive=False, depth=None, filters=None):
+  """Creates a ndb.Query object for listing _TitanFile entities."""
+  if depth is not None and depth <= 0:
+    raise ValueError('depth argument must be a positive integer.')
+  if filters is not None and not hasattr(filters, '__iter__'):
+    raise ValueError('"filters" must be an iterable.')
+  utils.ValidateDirPath(dir_path)
+
+  # Strip trailing slash.
+  if dir_path != '/' and dir_path.endswith('/'):
+    dir_path = dir_path[:-1]
+
+  files_query = _TitanFile.query()
+  if recursive:
+    files_query = files_query.filter(_TitanFile.paths == dir_path)
+    if depth is not None:
+      dir_path_depth = 0 if dir_path == '/' else dir_path.count('/')
+      depth_filter = _TitanFile.depth <= dir_path_depth + depth
+      files_query = files_query.filter(depth_filter)
+    files_query = files_query.filter(_TitanFile.paths == dir_path)
+  else:
+    files_query = files_query.filter(_TitanFile.dir_path == dir_path)
+
+  if filters:
+    files_query = files_query.filter(*filters)
+  return files_query
 
 def _ReadContentOrBlob(titan_file):
   file_ent = _GetFileEntities(titan_file)

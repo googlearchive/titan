@@ -18,10 +18,10 @@
 from tests.common import testing
 
 import datetime
-from google.appengine.api import users
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.files.mixins import versions
+from titan.users import users
 
 CHANGESET_NEW = versions.CHANGESET_NEW
 CHANGESET_SUBMITTED = versions.CHANGESET_SUBMITTED
@@ -176,7 +176,7 @@ class VersionsTest(testing.BaseTestCase):
     self.assertEqual(changeset.num, 2)
 
   def testCommit(self):
-    test_user = users.User('test@example.com')
+    test_user = users.TitanUser('test@example.com')
     changeset = self.vcs.NewStagingChangeset(created_by=test_user)
 
     # Shouldn't be able to submit changesets with no changed files:
@@ -225,7 +225,7 @@ class VersionsTest(testing.BaseTestCase):
     # when lazy file objects are created from the manifest and then end up
     # being evaluated one-by-one inside the Commit code path. Since File objects
     # are all root entities, this results in the above error.
-    test_user = users.User('test@example.com')
+    test_user = users.TitanUser('test@example.com')
     changeset = self.vcs.NewStagingChangeset(created_by=test_user)
     for i in range(100):
       files.File('/foo%s' % i, changeset=changeset).Write(str(i))

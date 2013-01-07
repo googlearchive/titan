@@ -80,8 +80,10 @@ class BaseRunner(runners.BaseRunner):
 
 class BaseRunnerWithVersions(BaseRunner):
 
-  def _CommitChangesetOrExit(self, changeset_num, force=False, manifest=None):
+  def _CommitChangesetOrExit(self, changeset_num, force_commit=False,
+                             manifest=None):
     """If confirmed, commits the given changeset."""
+    assert not force_commit and manifest
     # Confirm action.
     msg = 'Commit changeset %d?' % changeset_num
     if not self.Confirm(msg):
@@ -100,7 +102,8 @@ class BaseRunnerWithVersions(BaseRunner):
         staging_changeset.AssociateFile(remote_file)
       staging_changeset.FinalizeAssociatedFiles()
 
-    final_remote_changeset = remote_vcs.Commit(staging_changeset, force=force)
+    final_remote_changeset = remote_vcs.Commit(
+        staging_changeset, force=force_commit)
     elapsed_time = time.time() - start
     print 'Finished commit in %s.' % humanize.Duration(elapsed_time)
     return final_remote_changeset
@@ -132,7 +135,7 @@ class UploadRunner(BaseRunnerWithVersions):
     root_dir = os.path.abspath(root_dir)
     filename_to_paths = {}
     for filename in filenames:
-      absolute_filename = utils.SafeJoin(root_dir, filename)
+      absolute_filename = os.path.abspath(filename)
       if not absolute_filename.startswith(root_dir):
         self.PrintError('Path "%s" not contained within "%s".'
                         % (absolute_filename, root_dir))
@@ -345,8 +348,7 @@ class CommitRunner(BaseRunnerWithVersions):
     Raises:
       TypeError: if both force_commit and manifest are given.
     """
-    # TODO(user): output which files are associated to the changeset
-    # when the /_titan/files RESTful endpoint is created.
+    self.remote_file_factory.ValidateClientAuth()
     if force_commit and manifest:
       raise TypeError('Exactly one of force_commit or manifest is allowed.')
     if not manifest and not force_commit:
@@ -363,4 +365,5 @@ class CommitRunner(BaseRunnerWithVersions):
       return
 
     changeset_num = int(changeset)
-    self._CommitChangesetOrExit(changeset_num, force=True, manifest=manifest)
+    self._CommitChangesetOrExit(
+        changeset_num, force_commit=force_commit, manifest=manifest)

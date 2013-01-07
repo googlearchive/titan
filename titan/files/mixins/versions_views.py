@@ -68,7 +68,8 @@ class ChangesetCommitHandler(AbstractBaseHandler):
       if manifest:
         manifest = json.loads(manifest)
         for path in manifest:
-          titan_file = files.File(path, changeset=staging_changeset)
+          titan_file = files.File(path, changeset=staging_changeset,
+                                  _internal=True)
           staging_changeset.AssociateFile(titan_file)
         staging_changeset.FinalizeAssociatedFiles()
 

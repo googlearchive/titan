@@ -22,12 +22,12 @@ import copy
 import datetime
 import hashlib
 from google.appengine.api import files as blobstore_files
-from google.appengine.api import users
 from google.appengine.ext import blobstore
 from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.common import utils
+from titan.users import users
 
 # Content larger than the arbitrary max content size and the 1MB RPC limit.
 LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB.
@@ -125,9 +125,10 @@ class FileTestCase(testing.BaseTestCase):
     self.assertTrue(isinstance(titan_file.created, datetime.datetime))
     self.assertTrue(isinstance(titan_file.modified, datetime.datetime))
     self.assertIsNone(titan_file.blob)
-    self.assertEqual(titan_file.created_by, users.User('titanuser@example.com'))
+    self.assertEqual(titan_file.created_by,
+                     users.TitanUser('titanuser@example.com'))
     self.assertEqual(titan_file.modified_by,
-                     users.User('titanuser@example.com'))
+                     users.TitanUser('titanuser@example.com'))
     # Size:
     titan_file.Write('foo')
     self.assertEqual(titan_file.size, 3)
@@ -171,8 +172,8 @@ class FileTestCase(testing.BaseTestCase):
         paths=[u'/', u'/foo'],
         depth=1,
         mime_type=u'text/html',
-        created_by=users.User('titanuser@example.com', _user_id='1'),
-        modified_by=users.User('titanuser@example.com', _user_id='1'),
+        created_by=users.TitanUser('titanuser@example.com'),
+        modified_by=users.TitanUser('titanuser@example.com'),
         # Arbitrary meta data for expando:
         color=u'blue',
         flag=False,
@@ -511,8 +512,9 @@ class FilesTestCase(testing.BaseTestCase):
     titan_files = files.Files.List('/', recursive=True, filters=filters)
     self.assertEqual(files.Files(['/a/foo', '/a/bar/qux']), titan_files)
     # Non-meta property:
+    user = users.TitanUser('titanuser@example.com')
     filters = [
-        files.FileProperty('created_by') == users.User('titanuser@example.com'),
+        files.FileProperty('created_by') == str(user),
         files.FileProperty('count') == 2,
     ]
     titan_files = files.Files.List('/a/', recursive=True, filters=filters)
@@ -524,6 +526,48 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.Files.List, '/..')
     self.assertRaises(ValueError, files.Files.List, '/',
                       recursive=True, depth=0)
+
+  def testFilesCount(self):
+    # Create files for testing.
+    root_level = files.Files(['/index.html', '/qux'])
+    first_level = files.Files(['/foo/bar'])
+    second_level = files.Files([
+        '/foo/bar/baz',
+        '/foo/bar/baz.html',
+        '/foo/bar/baz.txt',
+    ])
+    root_and_first_levels = files.Files.Merge(root_level, first_level)
+    all_files = files.Files(root_level.keys() +
+                            first_level.keys() +
+                            second_level.keys())
+
+    for titan_file in all_files.itervalues():
+      titan_file.Write('')
+
+    # Empty.
+    self.assertEqual(0, files.Files.Count('/fake/path'))
+
+    # From root.
+    self.assertEqual(len(root_level), files.Files.Count('/'))
+    self.assertEqual(len(all_files), files.Files.Count('/', recursive=True))
+
+    # Limit recursion depth.
+    self.assertEqual(len(root_and_first_levels),
+                     files.Files.Count('/', recursive=True, depth=1))
+
+    # Custom filters:
+    files.File('/a/foo').Write('', meta={'color': 'red', 'item_id': 1})
+    files.File('/a/bar/qux').Write('', meta={'color': 'red', 'item_id': 2})
+    files.File('/a/baz').Write('', meta={'color': 'blue', 'item_id': 3})
+    # Single filter:
+    filters = [files.FileProperty('color') == 'blue']
+    self.assertEqual(1, files.Files.Count('/', recursive=True, filters=filters))
+    # Multiple filters:
+    filters = [
+        files.FileProperty('color') == 'red',
+        files.FileProperty('item_id') == 2,
+    ]
+    self.assertEqual(1, files.Files.Count('/', recursive=True, filters=filters))
 
   def testOrderedFiles(self):
     # Create files for testing.
@@ -556,17 +600,12 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertNotEqual(root_level, root_level_different_order)
     self.assertNotEqual(files.OrderedFiles([]), root_level)
 
-    # Test adding, removing, and updating.
+    # Test updating and removing items.
     new_root_level = files.OrderedFiles([
         '/bar',
         '/baz',
         '/foo',
     ])
-    new_root_level['/qux'] = files.File('/qux')
-    self.assertNotEqual(root_level, new_root_level)
-    del new_root_level['/qux']
-    self.assertEqual(root_level, new_root_level)
-
     new_root_level.update(files.Files(['/qux']))
     self.assertNotEqual(root_level, new_root_level)
     del new_root_level['/qux']
@@ -576,6 +615,10 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertEqual(root_level, files.OrderedFiles.List('/'))
     self.assertNotEqual(root_level_different_order,
                         files.OrderedFiles.List('/'))
+
+    # Error handling.
+    self.assertRaises(
+        AttributeError, new_root_level.__setitem__, '/qux', files.File('/qux'))
 
   def testCopyTo(self):
     # Populate the in-context cache by reading the file before creation.
@@ -668,28 +711,25 @@ class FilesTestCase(testing.BaseTestCase):
     # Verify that the NDB in-context cache was cleared correctly.
     self.assertTrue(files.File('/x/b/foo').exists)
 
-  def testGet(self):
+  def testLoad(self):
     files.File('/foo').Write('')
     files.File('/bar').Write('')
-    titan_files = files.Files.Get(['/foo', '/fake'])
+    titan_files = files.Files(paths=['/foo', '/bar', '/fake'])
+    titan_files.Load()
 
     self.assertIn('/foo', titan_files)
+    self.assertIn('/bar', titan_files)
+    self.assertTrue(titan_files['/foo'].is_loaded)
+    self.assertTrue(titan_files['/bar'].is_loaded)
     self.assertNotIn('/fake', titan_files)
-
-    # Error handling.
-    self.assertRaises(ValueError, files.Files.Get, '/foo')
 
   def testDelete(self):
     files.File('/foo').Write('')
     files.File('/bar').Write('')
     files.File('/qux').Write('')
     files.Files(['/foo', '/bar']).Delete()
-    self.assertEqual(files.Files([]), files.Files.Get(['/foo', '/bar']))
-
-    # Test chaining with Get.
-    files.File('/foo').Write('')
-    files.Files.Get(['/foo']).Delete()
-    self.assertEqual(files.Files([]), files.Files.Get(['/foo']))
+    self.assertEqual(
+        files.Files(['/qux']), files.Files(['/foo', '/bar', '/qux']).Load())
 
     # Error handling.
     self.assertRaises(files.BadFileError, files.Files(['/fake', '/qux']).Delete)

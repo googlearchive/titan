@@ -22,7 +22,7 @@ from titan.common.lib.google.apputils import basetest
 from tests.common import titan_rpc_stub
 from titan.files import files
 from titan.files import handlers
-from titan.files import files_client_test
+from tests.files import files_client_test
 from titan.files.mixins import versions
 from titan.files.mixins import versions_client
 from titan.files.mixins import versions_views

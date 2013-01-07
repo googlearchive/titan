@@ -814,7 +814,7 @@ class TestCase(unittest.TestCase):
     _WalkStructureForProblems(a, b, aname, bname, problems)
 
     # Avoid spamming the user toooo much
-    max_problems_to_show = self.maxDiff / 80
+    max_problems_to_show = self.maxDiff // 80
     if len(problems) > max_problems_to_show:
       problems = problems[0:max_problems_to_show-1] + ['...']
 
@@ -1121,8 +1121,8 @@ class DiffFailureError(Exception):
 def _Diff(lhs, rhs):
   """Given two pathnames, compare two files.  Raise if they differ."""
   try:
-    with open(lhs, 'rb') as lhs_f:
-      with open(rhs, 'rb') as rhs_f:
+    with open(lhs, 'rt') as lhs_f:
+      with open(rhs, 'rt') as rhs_f:
         diff_text = ''.join(
             difflib.unified_diff(lhs_f.readlines(), rhs_f.readlines()))
     if not diff_text:
