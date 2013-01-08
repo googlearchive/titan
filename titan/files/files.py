@@ -141,7 +141,7 @@ class File(object):
     File.ValidatePath(path)
     if _global_file_factory.is_registered and not _from_factory:
       # Get the correct class instance for this path, determined by the factory:
-      file_class = _global_file_factory(path, **kwargs)
+      file_class = _global_file_factory(path=path, **kwargs)
       # Instantiate an object of the class and return it:
       return file_class(
           path=path, _file_ent=_file_ent, _from_factory=True, **kwargs)
@@ -163,6 +163,7 @@ class File(object):
     self._file_ent = _file_ent
     self._meta = None
     self._original_kwargs = kwargs
+    self._original_kwargs['path'] = path
 
   def __nonzero__(self):
     return self.exists
@@ -173,6 +174,18 @@ class File(object):
 
   def __repr__(self):
     return '<%s: %s>' % (self.__class__.__name__, self.real_path)
+
+  def __reduce__(self):
+    # This method allows a File object to be pickled, such as when it is passed
+    # to a deferred task. This works by expecting that if we pass the same
+    # arguments to init a File object at any time, it will go through any
+    # registered factory and be created in the same way. No other state is
+    # maintained, we simply save the original arguments and re-init a files.File
+    # object with the same kwargs when unpickling, instead of
+    # implementing __getstate__ and __setstate__.
+    #
+    # http://docs.python.org/library/pickle.html#object.__reduce__
+    return _UnpickleFile, (self._original_kwargs,), {}
 
   @property
   def _file(self):
@@ -573,6 +586,11 @@ class File(object):
   def ValidatePath(path):
     return utils.ValidateFilePath(path)
 
+# This must be a top-level module function. The File class cannot be used
+# directly in __reduce__ because pickle does not support keyword arguments.
+def _UnpickleFile(kwargs):
+  return File(**kwargs)
+
 class FactoryState(object):
   """A container for factories, to avoid direct use of globals."""
 
@@ -602,6 +620,8 @@ def RegisterFileFactory(file_factory):
   overwritten by registering a factory which returns the correct File subclass
   based on a given path.
 
+  This method will overwrite any previously-registered factory method.
+
   Args:
     file_factory: A callable which returns a File subclass.
   """
@@ -610,6 +630,32 @@ def RegisterFileFactory(file_factory):
 def UnregisterFileFactory():
   """Clear the global file factory."""
   _global_file_factory.Unregister()
+
+def RegisterFileMixins(mixin_classes):
+  """Registers a factory that returns a dynamic subclass of File with mixins.
+
+  This method will overwrite any previously-registered factory method.
+
+  Args:
+    mixin_classes: A list of mixins classes in the order they will be applied.
+  """
+
+  def DynamicFileFactory(**kwargs):
+    """Factory that dynamically creates a File subclass with mixins included."""
+    base_classes = []
+    shared_mixin_state = {}
+    for mixin_cls in mixin_classes:
+      # Mixins are enabled by default. Optionally, they can have a classmethod
+      # named "ShouldApplyMixin" which tells if the mixin should be enabled
+      # based on the given kwargs.
+      should_apply_mixin_fn = getattr(mixin_cls, 'ShouldApplyMixin', None)
+      if (not should_apply_mixin_fn
+          or should_apply_mixin_fn(_mixin_state=shared_mixin_state, **kwargs)):
+        base_classes.append(mixin_cls)
+    # Dynamically create a files.File subclass with all of the given mixins.
+    base_classes.append(File)
+    return type('DynamicFile', tuple(base_classes), {})
+  RegisterFileFactory(DynamicFileFactory)
 
 class Files(collections.Mapping):
   """A mapping of paths to File objects."""

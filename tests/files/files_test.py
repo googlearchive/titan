@@ -18,6 +18,7 @@
 
 from tests.common import testing
 
+import cPickle as pickle
 import copy
 import datetime
 import hashlib
@@ -426,6 +427,31 @@ class FileTestCase(testing.BaseTestCase):
     self.assertTrue(isinstance(foo_file, FooFile))
     self.assertTrue(isinstance(bar_file, BarFile))
     self.assertTrue(isinstance(normal_file, files.File))
+
+  def testRegisterFileMixins(self):
+
+    class FooFileMixin(files.File):
+      pass
+
+    class BarFileMixin(files.File):
+
+      @classmethod
+      def ShouldApplyMixin(cls, **kwargs):
+        if kwargs['path'].startswith('/bar/files/'):
+          return True
+        return False
+
+    files.RegisterFileMixins([FooFileMixin, BarFileMixin])
+
+    # Pickle and unpickle each file to verify __reduce__ behavior.
+    foo_file = pickle.loads(pickle.dumps(files.File('/foo/files/a')))
+    bar_file = pickle.loads(pickle.dumps(files.File('/bar/files/b')))
+
+    self.assertTrue(isinstance(foo_file, FooFileMixin))
+    self.assertFalse(isinstance(foo_file, BarFileMixin))
+
+    self.assertTrue(isinstance(bar_file, BarFileMixin))
+    self.assertTrue(isinstance(bar_file, FooFileMixin))
 
 class FilesTestCase(testing.BaseTestCase):
 

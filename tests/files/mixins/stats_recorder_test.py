@@ -22,13 +22,10 @@ from titan.files import files
 from titan.files.mixins import stats_recorder
 from titan.stats import stats
 
-class StatsFile(stats_recorder.StatsRecorderMixin, files.File):
-  pass
-
 class StatsRecorderTest(testing.BaseTestCase):
 
   def setUp(self):
-    files.RegisterFileFactory(lambda *args, **kwargs: StatsFile)
+    files.RegisterFileMixins([stats_recorder.StatsRecorderMixin])
     super(StatsRecorderTest, self).setUp()
 
   def tearDown(self):

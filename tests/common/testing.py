@@ -79,7 +79,7 @@ class BaseTestCase(MockableTestCase):
     self.testbed.init_logservice_stub()
     self.testbed.init_mail_stub()
     self.testbed.init_memcache_stub()
-    self.testbed.init_taskqueue_stub()
+    # self.testbed.init_taskqueue_stub()  # Done below.
     self.testbed.init_urlfetch_stub()
     self.testbed.init_user_stub()
     self.testbed.init_xmpp_stub()

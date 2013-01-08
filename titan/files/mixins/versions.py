@@ -13,7 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Titan version control system, including atomic commits of groups of files."""
+"""Titan version control system, including atomic commits of groups of files.
+
+http://code.google.com/p/titan-files/wiki/Versions
+"""
 
 import logging
 import re
@@ -62,6 +65,16 @@ class FileVersioningMixin(files.File):
   If created without an associated changeset, this object will dynamically
   determine the real file location from it's latest commited changeset.
   """
+
+  @classmethod
+  def ShouldApplyMixin(cls, **kwargs):
+    # Enable always, unless microversions is enabled.
+    mixin_state = kwargs.get('_mixin_state')
+    if mixin_state and mixin_state.get('is_microversions_enabled'):
+      return False
+    if mixin_state is not None:
+      mixin_state['is_versions_enabled'] = True
+    return True
 
   def __init__(self, path, **kwargs):
     # If given, this File represents the file at the given changeset.
@@ -188,6 +201,7 @@ class FileVersioningMixin(files.File):
       if not self._disable_root_copy:
         copy_kwargs = self._original_kwargs.copy()
         del copy_kwargs['changeset']
+        del copy_kwargs['path']
         _CopyFileFromRoot(self.path, self.changeset, **copy_kwargs)
       kwargs['meta']['status'] = FILE_EDITED
       kwargs['_delete_old_blob'] = False
@@ -779,9 +793,7 @@ def _CopyFileFromRoot(path, changeset, **kwargs):
   Returns:
     The newly created files.File object or None (if the root path didn't exist).
   """
-  kwargs_without_changeset = kwargs.copy()
-  kwargs_without_changeset.pop('changeset', None)
-  root_file = files.File(path, **kwargs_without_changeset)
+  root_file = files.File(path, **kwargs)
   versioned_file = files.File(path, changeset=changeset,
                               _disable_root_copy=True, **kwargs)
   if not root_file.exists:
