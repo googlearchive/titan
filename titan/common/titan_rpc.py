@@ -154,7 +154,6 @@ class TitanClient(appengine_rpc.HttpRpcServer):
 
   def _CreateRequest(self, url, data=None):
     """Overrides the base method to allow different HTTP methods to be used."""
-    # pylint: disable=protected-access
     request = super(TitanClient, self)._CreateRequest(url, data=data)
     method = 'POST' if data else 'GET'
     if self.method:

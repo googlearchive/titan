@@ -28,6 +28,7 @@ class UsersTest(testing.BaseTestCase):
     self.assertEqual('<TitanUser: hello@example.com>', repr(titan_user))
     self.assertEqual('hello@example.com', str(titan_user))
     self.assertEqual('example.com', titan_user.organization)
+    self.assertRaises(ValueError, lambda: titan_user.user_id)
 
   def testGetCurrentUserNotLoggedIn(self):
     self.LogoutUser()
@@ -42,6 +43,7 @@ class UsersTest(testing.BaseTestCase):
     self.assertEqual('<TitanUser: foo@example.com>', repr(titan_user))
     self.assertEqual('foo@example.com', str(titan_user))
     self.assertFalse(titan_user.is_admin)
+    self.assertEqual('1', titan_user.user_id)
 
     # Login as admin.
     self.LoginAdminUser(email='admin@example.com')

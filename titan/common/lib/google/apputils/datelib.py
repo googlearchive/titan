@@ -444,10 +444,14 @@ class Timestamp(BaseTimestamp):
     Args:
       timestring: string with datetime
       tz: optional timezone, if timezone is omitted from timestring.
+
     Returns:
-      New Timestamp.
+      New Timestamp or None if unable to parse the timestring.
     """
-    r = parser.parse(timestring)
+    try:
+      r = parser.parse(timestring)
+    except ValueError:
+      return None
     if not r.tzinfo:
       r = (tz or cls.LocalTimezone).localize(r)
     result = cls(r.year, r.month, r.day, r.hour, r.minute, r.second,
@@ -457,19 +461,40 @@ class Timestamp(BaseTimestamp):
 
   @classmethod
   def _IntStringToInterval(cls, timestring):
-    """Parse interval date specification and create a timedelta object."""
-    return datetime.timedelta(seconds=ConvertIntervalToSeconds(timestring))
+    """Parse interval date specification and create a timedelta object.
+
+    Args:
+      timestring: string interval.
+
+    Returns:
+      A datetime.timedelta representing the specified interval or None if
+      unable to parse the timestring.
+    """
+    seconds = ConvertIntervalToSeconds(timestring)
+    return datetime.timedelta(seconds=seconds) if seconds else None
 
   @classmethod
   def FromString(cls, value, tz=None):
-    """Try to create a Timestamp from a string."""
-    val = cls._StringToTime(value, tz)
-    if val:
-      return val
+    """Create a Timestamp from a string.
 
-    val = cls._IntStringToInterval(value)
-    if val:
-      return cls.utcnow() - val
+    Args:
+      value: String interval or datetime.
+          e.g. "2013-01-05 13:00:00" or "1d"
+      tz: optional timezone, if timezone is omitted from timestring.
+
+    Returns:
+      A new Timestamp.
+
+    Raises:
+      TimeParseError if unable to parse value.
+    """
+    result = cls._StringToTime(value, tz=tz)
+    if result:
+      return result
+
+    result = cls._IntStringToInterval(value)
+    if result:
+      return cls.utcnow() - result
 
     raise TimeParseError(value)
 

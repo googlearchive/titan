@@ -76,6 +76,7 @@ class FileVersioningMixin(files.File):
       mixin_state['is_versions_enabled'] = True
     return True
 
+  @utils.ComposeMethodKwargs
   def __init__(self, path, **kwargs):
     # If given, this File represents the file at the given changeset.
     # If not, this File represents the lastest committed file version,
@@ -108,13 +109,11 @@ class FileVersioningMixin(files.File):
   def _GetCreatedByUser(self):
     if self._created_by_override:
       return self._created_by_override
-    # pylint: disable=protected-access
     return super(FileVersioningMixin, self)._GetCreatedByUser()
 
   def _GetModifiedByUser(self):
     if self._modified_by_override:
       return self._modified_by_override
-    # pylint: disable=protected-access
     return super(FileVersioningMixin, self)._GetModifiedByUser()
 
   @property
@@ -133,7 +132,6 @@ class FileVersioningMixin(files.File):
 
     # A changeset exists, so real_path will resolve correctly. Fall through to
     # finding the file entity normally.
-    # pylint: disable=protected-access
     return super(FileVersioningMixin, self)._file
 
   @property

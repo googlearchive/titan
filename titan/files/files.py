@@ -45,7 +45,12 @@ import hashlib
 import logging
 import os
 
-from concurrent import futures
+try:
+  from concurrent import futures
+except ImportError:
+  # Allow Titan Files to be imported without the futures library present,
+  # since only CopyTo and MoveTo methods require this dependency.
+  futures = None
 from google.appengine.ext import blobstore
 from google.appengine.ext import ndb
 
@@ -782,7 +787,6 @@ class Files(collections.Mapping):
 
   def Load(self):
     """If not loaded, load associated paths and remove non-existing ones."""
-    # pylint: disable=protected-access
     real_path_to_paths = {f.real_path: f.path for f in self.itervalues()}
     file_ents = _GetTitanFileEnts(real_path_to_paths.keys())
     paths_to_clear = []
@@ -822,6 +826,10 @@ class Files(collections.Mapping):
         self.keys(), destination_dir_path=dir_path, strip_prefix=strip_prefix)
 
     future_results = []
+    if not futures:
+      raise ImportError(
+          'Moving or copying files requires the Python futures library: '
+          'http://code.google.com/p/pythonfutures/')
     with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
       for source_path, destination_path in destination_map.iteritems():
         source_file = self[source_path]
@@ -920,7 +928,6 @@ class OrderedFiles(Files):
   def _AddFile(self, titan_file):
     if titan_file.path not in self._titan_files:
       self._ordered_paths.append(titan_file.path)
-    # pylint: disable=protected-access
     super(OrderedFiles, self)._AddFile(titan_file)
 
   def _RemoveFile(self, path):

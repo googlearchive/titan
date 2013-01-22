@@ -33,6 +33,7 @@ Usage:
   users.CreateLogoutUrl(dest_url='/afterlogout')
 """
 
+import logging
 import os
 from google.appengine.api import oauth
 from google.appengine.api import users
@@ -53,11 +54,13 @@ class TitanUser(object):
         only available if instantiated via GetCurrentUser().
   """
 
-  def __init__(self, email, organization=None, _user=None, _is_admin=False):
+  def __init__(self, email, organization=None, _user=None, _is_admin=False,
+               _is_oauth_user=False):
     self._email = email.lower()
+    self._organization = organization
     self._user = _user
     self._is_admin = _is_admin
-    self._organization = organization
+    self._is_oauth_user = _is_oauth_user
 
   def __repr__(self):
     return '<%s: %s>' % (self.__class__.__name__, self.email)
@@ -77,6 +80,13 @@ class TitanUser(object):
   @property
   def email(self):
     return self._email
+
+  @property
+  def user_id(self):
+    if not self._user:
+      raise ValueError('Cannot retrieve user ID for users that aren\'t '
+                       'the current user.')
+    return self._user.user_id()
 
   @property
   def organization(self):
@@ -113,33 +123,32 @@ class TitanUserProperty(ndb.StringProperty):
     self._auto_current_user = auto_current_user
     self._auto_current_user_add = auto_current_user_add
 
-  def _prepare_for_put(self, entity):  # pylint: disable=g-bad-name
+  def _prepare_for_put(self, entity):
     if (self._auto_current_user or
         (self._auto_current_user_add and not self._has_value(entity))):
       value = GetCurrentUser()
       if value is not None:
         self._store_value(entity, value)
 
-  def _db_get_value(self, v, p):  # pylint: disable=g-bad-name
+  def _db_get_value(self, v, p):
     # Backwards compatibility: support old users.User objects by grabbing
     # the email address. This will be overridden on the next put.
     #
     # Due to various environment complexities, this behavior is not unit tested.
     # Be careful when modifying it.
     #
-    # pylint: disable=protected-access
     if v.has_uservalue():
       return model._unpack_user(v).email()
     return super(TitanUserProperty, self)._db_get_value(v, p)
 
-  def _validate(self, user):  # pylint: disable=g-bad-name
+  def _validate(self, user):
     if not isinstance(user, TitanUser):
       raise ValueError('Expected a TitanUser, got %s' % repr(user))
 
-  def _to_base_type(self, user):  # pylint: disable=g-bad-name
+  def _to_base_type(self, user):
     return user.email
 
-  def _from_base_type(self, email):  # pylint: disable=g-bad-name
+  def _from_base_type(self, email):
     return TitanUser(email)
 
 def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
@@ -165,7 +174,7 @@ def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
       is_admin = oauth.is_current_user_admin(oauth_scope)
       organization = os.environ.get('USER_ORGANIZATION')
       return TitanUser(user.email(), organization=organization, _user=user,
-                       _is_admin=is_admin)
+                       _is_admin=is_admin, _is_oauth_user=True)
 
 def CreateLoginUrl(dest_url=None):
   return users.create_login_url(dest_url)
@@ -176,8 +185,11 @@ def CreateLogoutUrl(dest_url):
 def _GetCurrentOAuthUser(scope):
   try:
     user = oauth.get_current_user(scope)
+    return user
+  except oauth.NotAllowedError:
+    # Raised if the requested URL does not permit OAuth authentication.
+    # Avoid logging noise.
+    pass
   except oauth.OAuthRequestError:
     # Raised on any invalid OAuth request.
-    return
-  return user
-
+    logging.exception('Error with OAuth request.')

@@ -119,7 +119,6 @@ def SafeJoin(base, *paths):
     if path.startswith('/'):
       raise ValueError('Intermediate path cannot start with \'/\': %s' % path)
 
-    # pylint: disable-msg=g-explicit-bool-comparison
     if result == '' or result.endswith('/'):
       result += path
     else:

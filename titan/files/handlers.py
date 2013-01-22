@@ -57,8 +57,6 @@ class FileHandler(BaseHandler):
     except ValueError:
       self.error(400)
       return
-    # TODO(user): Remove this when adding _protected flag.
-    file_kwargs.pop('admin_override', None)
 
     try:
       titan_file = files.File(path, **file_kwargs)
@@ -85,8 +83,6 @@ class FileHandler(BaseHandler):
     except ValueError:
       self.error(400)
       return
-    # TODO(user): Remove this when adding _protected flag.
-    file_kwargs.pop('admin_override', None)
 
     if blob is not None:
       # Convert any string keys to BlobKey instances.
@@ -120,8 +116,6 @@ class FileHandler(BaseHandler):
     except ValueError:
       self.error(400)
       return
-    # TODO(user): Remove this when adding _protected flag.
-    file_kwargs.pop('admin_override', None)
     try:
       files.File(path, **file_kwargs).Delete(**method_kwargs)
     except files.BadFileError:
@@ -191,8 +185,6 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     except ValueError:
       self.error(400)
       return
-    # TODO(user): Remove this when adding _protected flag.
-    file_kwargs.pop('admin_override', None)
     try:
       titan_file = files.File(path, **file_kwargs)
     except (TypeError, ValueError):

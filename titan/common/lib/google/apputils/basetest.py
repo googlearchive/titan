@@ -1240,6 +1240,7 @@ def main(*args, **kwargs):
     args: Positional arguments passed through to unittest.TestProgram.__init__.
     kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
   """
+  sys.stderr.write('Running tests with Python %s\n' % sys.version)
   _RunInApp(RunTests, args, kwargs)
 
 
