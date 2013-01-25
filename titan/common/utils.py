@@ -16,6 +16,7 @@
 """Common utility functions."""
 
 import cStringIO
+import datetime
 import errno
 import functools
 import hashlib
@@ -367,3 +368,45 @@ class DictAsObject(object):
 
   def Serialize(self):
     return self._data.copy()
+
+def HumanizeDuration(duration, separator=' '):
+  """Formats a nonnegative number of seconds into a human-readable string.
+
+  Args:
+    duration: A float duration in seconds.
+    separator: A string separator between days, hours, minutes and seconds.
+
+  Returns:
+    Formatted string like '5d 12h 30m 45s'.
+  """
+  try:
+    delta = datetime.timedelta(seconds=duration)
+  except OverflowError:
+    return '>=' + HumanizeTimeDelta(datetime.timedelta.max)
+  return HumanizeTimeDelta(delta, separator=separator)
+
+def HumanizeTimeDelta(delta, separator=' '):
+  """Format a datetime.timedelta into a human-readable string.
+
+  Args:
+    delta: The datetime.timedelta to format.
+    separator: A string separator between days, hours, minutes and seconds.
+
+  Returns:
+    Formatted string like '5d 12h 30m 45s'.
+  """
+  parts = []
+  seconds = delta.seconds
+  if delta.days:
+    parts.append('%dd' % delta.days)
+  if seconds >= 3600:
+    parts.append('%dh' % (seconds // 3600))
+    seconds %= 3600
+  if seconds >= 60:
+    parts.append('%dm' % (seconds // 60))
+    seconds %= 60
+  seconds += delta.microseconds / 1e6
+  if seconds or not parts:
+    parts.append('%gs' % seconds)
+  return separator.join(parts)
+

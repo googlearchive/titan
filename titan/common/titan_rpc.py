@@ -77,12 +77,12 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     obj.orig_headers = self.orig_headers.copy()
     return obj
 
-  def UrlFetch(self, url, method='GET', payload=None, headers=None, **kwargs):
+  def UrlFetch(self, url, method=None, payload=None, headers=None, **kwargs):
     """Fetches a URL path and returns a Response object.
 
     Args:
       url: URL path (along with query params) to request.
-      method: HTTP method.
+      method: Optional HTTP method.
       payload: POST body.
       headers: Dict of headers to send with the request.
     Returns:
@@ -92,8 +92,10 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     # "get_method" method with something other than GET or POST. As a result of
     # this "hack", this class/method isn't thread-safe; avoid using the same
     # instance of this object in threaded situations.
-    self.method = method.upper()
+    self.method = method and method.upper()
     if self.method in ['PATCH', 'POST', 'PUT']:
+      headers = headers or {}
+      headers['X-Http-Method-Override'] = self.method
       payload = payload or ''
     else:
       payload = None
@@ -110,6 +112,10 @@ class TitanClient(appengine_rpc.HttpRpcServer):
           'Content-Type', 'application/x-www-form-urlencoded')
       content = self.Send(url, payload=payload, content_type=content_type,
                           **kwargs)
+      # Unset the self.method so it does not affect the next request.
+      # This is horribly un-threadsafe, but works in practice because requests
+      # are usually all of one method type except for authentication.
+      self.method = None
       # NOTE: The status code might not actually be 200 (any 2xx status code
       # might be returned, but appengine_rpc doesn't exactly provide an
       # easy way to get this information.
@@ -155,10 +161,8 @@ class TitanClient(appengine_rpc.HttpRpcServer):
   def _CreateRequest(self, url, data=None):
     """Overrides the base method to allow different HTTP methods to be used."""
     request = super(TitanClient, self)._CreateRequest(url, data=data)
-    method = 'POST' if data else 'GET'
-    if self.method:
-      method = self.method
-    request.get_method = lambda: method
+    if self.method is not None:
+      request.get_method = lambda: self.method
     return request
 
 class Response(object):

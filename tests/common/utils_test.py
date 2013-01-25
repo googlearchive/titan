@@ -169,6 +169,9 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertEqual(new_blob_key, old_blob_key)
     self.stubs.SmartUnsetAll()
 
+  def testHumanizeDuration(self):
+    self.assertEqual('10s', utils.HumanizeDuration(10))
+
 def main(unused_argv):
   basetest.main()
 

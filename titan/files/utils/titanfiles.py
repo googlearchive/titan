@@ -36,7 +36,7 @@ flags.DEFINE_string(
 
 flags.DEFINE_integer(
     'port', None,
-    'Number of threads to use.')
+    'Port number; only useful for dev_appserver.')
 
 flags.DEFINE_string(
     'api_base_path', files_client.FILE_API_PATH_BASE,

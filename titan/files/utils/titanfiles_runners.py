@@ -24,8 +24,7 @@ import time
 
 from concurrent import futures
 
-from titan.common.lib.google.apputils import humanize
-from titan.common.lib.google.apputils import logging
+import logging
 from titan.common import runners
 from titan.common import utils
 from titan.files import files_client
@@ -105,7 +104,7 @@ class BaseRunnerWithVersions(BaseRunner):
     final_remote_changeset = remote_vcs.Commit(
         staging_changeset, force=force_commit)
     elapsed_time = time.time() - start
-    print 'Finished commit in %s.' % humanize.Duration(elapsed_time)
+    print 'Finished commit in %s.' % utils.HumanizeDuration(elapsed_time)
     return final_remote_changeset
 
 class UploadRunner(BaseRunnerWithVersions):
@@ -204,10 +203,9 @@ class UploadRunner(BaseRunnerWithVersions):
       self._CommitChangesetOrExit(changeset_num, manifest=manifest)
 
     elapsed_time = time.time() - start
-    print 'Uploaded %d files (%s) in %s.' % (
+    print 'Uploaded %d files in %s.' % (
         len(filenames),
-        humanize.BinaryPrefix(total_bytes, 'B'),
-        humanize.Duration(elapsed_time))
+        utils.HumanizeDuration(elapsed_time))
     result = {}
     if changeset_num:
       result['changeset_num'] = changeset_num
