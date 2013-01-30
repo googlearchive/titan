@@ -19,7 +19,7 @@ from tests.common import testing
 
 import datetime
 from titan.common.lib.google.apputils import basetest
-from titan.stats import stats
+from titan import stats
 
 class StatsTestCase(testing.BaseTestCase):
 

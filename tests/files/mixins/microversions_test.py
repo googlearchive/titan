@@ -21,10 +21,10 @@ from google.appengine.api import files as blobstore_files
 from google.appengine.datastore import datastore_stub_util
 
 from titan.common.lib.google.apputils import basetest
-from titan.files import files
+from titan import files
 from titan.files.mixins import microversions
 from titan.files.mixins import versions
-from titan.users import users
+from titan import users
 
 # Content larger than the task invocation RPC size limit.
 LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB

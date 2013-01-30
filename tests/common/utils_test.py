@@ -49,6 +49,7 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertEqual('foo/bar/baz/', utils.SafeJoin('foo', 'bar', 'baz/'))
     self.assertEqual('foo.html', utils.SafeJoin('', 'foo.html'))
     self.assertEqual('/foo/bar', utils.SafeJoin('/foo', 'bar'))
+    self.assertEqual('/foo/bar', utils.SafeJoin('/foo/', 'bar'))
     self.assertEqual('/foo/bar/baz.html',
                      utils.SafeJoin('/foo', 'bar', 'baz.html'))
     self.assertEqual('/foo/bar////baz.html',

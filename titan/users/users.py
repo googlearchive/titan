@@ -41,6 +41,18 @@ from google.appengine.ext import ndb
 from google.appengine.ext.ndb import model
 from google.appengine.ext.ndb import utils as ndb_utils
 
+__all__ = [
+    # Constants.
+    'OAUTH_SCOPE',
+    # Classes.
+    'TitanUser',
+    'TitanUserProperty',
+    # Functions.
+    'GetCurrentUser',
+    'CreateLoginUrl',
+    'CreateLogoutUrl',
+]
+
 OAUTH_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
 
 class TitanUser(object):

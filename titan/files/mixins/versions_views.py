@@ -20,8 +20,8 @@ import logging
 
 import webapp2
 
+from titan import files
 from titan.common import utils
-from titan.files import files
 from titan.files.mixins import versions
 
 class AbstractBaseHandler(webapp2.RequestHandler):

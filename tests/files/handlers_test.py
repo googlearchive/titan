@@ -23,7 +23,7 @@ import time
 import webtest
 from google.appengine.api import blobstore
 from titan.common.lib.google.apputils import basetest
-from titan.files import files
+from titan import files
 from titan.files import handlers
 from titan.common import utils
 

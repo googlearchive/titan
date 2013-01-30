@@ -18,9 +18,9 @@
 from tests.common import testing
 
 from titan.common.lib.google.apputils import basetest
-from titan.files import files
+from titan import files
 from titan.files.mixins import stats_recorder
-from titan.stats import stats
+from titan import stats
 
 class StatsRecorderTest(testing.BaseTestCase):
 

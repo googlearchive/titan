@@ -28,7 +28,7 @@ from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
 from titan.files import files
 from titan.common import utils
-from titan.users import users
+from titan import users
 
 # Content larger than the arbitrary max content size and the 1MB RPC limit.
 LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB.

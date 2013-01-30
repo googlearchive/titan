@@ -29,9 +29,9 @@ import webapp2
 from google.appengine.api import blobstore
 from google.appengine.ext.webapp import blobstore_handlers
 
+from titan import files
 from titan.common import utils
 from titan.files import dirs
-from titan.files import files
 
 _ENABLE_EXCEPTION_LOGGING = True
 

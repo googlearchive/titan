@@ -20,10 +20,10 @@ http://code.google.com/p/titan-files/wiki/Microversions
 
 from google.appengine.ext import deferred
 
+from titan import files
+from titan import users
 from titan.common import utils
-from titan.files import files
 from titan.files.mixins import versions
-from titan.users import users
 
 TASKQUEUE_NAME = 'microversions'
 

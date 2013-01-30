@@ -19,9 +19,9 @@ from tests.common import testing
 
 import datetime
 from titan.common.lib.google.apputils import basetest
-from titan.files import files
+from titan import files
 from titan.files.mixins import versions
-from titan.users import users
+from titan import users
 
 CHANGESET_NEW = versions.CHANGESET_NEW
 CHANGESET_SUBMITTED = versions.CHANGESET_SUBMITTED

@@ -25,7 +25,7 @@ import mox
 import webtest
 
 from titan.common.lib.google.apputils import basetest
-from titan.files import files
+from titan import files
 from titan.files.mixins import versions
 from titan.files.mixins import versions_views
 

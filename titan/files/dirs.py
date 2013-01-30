@@ -26,8 +26,10 @@ from google.appengine.api import taskqueue
 from google.appengine.ext import deferred
 from google.appengine.ext import ndb
 
+from titan import files
 from titan.common import utils
-from titan.files import files
+# Explicitly import this for the one-time high-coupling to a private method.
+from titan.files import files as files_internal
 
 WINDOW_SIZE_SECONDS = 10
 TASKQUEUE_NAME = 'titan-dirs'
@@ -498,7 +500,7 @@ def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
     count = 0
     more = True
     dir_service = DirService()
-    query = files._TitanFile.query()
+    query = files_internal._TitanFile.query()
 
     while more:
       if not cursor:

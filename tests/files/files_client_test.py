@@ -20,7 +20,7 @@ from tests.common import testing
 import os
 from titan.common.lib.google.apputils import basetest
 from tests.common import titan_rpc_stub
-from titan.files import files
+from titan import files
 from titan.files import files_client
 from titan.files import handlers
 

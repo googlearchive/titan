@@ -17,8 +17,8 @@
 
 import random
 
-from titan.files import files
-from titan.stats import stats
+from titan import files
+from titan import stats
 
 class StatsRecorderMixin(files.File):
   """Mixin which uses Titan Stats to record usage and timing stats."""

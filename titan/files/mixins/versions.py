@@ -24,9 +24,9 @@ import re
 from google.appengine.ext import ndb
 
 from titan.common import strong_counters
+from titan import files
+from titan import users
 from titan.common import utils
-from titan.files import files
-from titan.users import users
 
 CHANGESET_NEW = 'new'
 CHANGESET_PRE_SUBMIT = 'pre-submit'

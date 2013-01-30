@@ -33,7 +33,7 @@ if not 'DJANGO_SETTINGS_MODULE' in os.environ:
 from django import template
 
 import webapp2
-from titan.stats import stats
+from titan import stats
 
 TEMPLATES_PATH = os.path.join(os.path.dirname(__file__), 'templates')
 

@@ -32,6 +32,29 @@ Usage:
   files.Files.ValidatePaths(['/some/file', '/other/file'])
 """
 
+__all__ = [
+    # Constants.
+    'MAX_CONTENT_SIZE',
+    'DEFAULT_BATCH_SIZE',
+    'DEFAULT_MAX_WORKERS',
+    # Errors.
+    'Error',
+    'BadFileError',
+    'InvalidMetaError',
+    'CopyFileError',
+    'MoveFileError',
+    'CopyFilesError',
+    # Classes.
+    'File',
+    'Files',
+    'OrderedFiles',
+    'FileProperty',
+    # Functions.
+    'RegisterFileFactory',
+    'UnregisterFileFactory',
+    'RegisterFileMixins',
+]
+
 try:
   # Load appengine_config here to guarantee that custom factories can be
   # registered before any File operation takes place.
@@ -54,9 +77,9 @@ except ImportError:
 from google.appengine.ext import blobstore
 from google.appengine.ext import ndb
 
+from titan import users
 from titan.common import utils
 from titan.files import files_cache
-from titan.users import users
 
 # Arbitrary cutoff for when content will be stored in blobstore.
 # This value should be mirrored by titan_client.DIRECT_TO_BLOBSTORE_SIZE.

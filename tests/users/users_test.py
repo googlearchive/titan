@@ -17,7 +17,7 @@ from tests.common import testing
 
 from google.appengine.ext import ndb
 from titan.common.lib.google.apputils import basetest
-from titan.users import users
+from titan import users
 
 class UsersTest(testing.BaseTestCase):
 

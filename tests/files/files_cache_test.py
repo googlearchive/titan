@@ -21,7 +21,7 @@ from google.appengine.api import memcache
 from titan.common.lib.google.apputils import basetest
 from titan.common import sharded_cache
 from titan.files import files_cache
-from titan.files import files
+from titan import files
 
 class FileCacheTestCase(testing.BaseTestCase):
 

@@ -20,14 +20,11 @@ from tests.common import testing
 import datetime
 import time
 from titan.common.lib.google.apputils import basetest
-from titan.files import files
+from titan import files
 from titan.files import dirs
 
 PATH_WRITE_ACTION = dirs.ModifiedPath.WRITE
 PATH_DELETE_ACTION = dirs.ModifiedPath.DELETE
-
-class DirManagingFile(dirs.DirManagerMixin, files.File):
-  pass
 
 class DirManagerTest(testing.BaseTestCase):
 
@@ -36,7 +33,7 @@ class DirManagerTest(testing.BaseTestCase):
     super(DirManagerTest, self).tearDown()
 
   def testEndToEnd(self):
-    files.RegisterFileFactory(lambda *args, **kwargs: DirManagingFile)
+    files.RegisterFileMixins([dirs.DirManagerMixin])
 
     files.File('/a/b/foo').Write('')
     files.File('/a/b/bar').Write('')
