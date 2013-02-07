@@ -93,8 +93,7 @@ class MicroversioningMixin(files.File):
         _queue=TASKQUEUE_NAME)
     return super(MicroversioningMixin, self).Delete(**kwargs)
 
-def _CommitMicroversion(file_kwargs, method_kwargs, user, action,
-                        created_by=None):
+def _CommitMicroversion(file_kwargs, method_kwargs, user, action):
   """Task to enqueue for microversioning a file action.
 
   Args:
@@ -102,16 +101,9 @@ def _CommitMicroversion(file_kwargs, method_kwargs, user, action,
     method_kwargs: A dictionary (or None) of method keyword args.
     user: A users.TitanUser object.
     action: The action to perform from the _Actions enum.
-    created_by: Legacy arg; see TODO below.
   Returns:
     The final changeset.
   """
-  # TODO(user): This is backwards-compatibility for in-flight tasks after
-  # the user arg change is first deployed. Feel free to remove this and the
-  # created_by arg after old tasks have processed.
-  if created_by:
-    user = created_by
-
   vcs = versions.VersionControlService()
   changeset = vcs.NewStagingChangeset(created_by=user)
 

@@ -188,6 +188,7 @@ class File(object):
     self._path = path
     self._real_path = None
     self._name = os.path.basename(self._path)
+    self._name_clean, self._extension = os.path.splitext(self._name)
     self._file_ent = _file_ent
     self._meta = None
     self._original_kwargs = kwargs
@@ -240,7 +241,18 @@ class File(object):
 
   @property
   def name(self):
+    """Filename without directories."""
     return self._name
+
+  @property
+  def name_clean(self):
+    """Filename without directories or the file extension."""
+    return self._name_clean
+
+  @property
+  def extension(self):
+    """File extension."""
+    return self._extension
 
   @property
   def path(self):

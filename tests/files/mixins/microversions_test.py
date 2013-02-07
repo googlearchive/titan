@@ -84,9 +84,7 @@ class MicroversionsTest(testing.BaseTestCase):
     # have a "blob" argument:
     files.File('/foo').Write(LARGE_FILE_CONTENT)
 
-    self.LoginTaskAdminUser()
-    self._RunDeferredTasks(microversions.TASKQUEUE_NAME)
-    self.LoginNormalUser()
+    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
 
     # After tasks actually run, verify correct content was saved over time
     # to the versioned paths:
@@ -187,17 +185,17 @@ class MicroversionsTest(testing.BaseTestCase):
 
     # Verify that the blob is not deleted when microversioned content resizes.
     files.File('/foo').Write(blob=blob_key)
-    self._RunDeferredTasks(microversions.TASKQUEUE_NAME)
+    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
     titan_file = files.File('/foo')
     self.assertTrue(titan_file.blob)
     self.assertEqual('Blobstore!', titan_file.content)
-    self._RunDeferredTasks(microversions.TASKQUEUE_NAME)
+    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
     # Resize as smaller (shouldn't delete the old blob).
     files.File('/foo').Write('foo')
     files.File('/foo').Write(blob=blob_key)  # Resize back to large size.
     # Delete file (shouldn't delete the old blob).
     files.File('/foo').Delete()
-    self._RunDeferredTasks(microversions.TASKQUEUE_NAME)
+    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
 
     file_versions = self.vcs.GetFileVersions('/foo')
 

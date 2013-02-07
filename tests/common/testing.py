@@ -13,36 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base test case classes for App Engine."""
+"""Base test classes for Titan modules."""
 
-import base64
 import os
-import random
-import string
 import mox
 from mox import stubout
-from google.appengine.api import apiproxy_stub_map
-from google.appengine.datastore import datastore_stub_util
-from google.appengine.ext import deferred
 from google.appengine.ext import testbed
-from titan.common.lib.google.apputils import basetest
-from google.appengine.api.search import simple_search_stub
+from tests.common import basetest as common_basetest
 from titan.files import dirs
-from google.appengine.runtime import request_environment
-from google.appengine.runtime import runtime
 
-# Replace start_new_thread with a version where new threads inherit os.environ
-# from their creator thread.
-runtime.PatchStartNewThread()
-
-class MockableTestCase(basetest.TestCase):
+class MockableTestCase(common_basetest.AppEngineTestCase):
   """Base test case supporting stubs and mox."""
 
   def setUp(self):
+    super(MockableTestCase, self).setUp()
     self.stubs = stubout.StubOutForTesting()
     self.mox = mox.Mox()
 
   def tearDown(self):
+    super(MockableTestCase, self).tearDown()
     self.stubs.SmartUnsetAll()
     self.stubs.UnsetAll()
     self.mox.UnsetStubs()
@@ -51,18 +40,31 @@ class MockableTestCase(basetest.TestCase):
 class BaseTestCase(MockableTestCase):
   """Base test case for tests requiring Datastore, Memcache, or Blobstore."""
 
-  def setUp(self, enable_environ_patch=True):
-    """Initializes the App Engine stubs."""
-    # Evil os-environ patching which mirrors dev_appserver and production.
-    # This patch turns os.environ into a thread-local object, which also happens
-    # to support storing more than just strings. This patch must come first.
-    self.enable_environ_patch = enable_environ_patch
-    if self.enable_environ_patch:
-      self._old_os_environ = os.environ.copy()
-      request_environment.current_request.Clear()
-      request_environment.PatchOsEnviron()
-      os.environ.update(self._old_os_environ)
+  def setUp(self):
+    super(BaseTestCase, self).setUp()
 
+    # For pull queues to work.
+    # All task queues must be specified in common/queue.yaml.
+    self.testbed.init_taskqueue_stub(root_path=os.path.dirname(__file__),
+                                     _all_queues_valid=True)
+    self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
+
+    self.testbed.setup_env(
+        app_id='testbed-test',
+        user_email='titanuser@example.com',
+        user_id='1',
+        user_organization='example.com',
+        user_is_admin='0',
+        http_host='testbed.example.com:80',
+        default_version_hostname='testbed.example.com',
+        server_software='Test/1.0 (testbed)',
+        overwrite=True,
+    )
+
+    # Make this buffer negative so dir tasks are available instantly for lease.
+    self.stubs.SmartSet(dirs, 'TASKQUEUE_LEASE_ETA_BUFFER', -86400)
+
+  def InitTestbed(self):
     # Setup and activate the testbed.
     self.testbed = testbed.Testbed()
     self.testbed.activate()
@@ -73,103 +75,16 @@ class BaseTestCase(MockableTestCase):
     self.testbed.init_blobstore_stub()
     self.testbed.init_capability_stub()
     self.testbed.init_channel_stub()
-    # self.testbed.init_datastore_v3_stub()  # Done below.
+    # self.testbed.init_datastore_v3_stub()  # Done later.
     self.testbed.init_files_stub()
     # self.testbed.init_images_stub()  # Intentionally excluded.
     self.testbed.init_logservice_stub()
     self.testbed.init_mail_stub()
     self.testbed.init_memcache_stub()
-    # self.testbed.init_taskqueue_stub()  # Done below.
+    # self.testbed.init_taskqueue_stub()  # Done later.
     self.testbed.init_urlfetch_stub()
     self.testbed.init_user_stub()
     self.testbed.init_xmpp_stub()
-
-    # Fake an always strongly-consistent HR datastore.
-    policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
-    self.testbed.init_datastore_v3_stub(consistency_policy=policy)
-
-    # All task queues must be specified in common/queue.yaml.
-    self.testbed.init_taskqueue_stub(root_path=os.path.dirname(__file__),
-                                     _all_queues_valid=True)
-
-    # Register the search stub (until included in init_all_stubs).
-    self.search_stub = simple_search_stub.SearchServiceStub()
-    apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
-
-    # Save the taskqueue_stub for use in _RunDeferredTasks.
-    self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
-
-    # Save the users_stub for use in Login/Logout methods.
-    self.users_stub = self.testbed.get_stub(testbed.USER_SERVICE_NAME)
-
-    # Each time setUp is called, treat it like a different request.
-    request_id_hash = ''.join(random.sample(string.letters + string.digits, 26))
-
-    self.testbed.setup_env(
-        app_id='testbed-test',
-        user_email='titanuser@example.com',
-        user_id='1',
-        user_organization='example.com',
-        user_is_admin='0',
-        overwrite=True,
-        http_host='testbed.example.com:80',
-        default_version_hostname='testbed.example.com',
-        request_id_hash=request_id_hash,
-        server_software='Test/1.0 (testbed)',
-    )
-    super(BaseTestCase, self).setUp()
-
-    # Make this buffer negative so dir tasks are available instantly for lease.
-    self.stubs.SmartSet(dirs, 'TASKQUEUE_LEASE_ETA_BUFFER', -86400)
-
-  def tearDown(self):
-    if self.enable_environ_patch:
-      os.environ = self._old_os_environ
-    self.testbed.deactivate()
-    super(BaseTestCase, self).tearDown()
-
-  def LogoutUser(self):
-    self.testbed.setup_env(
-        overwrite=True,
-        user_id='',
-        user_email='',
-    )
-    # Log out the OAuth user.
-    self.users_stub.SetOAuthUser(email=None)
-
-  def LoginNormalUser(self, email='titanuser@example.com',
-                      user_organization='example.com'):
-    self.LogoutUser()
-    self.testbed.setup_env(
-        overwrite=True,
-        user_email=email,
-        user_id='1',
-        user_organization=user_organization,
-    )
-    os.environ['USER_IS_ADMIN'] = '0'
-
-  def LoginAdminUser(self, email='titanadmin@example.com',
-                     user_organization='example.com'):
-    self.LogoutUser()
-    self.LoginNormalUser(email=email, user_organization=user_organization)
-    os.environ['USER_IS_ADMIN'] = '1'
-
-  def LoginNormalOAuthUser(self, email='titanoauthuser@example.com',
-                           user_organization='example.com'):
-    self.LogoutUser()
-    self.users_stub.SetOAuthUser(
-        email=email, domain=user_organization, is_admin=False)
-
-  def LoginAdminOAuthUser(self, email='titanoauthadmin@example.com',
-                          user_organization='example.com'):
-    self.LogoutUser()
-    self.users_stub.SetOAuthUser(
-        email=email, domain=user_organization, is_admin=True)
-
-  def LoginTaskAdminUser(self):
-    # Tasks are run with an anonymous admin user.
-    self.LogoutUser()
-    os.environ['USER_IS_ADMIN'] = '1'
 
   def assertEntityEqual(self, ent, other_ent, ignore=None):
     """Assert equality of properties and dynamic properties of two entities.
@@ -255,10 +170,4 @@ class BaseTestCase(MockableTestCase):
     for key in ent.properties():
       props[key] = ent.__dict__['_' + key]
     return props
-
-  def _RunDeferredTasks(self, queue):
-    tasks = self.taskqueue_stub.GetTasks(queue)
-    for task in tasks:
-      deferred.run(base64.b64decode(task['body']))
-    self.taskqueue_stub.FlushQueue(queue)
 

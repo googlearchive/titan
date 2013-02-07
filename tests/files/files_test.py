@@ -69,6 +69,8 @@ class FileTestCase(testing.BaseTestCase):
     titan_file = files.File('/foo/bar.html', _file_ent=file_ent)
     self.assertEqual('/foo/bar.html', titan_file.path)
     self.assertEqual('bar.html', titan_file.name)
+    self.assertEqual('bar', titan_file.name_clean)
+    self.assertEqual('.html', titan_file.extension)
     self.assertTrue(titan_file.is_loaded)
     self.assertIsNotNone(titan_file._file_ent)
 
@@ -114,32 +116,35 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(expected_data,
                      files.File('/foo/bar/baz').Serialize(full=True))
 
-    # Properties: paths, mime_type, created, modified, blob, created_by,
-    # modified_by, and size.
+    # Properties: name, name_clean, extension, paths, mime_type, created,
+    # modified, blob, created_by, modified_by, and size.
     titan_file = files.File('/foo/bar/baz.html')
+    self.assertEqual('baz.html', titan_file.name)
+    self.assertEqual('baz', titan_file.name_clean)
+    self.assertEqual('.html', titan_file.extension)
     # Check bool handling:
     self.assertFalse(titan_file)
     titan_file.Write('')
     self.assertTrue(titan_file)
-    self.assertEqual(titan_file.paths, ['/', '/foo', '/foo/bar'])
-    self.assertEqual(titan_file.mime_type, 'text/html')
+    self.assertEqual(['/', '/foo', '/foo/bar'], titan_file.paths)
+    self.assertEqual('text/html', titan_file.mime_type)
     self.assertTrue(isinstance(titan_file.created, datetime.datetime))
     self.assertTrue(isinstance(titan_file.modified, datetime.datetime))
     self.assertIsNone(titan_file.blob)
-    self.assertEqual(titan_file.created_by,
-                     users.TitanUser('titanuser@example.com'))
-    self.assertEqual(titan_file.modified_by,
-                     users.TitanUser('titanuser@example.com'))
+    self.assertEqual(users.TitanUser('titanuser@example.com'),
+                     titan_file.created_by)
+    self.assertEqual(users.TitanUser('titanuser@example.com'),
+                     titan_file.modified_by)
     # Size:
     titan_file.Write('foo')
-    self.assertEqual(titan_file.size, 3)
+    self.assertEqual(3, titan_file.size)
     titan_file.Write(u'f♥♥')
     # "size" should represent the number of bytes, not the number of characters.
     # 'f♥♥' == 'f\xe2\x99\xa5\xe2\x99\xa5' == 1 + 3 + 3 == 7
-    self.assertEqual(titan_file.size, 7)
+    self.assertEqual(7, titan_file.size)
     # "size" should use blob size if present:
     titan_file.Write(LARGE_FILE_CONTENT)
-    self.assertEqual(titan_file.size, 1 << 21)
+    self.assertEqual(1 << 21, titan_file.size)
 
     # read() and content property.
     self.assertEqual(titan_file.content, titan_file.read())

@@ -15,6 +15,7 @@
 
 from tests.common import testing
 
+import os
 from google.appengine.ext import ndb
 from titan.common.lib.google.apputils import basetest
 from titan import users
@@ -31,13 +32,13 @@ class UsersTest(testing.BaseTestCase):
     self.assertRaises(ValueError, lambda: titan_user.user_id)
 
   def testGetCurrentUserNotLoggedIn(self):
-    self.LogoutUser()
+    self.Logout()
     titan_user = users.GetCurrentUser()
     self.assertIsNone(titan_user)
 
   def testGetCurrentUser(self):
     # Login as normal user.
-    self.LoginNormalUser(email='foo@example.com')
+    self.Login('foo@example.com')
     titan_user = users.GetCurrentUser()
     self.assertEqual('foo@example.com', titan_user.email)
     self.assertEqual('<TitanUser: foo@example.com>', repr(titan_user))
@@ -46,16 +47,17 @@ class UsersTest(testing.BaseTestCase):
     self.assertEqual('1', titan_user.user_id)
 
     # Login as admin.
-    self.LoginAdminUser(email='admin@example.com')
+    self.Login('admin@example.com', is_admin=True)
     titan_user = users.GetCurrentUser()
     self.assertEqual('admin@example.com', titan_user.email)
     self.assertTrue(titan_user.is_admin)
 
   def testGetCurrentUserOAuth(self):
-    self.LogoutUser()
+    self.Logout()
 
     # Login as normal OAuth user.
-    self.LoginNormalOAuthUser(email='bar@example.com')
+    scopes = [users.OAUTH_SCOPE]
+    self.Login('bar@example.com', is_oauth_user=True, scopes=scopes)
     titan_user = users.GetCurrentUser()
     self.assertEqual('bar@example.com', titan_user.email)
     self.assertFalse(titan_user.is_admin)
@@ -69,10 +71,28 @@ class UsersTest(testing.BaseTestCase):
     # users_stub strangely persists old data even when cleared. Figure that out.
 
     # Login as OAuth admin.
-    self.LoginAdminOAuthUser(email='oauthadmin@example.com')
+    scopes = [users.OAUTH_SCOPE]
+    self.Login('oauthadmin@example.com', is_admin=True, is_oauth_user=True,
+               scopes=scopes)
     titan_user = users.GetCurrentUser()
     self.assertEqual('oauthadmin@example.com', titan_user.email)
     self.assertTrue(titan_user.is_admin)
+
+  def testGetCurrentUserDeferredTask(self):
+    self.Logout()
+    titan_user = users.GetCurrentUser()
+    self.assertIsNone(titan_user)
+
+    # Verify that the X-Titan-User header only works when in a task.
+    os.environ['HTTP_X_TITAN_USER'] = 'imposter@example.com'
+    titan_user = users.GetCurrentUser()
+    self.assertIsNone(titan_user)
+
+    os.environ['HTTP_X_APPENGINE_TASKNAME'] = 'task1'
+    os.environ['HTTP_X_TITAN_USER'] = 'foo@example.com'
+    titan_user = users.GetCurrentUser()
+    self.assertEqual('foo@example.com', titan_user.email)
+    self.assertFalse(titan_user.is_admin)
 
   def testCreateLoginUrl(self):
     login_url = users.CreateLoginUrl()
@@ -96,12 +116,12 @@ class UsersTest(testing.BaseTestCase):
     self.assertEqual(ent.created, users.TitanUser('titanuser@example.com'))
 
     # On second put, user is NOT overriden with titanadmin@example.com.
-    self.LoginAdminUser()
+    self.Login('titanadmin@example.com', is_admin=True)
     ent = TestUserModel.get_by_id('foo')
     ent.put()
     ent = TestUserModel.get_by_id('foo')
     self.assertEqual(ent.created, users.TitanUser('titanuser@example.com'))
-    self.LoginNormalUser()
+    self.Login('titanuser@example.com')
 
     # Verify user arg overrides auto_current_user_add.
     ent = TestUserModel.get_by_id('foo')
@@ -116,12 +136,12 @@ class UsersTest(testing.BaseTestCase):
     ent = TestUserModel.get_by_id('foo')
     self.assertEqual(ent.modified, users.TitanUser('titanuser@example.com'))
     # On second put, user IS overriden with titanadmin@example.com.
-    self.LoginAdminUser()
+    self.Login('titanadmin@example.com', is_admin=True)
     ent = TestUserModel.get_by_id('foo')
     ent.put()
     ent = TestUserModel.get_by_id('foo')
     self.assertEqual(ent.modified, users.TitanUser('titanadmin@example.com'))
-    self.LoginNormalUser()
+    self.Login('titanuser@example.com')
 
     # Error handling.
     self.assertRaises(

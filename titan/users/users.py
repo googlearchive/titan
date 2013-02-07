@@ -188,6 +188,12 @@ def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
       return TitanUser(user.email(), organization=organization, _user=user,
                        _is_admin=is_admin, _is_oauth_user=True)
 
+  # If the request was made in a deferred task, check the X-Titan-User header.
+  if 'HTTP_X_APPENGINE_TASKNAME' in os.environ:
+    email = os.environ.get('HTTP_X_TITAN_USER')
+    if email:
+      return TitanUser(email)
+
 def CreateLoginUrl(dest_url=None):
   return users.create_login_url(dest_url)
 

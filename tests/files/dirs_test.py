@@ -166,7 +166,7 @@ class DirManagerTest(testing.BaseTestCase):
 
     self.assertFalse(dirs.Dir('/a').exists)
     dirs.InitializeDirsFromCurrentState()
-    self._RunDeferredTasks('default')
+    self.RunDeferredTasks('default')
     self.assertTrue(dirs.Dir('/a').exists)
     self.assertTrue(dirs.Dir('/a/b').exists)
     self.assertTrue(dirs.Dir('/a/d').exists)
