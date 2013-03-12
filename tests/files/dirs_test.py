@@ -158,7 +158,7 @@ class DirManagerTest(testing.BaseTestCase):
     # Don't register the factory before doing this (so the dirs aren't created):
     files.File('/a/b/foo').Write('')
     files.File('/a/b/bar').Write('')
-    files.File('/a/d/foo').Write('')
+    files.File('/a/d/foo').Write('').Delete()
 
     # Force the initializer to run twice by making batch size < len(files).
     # This does not test the respawning code path.
@@ -169,7 +169,7 @@ class DirManagerTest(testing.BaseTestCase):
     self.RunDeferredTasks('default')
     self.assertTrue(dirs.Dir('/a').exists)
     self.assertTrue(dirs.Dir('/a/b').exists)
-    self.assertTrue(dirs.Dir('/a/d').exists)
+    self.assertFalse(dirs.Dir('/a/d').exists)
 
 if __name__ == '__main__':
   basetest.main()

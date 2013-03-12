@@ -1,0 +1,16 @@
+handlers:
+
+- url: /_titan/files/browse
+  script: titan.files.browse.handlers.application
+  login: admin
+  secure: always
+
+- url: /_titan/common/js/
+  static_dir: titan/common/js/
+  login: admin
+  secure: always
+
+- url: /_titan/files/js/
+  static_dir: titan/files/js/
+  login: admin
+  secure: always

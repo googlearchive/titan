@@ -11,7 +11,8 @@ handlers:
   login: admin
   secure: always
 
-- url: /_titan/(?:file|files|dir|dirs).*
+- url: /_titan/(?:file|file/read|file/newblob|files|dirs)
   script: titan.files.handlers.application
   login: admin
   secure: always
+

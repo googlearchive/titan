@@ -1,0 +1,6 @@
+handlers:
+
+- url: /_titan/files/microversions/processdata
+  script: titan.files.mixins.microversions_handlers.application
+  login: admin
+  secure: always

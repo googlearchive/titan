@@ -91,14 +91,21 @@ def Set(key, value, time=DEFAULT_EXPIRATION_SECONDS):
     del content_map[key + '0']
 
   # Set the shard map and all content shards.
+  is_successful = True
   failed_keys = memcache.set_multi(content_map, time=time)
   if failed_keys:
-    logging.error('Sharded cache set_multi failed. Keys: %r', failed_keys)
+    is_successful = False
+    logging.error('Sharded cache set_multi failed. '
+                  'Attempting to delete keys...\n %r', failed_keys)
     # Failed. Delete the sharp_map and any keys which succeeded.
-    failed_keys = memcache.delete_multi(content_map.keys())
-    if failed_keys:
-      logging.error('Sharded cache delete_multi failed, Keys: %r', failed_keys)
-  return not bool(failed_keys)
+    delete_result = memcache.delete_multi(content_map.keys())
+    if delete_result:
+      logging.error('Sharded cache delete_multi failed! '
+                    'Some keys may still remain and contaminate the cache.')
+    else:
+      # If the set_mutli failed but was cleaned up correctly, mark successful.
+      is_successful = True
+  return is_successful
 
 def Delete(key, seconds=0):
   """Delete a memcache entry."""

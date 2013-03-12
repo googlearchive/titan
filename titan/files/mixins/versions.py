@@ -179,6 +179,7 @@ class FileVersioningMixin(files.File):
       raise InvalidChangesetError(
           'File modification requires an associated changeset.')
 
+    kwargs.pop('_run_mixins_only', False)
     delete = kwargs.pop('delete', False)
     _VerifyIsNewChangeset(self.changeset)
     self.changeset.AssociateFile(self)
@@ -292,6 +293,10 @@ class Changeset(object):
   @property
   def created_by(self):
     return self.changeset_ent.created_by
+
+  @property
+  def associated_paths(self):
+    return set([f.path for f in self._associated_files])
 
   @property
   def exists(self):
@@ -427,6 +432,9 @@ class FileVersion(object):
     path: The committed file path. Example: /foo.html
     versioned_path: The path of the versioned file. Ex: /_titan/ver/123/foo.html
     changeset: A final Changeset object.
+    changeset_created_by: The TitanUser who created the changeset.
+    created_by: The TitanUser who created the file version. This usually is the
+        same as changeset_created_by.
     created: datetime.datetime object of when the file version was created.
     status: The edit type of the affected file.
   """
@@ -482,6 +490,10 @@ class FileVersion(object):
     return self._file_version.changeset_created_by
 
   @property
+  def created_by(self):
+    return self._file_version.created_by
+
+  @property
   def created(self):
     return self._file_version.created
 
@@ -491,14 +503,15 @@ class FileVersion(object):
 
   def Serialize(self):
     """Serializes a FileVersion into native types."""
-    created_by = self.changeset_created_by
+    cs_created_by = self.changeset_created_by
     result = {
         'path': self.path,
         'versioned_path': self.versioned_path,
         'created': self.created,
         'status': self.status,
         'changeset_num': self._changeset.num,
-        'changeset_created_by': str(created_by) if created_by else None,
+        'changeset_created_by': str(cs_created_by) if cs_created_by else None,
+        'created_by': str(self.created_by) if self.created_by else None,
         'linked_changeset_num': self.changeset.linked_changeset_num,
     }
     return result
@@ -522,6 +535,10 @@ class _FileVersion(ndb.Model):
   path = ndb.StringProperty()
   changeset_num = ndb.IntegerProperty()
   changeset_created_by = users.TitanUserProperty()
+  # In limited cases, the user who created the file version may be different
+  # than the changeset user (such as with microversions, where the changeset
+  # user is None, but each file version has an overwritten real author).
+  created_by = users.TitanUserProperty()
   created = ndb.DateTimeProperty(auto_now_add=True)
   status = ndb.StringProperty(required=True,
                               choices=[FILE_CREATED, FILE_EDITED, FILE_DELETED])
@@ -721,6 +738,9 @@ class VersionControlService(object):
           path=titan_file.path,
           changeset_num=final_changeset.num,
           changeset_created_by=final_changeset.created_by,
+          # This is correctly modified_by, not created_by. We want to store the
+          # user who made this file revision, not the original created_by user.
+          created_by=titan_file.modified_by,
           status=status,
           parent=final_changeset.changeset_ent.key)
       new_file_versions.append(new_file_version)

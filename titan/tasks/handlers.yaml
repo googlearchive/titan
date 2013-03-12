@@ -1,0 +1,7 @@
+handlers:
+- url: /_titan/tasks/taskmanager(/subscribe)?
+  script: titan.tasks.handlers.application
+  # Not "login: admin" because normal users will be common consumers of this
+  # API and the handlers require a hashed task manager key to be useful anyway.
+  login: required
+  secure: always

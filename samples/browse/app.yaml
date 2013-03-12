@@ -1,0 +1,13 @@
+application: s~example
+version: 1
+runtime: python27
+threadsafe: false
+api_version: 1
+
+libraries:
+- name: jinja2
+  version: latest
+
+includes:
+- titan/files/handlers.yaml
+- titan/files/browse/handlers.yaml

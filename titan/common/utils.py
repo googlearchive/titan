@@ -286,7 +286,7 @@ def WriteToBlobstore(content, old_blobinfo=None):
   return blob_key
 
 def RunWithBackoff(func, runtime=60, min_backoff=1, max_backoff=10,
-                   expontential_backoff=True, stop_on_success=False):
+                   expontential_backoff=True, stop_on_success=False, **kwargs):
   """Long-running function to process multiple windows.
 
   Does not catch errors.
@@ -307,7 +307,7 @@ def RunWithBackoff(func, runtime=60, min_backoff=1, max_backoff=10,
   backoff = min_backoff
   end_time = time.time() + runtime
   while True:
-    result = func()
+    result = func(**kwargs)
     results.append(result)
     if result:
       backoff = min_backoff

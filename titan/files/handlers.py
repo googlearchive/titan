@@ -30,21 +30,13 @@ from google.appengine.api import blobstore
 from google.appengine.ext.webapp import blobstore_handlers
 
 from titan import files
+from titan.common import handlers
 from titan.common import utils
 from titan.files import dirs
 
 _ENABLE_EXCEPTION_LOGGING = True
 
-class BaseHandler(webapp2.RequestHandler):
-  """Base handler for Titan API handlers."""
-
-  def WriteJsonResponse(self, data, **kwargs):
-    """Data to serialize. Accepts keyword args to pass to the serializer."""
-    self.response.headers['Content-Type'] = 'application/json'
-    json_data = json.dumps(data, cls=utils.CustomJsonEncoder, **kwargs)
-    self.response.out.write(json_data)
-
-class FileHandler(BaseHandler):
+class FileHandler(handlers.BaseHandler):
   """RESTful file handler."""
 
   def get(self):
@@ -124,7 +116,7 @@ class FileHandler(BaseHandler):
       self.error(400)
       _MaybeLogException('Bad request:')
 
-class FilesHandler(BaseHandler):
+class FilesHandler(handlers.BaseHandler):
   """Handler to return files or a list of files."""
 
   def get(self):
@@ -194,17 +186,19 @@ class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
     if not titan_file.exists:
       self.error(404)
       return
-    self.response.headers['Content-Type'] = str(titan_file.mime_type)
+
+    mime_type = self.request.get('mime_type') or titan_file.mime_type
+    self.response.headers['Content-Type'] = str(mime_type)
     self.response.headers['Content-Disposition'] = (
         'inline; filename=%s' % titan_file.name.encode('ascii', 'replace'))
 
     if titan_file.blob:
       blob_key = titan_file.blob
-      self.send_blob(blob_key, content_type=str(titan_file.mime_type))
+      self.send_blob(blob_key, content_type=str(mime_type))
     else:
       self.response.out.write(titan_file.content)
 
-class FileNewBlobHandler(BaseHandler):
+class FileNewBlobHandler(handlers.BaseHandler):
   """Handler to get a blob upload URL."""
 
   def get(self):
@@ -233,8 +227,19 @@ class FileFinalizeBlobHandler(blobstore_handlers.BlobstoreUploadHandler):
     params = urllib.urlencode({'blob': blob})
     self.redirect('/_titan/file/finalizeblob?%s' % params)
 
-class DirsProcessDataHandler(BaseHandler):
+class DirsHandler(handlers.BaseHandler):
   """Dirs handler."""
+
+  def get(self):
+    """GET handler."""
+    dir_path = self.request.get('dir_path')
+    if not dir_path:
+      self.abort(400)
+    titan_dirs = dirs.Dirs.List(dir_path)
+    self.WriteJsonResponse(titan_dirs)
+
+class DirsProcessDataHandler(handlers.BaseHandler):
+  """Dirs processing handler."""
 
   def get(self):
     """GET handler; must be GET because it is run from a cron job."""
@@ -270,6 +275,7 @@ ROUTES = (
     ('/_titan/file/newblob', FileNewBlobHandler),
     ('/_titan/file/finalizeblob', FileFinalizeBlobHandler),
 
+    ('/_titan/dirs', DirsHandler),
     ('/_titan/dirs/processdata', DirsProcessDataHandler),
 )
 application = webapp2.WSGIApplication(ROUTES, debug=False)

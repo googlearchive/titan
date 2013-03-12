@@ -86,7 +86,8 @@ class DirManagerMixin(files.File):
 
     # Evil, but really really convenient. If in test or dev_appserver, just
     # update the directory entities synchronously with the request.
-    if os.environ.get('SERVER_SOFTWARE', '').startswith(('Dev', 'Test')):
+    server_software = os.environ.get('SERVER_SOFTWARE', '')
+    if server_software.lower().startswith(('dev', 'test')):
       async = False
 
     affected_dirs_kwargs['async'] = async
@@ -114,7 +115,8 @@ class DirManagerMixin(files.File):
 
     # Evil, but really really convenient. If in test or dev_appserver, just
     # update the directory entities synchronously with the request.
-    if os.environ.get('SERVER_SOFTWARE', '').startswith(('Dev', 'Test')):
+    server_software = os.environ.get('SERVER_SOFTWARE', '')
+    if server_software.lower().startswith(('dev', 'test')):
       dir_task_consumer = DirTaskConsumer()
       dir_task_consumer.ProcessNextWindow()
 
@@ -402,6 +404,14 @@ class Dir(object):
       setattr(self._dir, key, value)
     self._dir.put()
 
+  def Serialize(self):
+    data = {
+        'meta': self._meta.Serialize() if self.meta else None,
+        'path': self.path,
+        'name': self.name,
+    }
+    return data
+
 class Dirs(collections.Mapping):
   """A mapping of directory paths to Dir objects."""
 
@@ -478,8 +488,14 @@ class Dirs(collections.Mapping):
     titan_dirs = cls([key.id() for key in dir_keys])
     return titan_dirs
 
+  def Serialize(self):
+    data = {}
+    for titan_dir in self.itervalues():
+      data[titan_dir.name] = titan_dir.Serialize()
+    return data
+
 def InitializeDirsFromCurrentState(taskqueue_name='default'):
-  """Spawns task to create all directories from current file state.
+  """Spawns task to create and cleanup all directories from current file state.
 
   This is potentially expensive because it must touch every Titan File in
   existence.
@@ -488,14 +504,13 @@ def InitializeDirsFromCurrentState(taskqueue_name='default'):
     taskqueue_name: The name of the taskqueue which will be used.
   """
   deferred.defer(_CreateAllDirsWithRespawn, _queue=taskqueue_name)
+  deferred.defer(_CleanDirsWithRespawn, _queue=taskqueue_name)
 
 def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
   """A long-running, dir-creation task which respawns until completion."""
   now = datetime.datetime.now()
-  # Turn off the in-context cache to avoid OOM issues (since query results are
-  # cached by default).
-  ctx = ndb.get_context()
-  ctx.set_cache_policy(False)
+  # Disable the in-context cache to avoid OOM issues from cached query results.
+  ndb.get_context().set_cache_policy(False)
   try:
     count = 0
     more = True
@@ -556,14 +571,51 @@ def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
     except:
       logging.exception('Unable to finish creating directories!')
 
+def _CleanDirsWithRespawn(cursor=None):
+  """A long-running, dir-cleanup task which respawns until completion."""
+  # Disable the in-context cache to avoid OOM issues from cached query results.
+  ndb.get_context().set_cache_policy(False)
+  try:
+    more = True
+    query = _TitanDir.query()
+    while more:
+      if not cursor:
+        # First run.
+        ents, cursor, more = query.fetch_page(INITIALIZER_BATCH_SIZE)
+      else:
+        ents, cursor, more = query.fetch_page(
+            INITIALIZER_BATCH_SIZE, start_cursor=cursor)
+      dir_keys_to_delete = []
+      for ent in ents:
+        # A directory is empty if it doesn't have any files, recursively.
+        titan_files = files.Files.List(ent.path, recursive=True, limit=1,
+                                       _internal=True)
+        if not titan_files:
+          dir_keys_to_delete.append(ent.key)
+
+      # Delete the empty directories.
+      ndb.delete_multi(dir_keys_to_delete)
+
+      # Save the second-to-last cursor, because if we exceed the deadline
+      # we need to restart the last update.
+      penultimate_cursor = cursor
+  except runtime.DeadlineExceededError:
+    try:
+      taskqueue_name = os.environ['HTTP_X_APPENGINE_QUEUENAME']
+      deferred.defer(
+          _CleanDirsWithRespawn,
+          cursor=penultimate_cursor, _queue=taskqueue_name)
+    except:
+      logging.exception('Unable to finish cleaning empty directories!')
+
 class _TitanDir(ndb.Expando):
   """Model for representing a dir; don't use directly outside of this module.
 
   This model is intentionally free of data methods.
 
   Attributes:
-    id: Full directory path. Example: '/path/to/dir'
     name: Final directory name. Example: 'dir'
+    path: Full directory path. Example: '/path/to/dir'
     parent_path: Full path to parent directory.
         Example: '/path/to'
     parent_paths: A list of parent directories.

@@ -13,4 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from titan.tasks.tasks import *
+"""Base handlers."""
+
+import json
+import webapp2
+from titan.common import utils
+
+class BaseHandler(webapp2.RequestHandler):
+  """Base handler."""
+
+  def WriteJsonResponse(self, data, **kwargs):
+    """Data to serialize. Accepts keyword args to pass to the encoder."""
+    self.response.headers['Content-Type'] = 'application/json'
+    json_data = json.dumps(data, cls=utils.CustomJsonEncoder, **kwargs)
+    self.response.out.write(json_data)

@@ -21,19 +21,10 @@ import logging
 import webapp2
 
 from titan import files
-from titan.common import utils
+from titan.common import handlers
 from titan.files.mixins import versions
 
-class AbstractBaseHandler(webapp2.RequestHandler):
-  """Abstract base handler."""
-
-  def WriteJsonResponse(self, data, **kwargs):
-    """Data to serialize. Accepts keyword args to pass to the encoder."""
-    self.response.headers['Content-Type'] = 'application/json'
-    json_data = json.dumps(data, cls=utils.CustomJsonEncoder, **kwargs)
-    self.response.out.write(json_data)
-
-class ChangesetHandler(AbstractBaseHandler):
+class ChangesetHandler(handlers.BaseHandler):
   """RESTful handler for versions.Changeset."""
 
   def post(self):
@@ -47,7 +38,7 @@ class ChangesetHandler(AbstractBaseHandler):
       self.error(400)
       logging.exception('Bad request:')
 
-class ChangesetCommitHandler(AbstractBaseHandler):
+class ChangesetCommitHandler(handlers.BaseHandler):
   """RESTful handler for VersionControlService.Commit."""
 
   def post(self):

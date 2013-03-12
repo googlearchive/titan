@@ -319,8 +319,6 @@ class FileTestCase(testing.BaseTestCase):
     # Recreate object, just in case memoization is hiding an error:
     self.assertFalse(files.File('/foo/bar.html').exists)
 
-    # TODO(user): add checks for blob handling.
-
     # Error handling.
     self.assertRaises(files.BadFileError, files.File('/fake.html').Delete)
 
@@ -557,6 +555,8 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.Files.List, '/..')
     self.assertRaises(ValueError, files.Files.List, '/',
                       recursive=True, depth=0)
+    self.assertRaises(ValueError, files.Files.List, '/',
+                      recursive=False, depth=1)
 
   def testFilesCount(self):
     # Create files for testing.
@@ -756,14 +756,14 @@ class FilesTestCase(testing.BaseTestCase):
 
   def testDelete(self):
     files.File('/foo').Write('')
-    files.File('/bar').Write('')
+    files.File('/bar').Write(LARGE_FILE_CONTENT)
     files.File('/qux').Write('')
+    blob_key = files.File('/bar').blob.key()
     files.Files(['/foo', '/bar']).Delete()
     self.assertEqual(
         files.Files(['/qux']), files.Files(['/foo', '/bar', '/qux']).Load())
-
-    # Error handling.
-    self.assertRaises(files.BadFileError, files.Files(['/fake', '/qux']).Delete)
+    # Verify that the blob is also deleted.
+    self.assertIsNone(blobstore.get(blob_key))
 
   def testSerialize(self):
     # Serialize().

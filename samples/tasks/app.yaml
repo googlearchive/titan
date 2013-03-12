@@ -1,0 +1,27 @@
+application: s~example
+version: 1
+runtime: python27
+threadsafe: false
+api_version: 1
+
+builtins:
+- deferred: on
+
+inbound_services:
+- channel_presence
+
+libraries:
+- name: jinja2
+  version: latest
+
+includes:
+- titan/tasks/handlers.yaml
+
+handlers:
+- url: /static/titan/channel/js/
+  static_dir: titan/channel/js/
+- url: /static/titan/tasks/js/
+  static_dir: titan/tasks/js/
+- url: /.*
+  script: titan.samples.tasks.main.application
+  login: required

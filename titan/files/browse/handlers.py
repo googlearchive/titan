@@ -13,4 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from titan.tasks.tasks import *
+"""App Engine handlers for Titan Files browser."""
+
+import os
+import jinja2
+import webapp2
+
+from titan.common import handlers
+
+jinja_environment = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)))
+
+class FilesBrowseHandler(handlers.BaseHandler):
+  """Handler for file browsing."""
+
+  def get(self):
+    template = jinja_environment.get_template('templates/index.html')
+    self.response.out.write(template.render())
+
+ROUTES = (
+    ('/_titan/files/browse', FilesBrowseHandler),
+)
+application = webapp2.WSGIApplication(ROUTES, debug=False)

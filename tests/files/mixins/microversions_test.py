@@ -24,10 +24,13 @@ from titan.common.lib.google.apputils import basetest
 from titan import files
 from titan.files.mixins import microversions
 from titan.files.mixins import versions
-from titan import users
 
 # Content larger than the task invocation RPC size limit.
-LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB
+LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB.
+
+# Content smaller than files.MAX_CONTENT_SIZE that will explode to a >1 MiB
+# string when pickled (like when pickled for a task).
+EXPLODING_FILE_CONTENT = '\x89' * (1 << 18)  # 256 KiB, explodes to ~1.01 MiB.
 
 # The class used during the initial action at the root path.
 class MicroversioningMixin(microversions.MicroversioningMixin, files.File):
@@ -83,11 +86,8 @@ class MicroversionsTest(testing.BaseTestCase):
     # This will immediately go to blobstore, then the deferred task will
     # have a "blob" argument:
     files.File('/foo').Write(LARGE_FILE_CONTENT)
-
-    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
-
-    # After tasks actually run, verify correct content was saved over time
-    # to the versioned paths:
+    microversions.ProcessData()
+    # After tasks run, verify correct content was saved to the versioned paths:
     file_versions = self.vcs.GetFileVersions('/foo')
 
     # In reverse-chronological order:
@@ -96,7 +96,7 @@ class MicroversionsTest(testing.BaseTestCase):
     self.assertEqual(LARGE_FILE_CONTENT, titan_file.content)
     self.assertEqual('titanuser@example.com', str(titan_file.created_by))
     self.assertEqual('titanuser@example.com', str(titan_file.modified_by))
-    # Blackbox test: created_by and modified_by might be coming from the
+    # Whitebox test: created_by and modified_by might be coming from the
     # backwards-compatibility code in versions. Verify they are actually
     # stored correctly.
     self.assertEqual('titanuser@example.com', str(titan_file._file.created_by))
@@ -114,37 +114,40 @@ class MicroversionsTest(testing.BaseTestCase):
     self.assertEqual(versions.FILE_DELETED, file_versions[1].status)
     self.assertEqual(versions.FILE_CREATED, file_versions[2].status)
 
-  def testCommitMicroversion(self):
-    user = users.TitanUser('test@example.com')
+    # Verify that this doesn't error, the behavior should be the same as above.
+    files.File('/foo').Write(EXPLODING_FILE_CONTENT)
+    microversions.ProcessData()
 
+  def testMicroversions(self):
     # Write.
-    final_changeset = microversions._CommitMicroversion(
-        file_kwargs={'path': '/foo'}, method_kwargs={'content': 'foo'},
-        user=user, action=microversions._Actions.WRITE)
+    files.File('/foo').Write('foo')
+    self.Logout()  # Mimic the cron job.
+    results = microversions.ProcessData()
+    self.Login()
+    final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('foo', titan_file.content)
 
-    # Verify the final changeset's created_by.
-    self.assertEqual('test@example.com', str(final_changeset.created_by))
+    # The final changeset's created_by should be None, because it's created
+    # internally in a cron job and shares multiple user writes.
+    self.assertEqual(None, final_changeset.created_by)
 
     # Write with an existing root file (which should be copied to the version).
     files.File('/foo', _no_mixins=True).Write('new foo')
-    final_changeset = microversions._CommitMicroversion(
-        file_kwargs={'path': '/foo'}, method_kwargs={'meta': {'color': 'blue'}},
-        user=user, action=microversions._Actions.WRITE)
+    files.File('/foo').Write(meta={'color': 'blue'})
+    results = microversions.ProcessData()
+    final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(4, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('new foo', titan_file.content)
     self.assertEqual('blue', titan_file.meta.color)
 
-    # Delete. In the real code path, the delete of the root file will often
-    # complete before the task is started, so we delete /foo to verify that
-    # deletes don't rely on presence of the root file.
-    files.File('/foo', _no_mixins=True).Delete()
-    final_changeset = microversions._CommitMicroversion(
-        file_kwargs={'path': '/foo'}, method_kwargs={},
-        user=user, action=microversions._Actions.DELETE)
+    # Delete. Also, this verifies that delete doesn't rely on the presence
+    # of the root file.
+    files.File('/foo').Delete()
+    results = microversions.ProcessData()
+    final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(6, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('', titan_file.content)
@@ -159,17 +162,17 @@ class MicroversionsTest(testing.BaseTestCase):
     self.assertEqual(versions.FILE_CREATED, file_versions[2].status)
 
   def testStronglyConsistentCommits(self):
-    user = users.TitanUser('test@example.com')
-
     # Microversions uses FinalizeAssociatedPaths so the Commit() path should use
     # the always strongly-consistent GetFiles(), rather than a query. Verify
     # this behavior by simulating a never-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=0)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
 
-    final_changeset = microversions._CommitMicroversion(
-        file_kwargs={'path': '/foo'}, method_kwargs={'content': 'foo'},
-        user=user, action=microversions._Actions.WRITE)
+    files.File('/foo').Write('foo')
+
+    # Also, test ProcessDataWithBackoff while we're here.
+    results = microversions.ProcessDataWithBackoff(timeout_seconds=5)
+    final_changeset = results[0][0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('foo', titan_file.content)
@@ -185,18 +188,17 @@ class MicroversionsTest(testing.BaseTestCase):
 
     # Verify that the blob is not deleted when microversioned content resizes.
     files.File('/foo').Write(blob=blob_key)
-    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
+    microversions.ProcessData()
     titan_file = files.File('/foo')
     self.assertTrue(titan_file.blob)
     self.assertEqual('Blobstore!', titan_file.content)
-    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
+    microversions.ProcessData()
     # Resize as smaller (shouldn't delete the old blob).
     files.File('/foo').Write('foo')
     files.File('/foo').Write(blob=blob_key)  # Resize back to large size.
     # Delete file (shouldn't delete the old blob).
     files.File('/foo').Delete()
-    self.RunDeferredTasks(microversions.TASKQUEUE_NAME)
-
+    microversions.ProcessData()
     file_versions = self.vcs.GetFileVersions('/foo')
 
     # Deleted file (blob should be None).

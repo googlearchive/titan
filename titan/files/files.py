@@ -23,10 +23,12 @@ Usage:
   titan_file.Write(content='hello world')
   titan_file.Delete()
   titan_file.CopyTo(files.File('/destination/file'))
+  titan_file.MoveTo(files.File('/destination/file'))
   files.File.ValidatePath('/some/file')
 
   titan_files = files.Files.List('/some/dir')
   titan_files.CopyTo('/destination/', strip_prefix='/some')
+  titan_files.MoveTo('/destination/', strip_prefix='/some')
   titan_files.Load()
   titan_files.Delete()
   files.Files.ValidatePaths(['/some/file', '/other/file'])
@@ -370,12 +372,14 @@ class File(object):
       content = content.encode(encoding)
     return content, encoding
 
-  def _MaybeWriteToBlobstore(self, content, blob):
+  def _MaybeWriteToBlobstore(self, content, blob, force_blobstore=False):
     if content and blob:
       raise TypeError('Exactly one of "content" or "blob" must be given.')
-    if content and len(content) > MAX_CONTENT_SIZE:
-      logging.debug('Content size %s exceeds %s bytes, uploading to blobstore.',
-                    len(content), MAX_CONTENT_SIZE)
+    if force_blobstore or content and len(content) > MAX_CONTENT_SIZE:
+      if not force_blobstore:
+        logging.debug(
+            'Content size %s exceeds %s bytes, uploading to blobstore.',
+            len(content), MAX_CONTENT_SIZE)
       old_blobinfo = self.blob if self.exists else None
       blob = utils.WriteToBlobstore(content, old_blobinfo=old_blobinfo)
       files_cache.StoreBlob(self.real_path, content)
@@ -494,16 +498,14 @@ class File(object):
         self._file.md5_hash = hashlib.md5(content).hexdigest()
         if self._file.blob and _delete_old_blob:
           # Delete the actual blobstore data.
-          blobstore.delete(self._file.blob)
-          files_cache.ClearBlobsForFiles(self._file)
+          _DeleteBlobsForFiles([self])
         # Clear the current blob association for this file.
         self._file.blob = None
 
       if blob is not None and self._file.blob != blob:
         if self._file.blob and _delete_old_blob:
           # Delete the actual blobstore data.
-          blobstore.delete(self._file.blob)
-          files_cache.ClearBlobsForFiles(self._file)
+          _DeleteBlobsForFiles([self])
         # Associate the new blob to this file.
         self._file.blob = blob
         self._file.md5_hash = None
@@ -520,17 +522,20 @@ class File(object):
       self._file.put()
     return self
 
-  def Delete(self, _delete_old_blob=True):
+  def Delete(self, _delete_old_blob=True, _run_mixins_only=False):
     """Delete file.
 
     Args:
-      _delete_old_blob: defaults to True.
+      _delete_old_blob: Internal-only flag to avoid deleting associated blobs.
+      _run_mixins_only: Internal-only flag. This skips the actual delete RPC,
+          allowing any mixin side-effects to run.
     Returns:
       Self-reference.
     """
+    if _run_mixins_only:
+      return
     if self.blob and _delete_old_blob:
-      blobstore.delete(self._file.blob)
-      files_cache.ClearBlobsForFiles(self._file)
+      _DeleteBlobsForFiles([self])
     self._file.key.delete()
     self._file_ent = None
     self._meta = None
@@ -772,12 +777,25 @@ class Files(collections.Mapping):
     self._titan_files = {}
 
   def Delete(self):
-    """Delete all files in this container."""
-    # TODO(user): implement batch operation. For now, the naive way:
+    """Delete all files in this container.
+
+    This function does not error if the files are already deleted.
+
+    Returns:
+      Self-reference.
+    """
     for titan_file in self.itervalues():
-      titan_file.Delete()
-    # Empty the container:
-    self.clear()
+      # Run all the mixins, but skip the actual delete RPC.
+      # This may break mixins that expect the file to be synchronously deleted.
+      titan_file.Delete(_run_mixins_only=True)
+
+    # Load the files to avoid iterative RPCs in _DeleteBlobsForFiles,
+    # and to prevent errors from when the index hasn't caught up yet.
+    self.Load()
+
+    _DeleteBlobsForFiles([f for f in self.values() if f.blob])
+    ndb.delete_multi([f._file.key for f in self.itervalues()])
+
     return self
 
   def CopyTo(self, dir_path, **kwargs):
@@ -1116,6 +1134,8 @@ def _CreateFilesQuery(dir_path, recursive=False, depth=None, filters=None):
   """Creates a ndb.Query object for listing _TitanFile entities."""
   if depth is not None and depth <= 0:
     raise ValueError('depth argument must be a positive integer.')
+  if depth is not None and not recursive:
+    raise ValueError('depth queries require recursive=True.')
   if filters is not None and not hasattr(filters, '__iter__'):
     raise ValueError('"filters" must be an iterable.')
   utils.ValidateDirPath(dir_path)
@@ -1138,6 +1158,10 @@ def _CreateFilesQuery(dir_path, recursive=False, depth=None, filters=None):
   if filters:
     files_query = files_query.filter(*filters)
   return files_query
+
+def _DeleteBlobsForFiles(file_objs):
+  blobstore.delete([f.blob.key() for f in file_objs])
+  files_cache.ClearBlobsForFiles(file_objs)
 
 def _ReadContentOrBlob(titan_file):
   file_ent = _GetFileEntities(titan_file)

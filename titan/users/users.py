@@ -36,7 +36,7 @@ Usage:
 import logging
 import os
 from google.appengine.api import oauth
-from google.appengine.api import users
+from google.appengine.api import users as users_lib
 from google.appengine.ext import ndb
 from google.appengine.ext.ndb import model
 from google.appengine.ext.ndb import utils as ndb_utils
@@ -172,9 +172,9 @@ def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
   Returns:
     An initialized TitanUser or None if no user is logged in.
   """
-  user = users.get_current_user()
+  user = users_lib.get_current_user()
   if user:
-    is_admin = users.is_current_user_admin()
+    is_admin = users_lib.is_current_user_admin()
     organization = os.environ.get('USER_ORGANIZATION')
     return TitanUser(user.email(), organization=organization, _user=user,
                      _is_admin=is_admin)
@@ -195,10 +195,10 @@ def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
       return TitanUser(email)
 
 def CreateLoginUrl(dest_url=None):
-  return users.create_login_url(dest_url)
+  return users_lib.create_login_url(dest_url)
 
 def CreateLogoutUrl(dest_url):
-  return users.create_logout_url(dest_url)
+  return users_lib.create_logout_url(dest_url)
 
 def _GetCurrentOAuthUser(scope):
   try:
@@ -208,6 +208,8 @@ def _GetCurrentOAuthUser(scope):
     # Raised if the requested URL does not permit OAuth authentication.
     # Avoid logging noise.
     pass
+  except oauth.InvalidOAuthParametersError as e:
+    logging.error(e.__class__.__name__)
   except oauth.OAuthRequestError:
     # Raised on any invalid OAuth request.
     logging.exception('Error with OAuth request.')

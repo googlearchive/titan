@@ -399,7 +399,7 @@ class Aggregator(object):
     window_datetime = datetime.datetime.utcfromtimestamp(window)
     for counter_name, counter_value in aggregate_data['counters'].iteritems():
       path = _MakeLogPath(window_datetime, counter_name)
-      titan_file = files.File(path)
+      titan_file = files.File(path, _internal=True)
       content = []
       if titan_file.exists:
         content = json.loads(titan_file.content)
@@ -468,7 +468,7 @@ class CountersService(object):
           files.FileProperty('stats_date') <= end_date,
       ]
       new_titan_files = files.OrderedFiles.List(BASE_DIR, recursive=True,
-                                                filters=filters)
+                                                filters=filters, _internal=True)
       titan_files.update(new_titan_files)
 
     final_counter_data = {}

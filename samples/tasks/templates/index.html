@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<title>Titan Tasks Demo</title>
+<body>
+  <style>
+    #widget-table td {
+      width: 100px;
+      text-align: center;
+    }
+    .status-queued {
+      background: lightgray;
+      color: darkslategray;
+    }
+    .status-running-legend {
+      background-color: rgba(238,150,40,1);
+    }
+    .status-running {
+      background-color: rgba(238,150,40,1);
+      color: darkslategray;
+      -webkit-animation-name: 'gradient-pulse';
+      -webkit-animation-duration: 1s;
+      -webkit-animation-iteration-count: infinite;
+      -webkit-animation-direction: alternate;
+      -webkit-animation-timing-function: ease-in-out;
+    }
+    .status-successful {
+      background: green;
+      color: lightgreen;
+    }
+    .status-successful .error-message {
+      display: none;
+    }
+    .status-failed {
+      background: red;
+      color: white;
+    }
+
+    @-webkit-keyframes gradient-pulse {
+      0% {
+        background-color:rgba(238,150,40,1);
+      }
+      50% {
+        background-color:rgba(238,150,40,0.5);
+      }
+      100% {
+        background-color:rgba(238,150,40,1);
+      }
+    }
+  </style>
+  <link href="//www.google.com/css/maia.css" rel="stylesheet">
+
+  <table style="float: right">
+    <tr>
+      <td class="status-queued">Task Queued
+      <td class="status-running-legend">Task Running
+      <td class="status-successful">Task Successful
+      <td class="status-failed">Task Failed
+    </tr>
+  </table>
+
+  <p>How many tasks would you like to run?
+  <form method="post" id="create-widgets-form" action="javascript:;">
+    <input id="num-widgets" type="text" value="20">
+    <input type="submit" value="Create" class="maia-button">
+  </form>
+  <hr>
+  <table id="widget-table">
+  </table>
+
+  <!--
+  This is uncompiled, development code using Google Closure.
+  https://developers.google.com/closure/library/docs/gettingstarted
+
+  If you were to do this for real, you'd want to use the ClosureBuilder:
+  https://developers.google.com/closure/library/docs/closurebuilder
+  -->
+  <script src="//closure-library.googlecode.com/git/closure/goog/base.js"></script>
+  <script>
+    goog.require('goog.array');
+    goog.require('goog.dom');
+    goog.require('goog.dom.classes');
+    goog.require('goog.events');
+    goog.require('goog.events.EventTarget');
+    goog.require('goog.net.XhrIo');
+  </script>
+  <script src="/static/titan/channel/js/channel.js"></script>
+  <script src="/static/titan/tasks/js/tasks.js"></script>
+  <!-- For the Channel API -->
+  <script type="text/javascript" src="/_ah/channel/jsapi"></script>
+  <script>
+  (function() {
+    var formEl = goog.dom.getElement('create-widgets-form');
+    goog.events.listen(formEl, goog.events.EventType.SUBMIT, function(e) {
+      e.preventDefault();
+      goog.dom.removeChildren(goog.dom.getElement('widget-table'));
+
+      var listenAndRunTasks = function(taskManager) {
+        var EventType = titan.tasks.TaskManager.EventType;
+        var TaskStatus = titan.tasks.TaskManager.TaskStatus;
+        goog.events.listen(
+            taskManager, EventType.SUBSCRIBED, function(e) {
+              // Run the custom tasks within the task manager.
+              var params = {
+                'key': taskManager.key,
+                'group': taskManager.group,
+                'num_widgets': goog.dom.getElement('num-widgets').value,
+              }
+              params = goog.uri.utils.buildQueryDataFromMap(params);
+              var url = '/api/widgets/tasks/start?' + params;
+              goog.net.XhrIo.send(url, null, 'POST');
+            }, false, this);
+        goog.events.listen(
+            taskManager, EventType.TASK_STATUS, function(e) {
+              if (e.status == TaskStatus.QUEUED) {
+                addWidgetEntry(e.taskKey);
+              } else {
+                updateWidgetStatus(e.taskKey, 'status-' + e.status);
+              }
+            }, false, this);
+        // Connect and subscribe to all events from the task manager.
+        taskManager.connect('{{ token }}', function(e) {
+          taskManager.subscribe('{{ client_id }}');
+        });
+      };
+
+      // First, create a new TaskManager, then call listenAndRunTasks
+      // (taskManager) which attaches all the listeners.
+      titan.tasks.TaskManager.New('/api/widgets/tasks/new', listenAndRunTasks);
+    });
+
+    function addWidgetEntry(widgetId) {
+      var widgetTable = goog.dom.getElement('widget-table');
+      var tr = goog.dom.getLastElementChild(widgetTable);
+      if (!tr || goog.dom.getChildren(tr).length == 10) {
+        tr = goog.dom.createDom('tr');
+        widgetTable.appendChild(tr);
+      }
+      var attrs = {'id': 'status-' + widgetId, 'class': 'status-queued'};
+      tr.appendChild(goog.dom.createDom('td', attrs, widgetId))
+    }
+    function updateWidgetStatus(widgetId, status, error) {
+      var widgetStatusEl = goog.dom.getElement('status-' + widgetId);
+      if (widgetStatusEl) {
+        goog.dom.classes.set(widgetStatusEl, status);
+      }
+      if (error) {
+        var errorEl = goog.dom.createDom('p', 'error-message', error);
+        goog.dom.appendChild(widgetStatusEl, errorEl);
+      }
+    }
+  })();
+  </script>
+</body>
+</html>

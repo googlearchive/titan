@@ -82,7 +82,10 @@ class VersionsTest(testing.BaseTestCase):
 
     # Changset 17:
     changeset = self.vcs.NewStagingChangeset()
-    files.File('/foo', changeset=changeset).Write('foo3')  # re-create
+    created_by_override = users.TitanUser('differentuser@example.com')
+    files.File(
+        '/foo', changeset=changeset,
+        _modified_by_override=created_by_override).Write('foo3')  # re-create
     changeset.FinalizeAssociatedFiles()
     self.vcs.Commit(changeset)
 
@@ -313,6 +316,7 @@ class VersionsTest(testing.BaseTestCase):
         'changeset_num': 17,
         'linked_changeset_num': 16,
         'changeset_created_by': 'titanuser@example.com',
+        'created_by': 'differentuser@example.com',
         'created': file_versions[0].created,
         # Important: this path uses the staging changeset number (not the
         # final changeset number) since the content is not moved on commit.

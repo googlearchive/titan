@@ -131,6 +131,11 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     resp = Response(content=content, status_code=status_code)
     return resp
 
+  def _Authenticate(self):
+    # Skip ClientLogin authentication when an "Authorization" header exists.
+    if 'Authorization' not in self.extra_headers:
+      super(TitanClient, self)._Authenticate()
+
   def ValidateClientAuth(self):
     """Test the stored credentials, may raise AuthenticationError."""
     try:

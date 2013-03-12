@@ -217,6 +217,12 @@ class HandlersTest(testing.BaseTestCase):
     self.assertTrue('X-AppEngine-BlobKey' in response.headers)
     self.assertEqual('', response.body)
 
+    # User-customized MIME type.
+    params = {'path': '/foo/bar', 'mime_type': 'foo/mimetype'}
+    response = self.app.get('/_titan/file/read', params)
+    self.assertEqual(200, response.status_int)
+    self.assertEqual('foo/mimetype', response.headers['Content-Type'])
+
     # Non-existent file.
     response = self.app.get('/_titan/file/read', {'path': '/fake'},
                             expect_errors=True)

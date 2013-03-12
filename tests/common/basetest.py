@@ -60,8 +60,9 @@ class AppEngineTestCase(basetest.TestCase):
     self.testbed.init_taskqueue_stub(_all_queues_valid=True)
     self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
 
-    # Save the users_stub for use in Login/Logout methods.
+    # Save other stubs for use in helper methods and tests.
     self.users_stub = self.testbed.get_stub(testbed.USER_SERVICE_NAME)
+    self.channel_stub = self.testbed.get_stub(testbed.CHANNEL_SERVICE_NAME)
 
     # Each time setUp is called, treat it like a different request to a
     # different app instance.
@@ -97,7 +98,7 @@ class AppEngineTestCase(basetest.TestCase):
     """
     self.Logout()
     if organization is None:
-      organization = email.split('@')[-1]
+      organization = email.split('@')[-1] if email else ''
 
     if is_oauth_user:
       self.users_stub.SetOAuthUser(

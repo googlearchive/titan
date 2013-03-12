@@ -6,9 +6,8 @@ queue:
   rate: 50/s
 
 # For files/mixins/microversions.py.
-- name: microversions
-  rate: 100/s
-  max_concurrent_requests: 2
+- name: titan-microversions
+  mode: pull
 
 # For stats/stats.py.
 - name: titan-stats

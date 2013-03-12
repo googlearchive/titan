@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Titan Files Browser</title>
+  <style>
+    #current-path {
+      background: rgb(245, 250, 252);
+      padding-left: 5px;
+      width: 100%;
+    }
+    #left-nav-container {
+      background: lightblue;
+      bottom: 0;
+      left: 10px;
+      overflow-y: auto;
+      position: fixed;
+      top: 90px;
+      width: 240px;
+    }
+    #left-nav {
+      border: 1px solid lightblue;
+    }
+    #left-nav ul {
+      background: white;
+      list-style: none;
+      margin: 0;
+    }
+    #left-nav li {
+      border-bottom: 1px dotted lightblue;
+    }
+    #left-nav a {
+      display: block;
+      padding: 0px 7px;
+    }
+    #left-nav a:hover {
+      background: rgb(245, 250, 252);
+    }
+    #dir-paths {
+      font-weight: bold;
+    }
+    #main {
+      bottom: 0;
+      left: 250px;
+      position: fixed;
+      right: 10px;
+      top: 90px;
+    }
+    #file-container {
+      border-top: 1px solid lightblue;
+      bottom: 200px;
+      left: 250px;
+      position: fixed;
+      right: 10px;
+      top: 90px;
+    }
+    #file-iframe {
+      width: 100%;
+      height: 100%;
+    }
+    #file-info-container {
+      background: rgb(245, 250, 252);
+      bottom: 0 ;
+      height: 200px;
+      left: 250px;
+      position: fixed;
+      right: 10px;
+    }
+    #file-info {
+      height: 100%;
+      overflow: auto;
+      width: 100%;
+    }
+    #file-info pre {
+      padding-left: 20px;
+    }
+  </style>
+  <link href="http://www.google.com/css/maia.css" rel="stylesheet">
+</head>
+
+<h1>Titan Files Browser</h1>
+
+<div id="current-path">/</div>
+<div id="left-nav-container">
+  <div id="left-nav">
+    <ul id="dir-paths"></ul>
+    <ul id="file-paths"></ul>
+  </div>
+</div>
+<div id="main">
+  <div id="file-container">
+    <iframe id="file-iframe" src=""></iframe>
+  </div>
+  <div id="file-info-container">
+    <div id="file-info">
+    </div>
+  </div>
+</div>
+
+
+<!--
+This is uncompiled, development code using Google Closure.
+https://developers.google.com/closure/library/docs/gettingstarted
+
+If you were to do this for real, you'd want to use the ClosureBuilder:
+https://developers.google.com/closure/library/docs/closurebuilder
+-->
+<script src="//closure-library.googlecode.com/git/closure/goog/base.js"></script>
+<script src="/_titan/common/js/titan.js"></script>
+<script src="/_titan/files/js/files.js"></script>
+<script>
+  goog.require('goog.object');
+  goog.require('goog.dom');
+  goog.require('goog.dom.dataset');
+  goog.require('goog.string');
+  goog.require('titan.files');
+</script>
+<script>
+(function() {
+  function updateFilesList(files) {
+    var filePathsEl = goog.dom.getElement('file-paths');
+    goog.dom.removeChildren(filePathsEl);
+    goog.object.forEach(files, function(file) {
+      var liEl = goog.dom.createDom('li');
+      var linkEl = goog.dom.createDom('a', {
+          'href': 'javascript:;',
+          'data-path': file.path
+      }, file.name);
+      goog.dom.appendChild(liEl, linkEl);
+      goog.dom.appendChild(filePathsEl, liEl);
+    });
+  };
+
+  function updateDirsList(currentDir, dirs) {
+    var dirPathsEl = goog.dom.getElement('dir-paths');
+    var liEl;
+    var linkEl;
+
+    goog.dom.removeChildren(dirPathsEl);
+
+    // Add a '..' link if needed.
+    if (currentDir != '/') {
+      var parentDir = currentDir.split('/')
+      parentDir = parentDir.slice(0, goog.string.countOf(currentDir, '/'))
+      parentDir = parentDir.join('/')
+      liEl = goog.dom.createDom('li');
+      linkEl = goog.dom.createDom('a', {
+          'href': 'javascript:;',
+          'data-path': parentDir
+      }, '..');
+      goog.dom.appendChild(liEl, linkEl);
+      goog.dom.appendChild(dirPathsEl, liEl);
+    }
+
+    // Add all of the dir links.
+    goog.object.forEach(dirs, function(dir) {
+      liEl = goog.dom.createDom('li');
+      linkEl = goog.dom.createDom('a', {
+          'href': 'javascript:;',
+          'data-path': dir.path
+      }, dir.name);
+      goog.dom.appendChild(liEl, linkEl);
+      goog.dom.appendChild(dirPathsEl, liEl);
+    });
+  };
+
+  function switchToDir(dir) {
+    dir = dir || '/';
+    var params = {
+        'dir_path': dir
+    }
+    titan.files.list(params, updateFilesList);
+    titan.dirs.list(params, goog.bind(updateDirsList, null, dir));
+
+    var currentPathEl = goog.dom.getElement('current-path');
+    goog.dom.setTextContent(currentPathEl, dir);
+
+    if (window.location.hash.slice(1) != dir) {
+      ignoreSingleHashUpdate = true;
+      window.location.hash = dir;
+    }
+  }
+
+  function showFile(path) {
+    var fileContainerEl = goog.dom.getElement('file-iframe');
+    var src = '/_titan/file/read?path=' + path;
+    if (goog.string.endsWith(path, '.html')) {
+      // Render HTML files in plaintext to avoid XSS issues and because
+      // relative resources won't work anyway.
+      src = src + '&mime_type=text/plain'
+    }
+    goog.dom.setProperties(fileContainerEl, {'src': src});
+
+    titan.files.getFile({'path': path}, showFileInfo);
+  }
+
+  function showFileInfo(fileInfo) {
+    var fileInfoEl = goog.dom.getElement('file-info');
+    goog.dom.removeChildren(fileInfoEl);
+    // TODO(user): Use SOY template here to make this prettier.
+    var htmlEl = goog.dom.createDom('pre', null,
+        'Blob key:    ' + fileInfo['blob'],
+        '\ncreated:     ' + fileInfo['created'],
+        '\ncreated_by:  ' + fileInfo['created_by'],
+        '\nmd5_hash:    ' + fileInfo['md5_hash'],
+        '\nmime_type:   ' + fileInfo['mime_type'],
+        '\nmodified:    ' + fileInfo['modified'],
+        '\nmodified_by: ' + fileInfo['modified_by'],
+        '\nsize:        ' + fileInfo['size'],
+        '\nreal_path:   ' + fileInfo['real_path']
+        )
+    goog.dom.appendChild(fileInfoEl, htmlEl);
+  }
+
+  function initListeners() {
+    var dirPathsEl = goog.dom.getElement('dir-paths');
+    var filePathsEl = goog.dom.getElement('file-paths');
+
+    goog.events.listen(dirPathsEl, goog.events.EventType.CLICK, function(e){
+      if (e.target.tagName != 'A') {
+        return;
+      }
+      e.preventDefault();
+      var dir = goog.dom.dataset.get(e.target, 'path');
+      switchToDir(dir);
+    });
+    goog.events.listen(filePathsEl, goog.events.EventType.CLICK, function(e){
+      if (e.target.tagName != 'A') {
+        return;
+      }
+      e.preventDefault();
+      var path = goog.dom.dataset.get(e.target, 'path');
+      showFile(path);
+    });
+    goog.events.listen(window, goog.events.EventType.HASHCHANGE, function(e) {
+      if (ignoreSingleHashUpdate) {
+        ignoreSingleHashUpdate = false;
+        return;
+      }
+      switchToDir(window.location.hash.slice(1));
+    });
+  }
+
+  var dir = window.location.hash ? window.location.hash.slice(1) : '/';
+  initListeners();
+  switchToDir(dir);
+})();
+</script>
+</html>

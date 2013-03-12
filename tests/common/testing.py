@@ -49,17 +49,9 @@ class BaseTestCase(MockableTestCase):
                                      _all_queues_valid=True)
     self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
 
-    self.testbed.setup_env(
-        app_id='testbed-test',
-        user_email='titanuser@example.com',
-        user_id='1',
-        user_organization='example.com',
-        user_is_admin='0',
-        http_host='testbed.example.com:80',
-        default_version_hostname='testbed.example.com',
-        server_software='Test/1.0 (testbed)',
-        overwrite=True,
-    )
+    # Login a default, non-admin user and set the hostname.
+    self.Login('titanuser@example.com')
+    self.SetHostname(hostname='testbed.example.com')
 
     # Make this buffer negative so dir tasks are available instantly for lease.
     self.stubs.SmartSet(dirs, 'TASKQUEUE_LEASE_ETA_BUFFER', -86400)
@@ -85,6 +77,14 @@ class BaseTestCase(MockableTestCase):
     self.testbed.init_urlfetch_stub()
     self.testbed.init_user_stub()
     self.testbed.init_xmpp_stub()
+
+  def Login(self, *args, **kwargs):
+    """Override to have a default titan user email."""
+    email = kwargs.pop('email', None)
+    if not email and args:
+      email = args[0]
+    return super(BaseTestCase, self).Login(
+        email or 'titanuser@example.com', *args[1:], **kwargs)
 
   def assertEntityEqual(self, ent, other_ent, ignore=None):
     """Assert equality of properties and dynamic properties of two entities.
