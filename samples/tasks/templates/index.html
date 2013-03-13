@@ -61,7 +61,7 @@
   <p>How many tasks would you like to run?
   <form method="post" id="create-widgets-form" action="javascript:;">
     <input id="num-widgets" type="text" value="20">
-    <input type="submit" value="Create" class="maia-button">
+    <button class="maia-button" id="create-button">Create</button>
   </form>
   <hr>
   <table id="widget-table">
@@ -89,17 +89,20 @@
   <script type="text/javascript" src="/_ah/channel/jsapi"></script>
   <script>
   (function() {
-    var formEl = goog.dom.getElement('create-widgets-form');
-    goog.events.listen(formEl, goog.events.EventType.SUBMIT, function(e) {
+    var createButton = goog.dom.getElement('create-button');
+    goog.events.listen(createButton, goog.events.EventType.CLICK, function(e) {
       e.preventDefault();
-      goog.dom.removeChildren(goog.dom.getElement('widget-table'));
+      goog.dom.setProperties(createButton, {'disabled': true});
+      goog.dom.classes.enable(createButton, 'maia-button-disabled', true);
 
       var listenAndRunTasks = function(taskManager) {
         var EventType = titan.tasks.TaskManager.EventType;
         var TaskStatus = titan.tasks.TaskManager.TaskStatus;
         goog.events.listen(
             taskManager, EventType.SUBSCRIBED, function(e) {
-              // Run the custom tasks within the task manager.
+              goog.dom.setProperties(createButton, {'disabled': false});
+              goog.dom.classes.enable(
+                  createButton, 'maia-button-disabled', false);
               var params = {
                 'key': taskManager.key,
                 'group': taskManager.group,
@@ -107,6 +110,8 @@
               }
               params = goog.uri.utils.buildQueryDataFromMap(params);
               var url = '/api/widgets/tasks/start?' + params;
+              // Run the custom tasks with the task manager.
+              goog.dom.removeChildren(goog.dom.getElement('widget-table'));
               goog.net.XhrIo.send(url, null, 'POST');
             }, false, this);
         goog.events.listen(
@@ -114,7 +119,7 @@
               if (e.status == TaskStatus.QUEUED) {
                 addWidgetEntry(e.taskKey);
               } else {
-                updateWidgetStatus(e.taskKey, 'status-' + e.status);
+                updateWidgetStatus(e.taskKey, 'status-' + e.status, e.error);
               }
             }, false, this);
         // Connect and subscribe to all events from the task manager.
@@ -125,7 +130,8 @@
 
       // First, create a new TaskManager, then call listenAndRunTasks
       // (taskManager) which attaches all the listeners.
-      titan.tasks.TaskManager.New('/api/widgets/tasks/new', listenAndRunTasks);
+      var url = '/api/widgets/tasks/new';
+      titan.tasks.TaskManager.newFromUrl(url, listenAndRunTasks);
     });
 
     function addWidgetEntry(widgetId) {
@@ -142,10 +148,10 @@
       var widgetStatusEl = goog.dom.getElement('status-' + widgetId);
       if (widgetStatusEl) {
         goog.dom.classes.set(widgetStatusEl, status);
-      }
-      if (error) {
-        var errorEl = goog.dom.createDom('p', 'error-message', error);
-        goog.dom.appendChild(widgetStatusEl, errorEl);
+        if (error) {
+          var errorEl = goog.dom.createDom('p', 'error-message', error);
+          goog.dom.appendChild(widgetStatusEl, errorEl);
+        }
       }
     }
   })();

@@ -25,3 +25,4 @@ handlers:
 - url: /.*
   script: titan.samples.tasks.main.application
   login: required
+  secure: always

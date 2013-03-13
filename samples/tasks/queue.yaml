@@ -1,4 +1,7 @@
 queue:
 - name: default
   rate: 50/s
-  bucket_size: 4
+  bucket_size: 20
+- name: deferrer
+  rate: 100/s
+  bucket_size: 50
