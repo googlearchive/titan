@@ -34,6 +34,14 @@ import tempfile
 import types
 import urlparse
 
+try:
+  import faulthandler
+except ImportError:
+  # //testing/pybase:pybase can't have deps on any extension modules as it
+  # is used by code that is executed in such a way it cannot import them. :(
+  # We use faulthandler if it is available (either via a user declared dep
+  # or from the Python 3.3+ standard library).
+  faulthandler = None
 
 # unittest2 is a backport of Python 2.7's unittest for Python 2.6, so
 # we don't need it if we are running 2.7 or newer.
@@ -1034,18 +1042,42 @@ def _DiffTestOutput(stream, golden_filename):
       cap_stream.RestartCapture()
 
 
+# We want to emit exactly one notice to stderr telling the user where to look
+# for their stdout or stderr that may have been consumed to aid debugging.
+_notified_test_output_path = ''
+
+
+def _MaybeNotifyAboutTestOutput(outdir):
+  global _notified_test_output_path
+  if _notified_test_output_path != outdir:
+    _notified_test_output_path = outdir
+    sys.stderr.write('\nNOTE: Some tests capturing output into: %s\n' % outdir)
+
+
+# TODO(user): Make CaptureTest* be usable as context managers to easily stop
+# capturing at the appropriate time to make debugging failures much easier.
+
+
 # Public interface
-def CaptureTestStdout(outfile=None):
+def CaptureTestStdout(outfile=''):
+  """Capture the stdout stream to a file until StopCapturing() is called."""
   if not outfile:
     outfile = os.path.join(FLAGS.test_tmpdir, 'captured.out')
-
+    outdir = FLAGS.test_tmpdir
+  else:
+    outdir = os.path.dirname(outfile)
+  _MaybeNotifyAboutTestOutput(outdir)
   _CaptureTestOutput(sys.stdout, outfile)
 
 
-def CaptureTestStderr(outfile=None):
+def CaptureTestStderr(outfile=''):
+  """Capture the stderr stream to a file until StopCapturing() is called."""
   if not outfile:
     outfile = os.path.join(FLAGS.test_tmpdir, 'captured.err')
-
+    outdir = FLAGS.test_tmpdir
+  else:
+    outdir = os.path.dirname(outfile)
+  _MaybeNotifyAboutTestOutput(outdir)
   _CaptureTestOutput(sys.stderr, outfile)
 
 
@@ -1058,6 +1090,7 @@ def DiffTestStderr(golden):
 
 
 def StopCapturing():
+  """Stop capturing redirected output.  Debugging sucks if you forget!"""
   while _captured_streams:
     _, cap_stream = _captured_streams.popitem()
     cap_stream.StopCapture()
@@ -1118,8 +1151,35 @@ class DiffFailureError(Exception):
   pass
 
 
+def _DiffViaExternalProgram(lhs, rhs, external_diff):
+  """Compare two files using an external program; raise if it reports error."""
+  # The behavior of this function matches the old _Diff() method behavior
+  # when a TEST_DIFF environment variable was set.  A few old things at
+  # Google depended on that functionality.
+  command = [external_diff, lhs, rhs]
+  try:
+    subprocess.check_output(command, close_fds=True, stderr=subprocess.STDOUT)
+    return True  # No diffs.
+  except subprocess.CalledProcessError as error:
+    failure_output = error.output
+    if error.returncode == 1:
+      raise OutputDifferedError('\nRunning %s\n%s\nTest output differed from'
+                                ' golden file\n' % (command, failure_output))
+  except EnvironmentError as error:
+    failure_output = str(error)
+
+  # Running the program failed in some way that wasn't a diff.
+  raise DiffFailureError('\nRunning %s\n%s\nFailure diffing test output'
+                         ' with golden file\n' % (command, failure_output))
+
+
 def _Diff(lhs, rhs):
   """Given two pathnames, compare two files.  Raise if they differ."""
+  # Some people rely on being able to specify TEST_DIFF in the environment to
+  # have tests use their own diff wrapper for use when updating golden data.
+  external_diff = os.environ.get('TEST_DIFF')
+  if external_diff:
+    return _DiffViaExternalProgram(lhs, rhs, external_diff)
   try:
     with open(lhs, 'rt') as lhs_f:
       with open(rhs, 'rt') as rhs_f:
@@ -1240,7 +1300,6 @@ def main(*args, **kwargs):
     args: Positional arguments passed through to unittest.TestProgram.__init__.
     kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
   """
-  sys.stderr.write('Running tests with Python %s\n' % sys.version)
   _RunInApp(RunTests, args, kwargs)
 
 
@@ -1266,6 +1325,8 @@ class SavedFlag(object):
   def RestoreFlag(self):
     self.flag.value = self.value
     self.flag.present = self.present
+
+
 
 
 def _RunInApp(function, args, kwargs):
@@ -1303,11 +1364,16 @@ def _RunInApp(function, args, kwargs):
 
   Args:
     function: basetest.RunTests or a similar function. It will be called as
-      function(argv, args, kwargs) where argv is a list containing the
-      elements of sys.argv without the command-line flags.
+        function(argv, args, kwargs) where argv is a list containing the
+        elements of sys.argv without the command-line flags.
     args: Positional arguments passed through to unittest.TestProgram.__init__.
     kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
   """
+  if faulthandler:
+    try:
+      faulthandler.enable()
+    except Exception as e:
+      sys.stderr.write('faulthandler.enable() failed %r; ignoring.\n' % e)
   if _IsInAppMain():
     # Save command-line flags so the side effects of FLAGS(sys.argv) can be
     # undone.

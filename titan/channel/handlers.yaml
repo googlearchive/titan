@@ -1,0 +1,3 @@
+handlers:
+- url: /_titan/channel/js/
+  static_dir: titan/channel/js/

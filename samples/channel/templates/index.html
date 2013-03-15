@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<title>Titan Channel Demo</title>
+<link href="//www.google.com/css/maia.css" rel="stylesheet">
+<style>
+  #messages {
+    border: 1px solid lightgray;
+    height: 300px;
+    margin-bottom: 10px;
+    width: 380px;
+    overflow: auto;
+  }
+  #messages p {
+    margin: 0;
+    padding-left: 5px;
+  }
+  #messages p:nth-child(even) {
+    background-color: #eee;
+  }
+</style>
+<body>
+  <h1>Titan Channel API demo</h1>
+  <p>
+    <a href="https://code.google.com/p/titan-files/wiki/Channel">Documentation</a>
+    | <a href="https://code.google.com/p/titan-files/source/browse/#git%2Fsamples%2Fchannel">Source</a>
+  <p>Try opening this app in multiple tabs to see the channel messages being broadcast. This chat room is just for you and is not shared with others.</p>
+  <button id="join-button" class="maia-button" style="display: none">Join Chat Room</button>
+  </p>
+  <div id="main" style="display: none">
+    <div id="messages"></div>
+    <form id="main-form">
+      <input type="text" name="message" id="message">
+      <input type="submit" id="send-message" class="maia-button" value="Send">
+    </form>
+  </div>
+  <!--
+  This is uncompiled, development code using Google Closure.
+  https://developers.google.com/closure/library/docs/gettingstarted
+
+  If you were to do this for real, you'd want to use the ClosureBuilder:
+  https://developers.google.com/closure/library/docs/closurebuilder
+  -->
+  <script src="//closure-library.googlecode.com/git/closure/goog/base.js"></script>
+  <script>
+    goog.require('goog.dom');
+    goog.require('goog.dom.forms');
+    goog.require('goog.events');
+    goog.require('goog.events.EventTarget');
+    goog.require('goog.net.XhrIo');
+    goog.require('goog.style');
+  </script>
+  <script src="/_titan/channel/js/channel.js"></script>
+  <script type="text/javascript" src="/_ah/channel/jsapi"></script>
+  <script>
+  (function() {
+    var joinButtonEl = goog.dom.getElement('join-button');
+    var broadcastChannel = new titan.channel.BroadcastChannel(
+        '{{ broadcast_channel_key }}');
+
+    var joinRoom = function() {
+      var EventType = titan.channel.BroadcastChannel.EventType;
+
+      // Listen for the channel connection event.
+      goog.events.listen(
+          broadcastChannel, EventType.CONNECTED, function(e) {
+            // Subscribe to receive messages, now that the channel is connected.
+            broadcastChannel.subscribe();
+
+            // Join the chat room.
+            goog.net.XhrIo.send(
+                '/join', null, 'POST', 'client_id={{ client_id }}');
+
+            // Remove the join button, display the chatbox, and listen messages.
+            var sendMessageEl = goog.dom.getElement('send-message');
+            var mainEl = goog.dom.getElement('main');
+            goog.dom.removeNode(joinButtonEl);
+            goog.style.setStyle(mainEl, 'display', 'block');
+            goog.events.listen(
+                sendMessageEl, goog.events.EventType.CLICK, function(e) {
+                  e.preventDefault();
+                  var mainFormEl = goog.dom.getElement('main-form');
+                  var messageEl = goog.dom.getElement('message');
+                  var params = goog.dom.forms.getFormDataString(mainFormEl);
+                  goog.net.XhrIo.send('/sendmessage', null, 'POST', params);
+                  goog.dom.forms.setValue(messageEl, '');
+                });
+          });
+      goog.events.listen(
+          broadcastChannel, EventType.MESSAGE, function(e) {
+            var messagesEl = goog.dom.getElement('messages');
+            var messageEl = goog.dom.createDom('p', null, e.message);
+            goog.dom.appendChild(messagesEl, messageEl);
+          });
+      // Open a Channel API socket connection.
+      broadcastChannel.connect('{{ token }}');
+    };
+    goog.events.listen(joinButtonEl, goog.events.EventType.CLICK, function(e) {
+      e.preventDefault();
+      joinRoom();
+    });
+    goog.style.setStyle(joinButtonEl, 'display', 'inline-block');
+  })();
+  </script>
+</html>

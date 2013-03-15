@@ -32,7 +32,9 @@ for commands that derive from class Cmd and the AddCmdFunc() is used
 to wrap simple functions.
 
 This module itself registers the command 'help' that allows users
-to retrieve help for all or specific commands.
+to retrieve help for all or specific commands.  'help' is the default
+command executed if no command is expressed, unless a different default
+command is set with SetDefaultCommand.
 
 Example:
 
@@ -137,6 +139,7 @@ class AppCommandsError(Exception):
 _cmd_argv = None        # remaining arguments with index 0 = sys.argv[0]
 _cmd_list = {}          # list of commands index by name (_Cmd instances)
 _cmd_alias_list = {}    # list of command_names index by command_alias
+_cmd_default = 'help'   # command to execute if none explicitly given
 
 
 def GetAppBasename():
@@ -735,13 +738,26 @@ def GetCommand(command_required):
   return command
 
 
+def SetDefaultCommand(default_command):
+  """Change the default command to execute if none is explicitly given.
+
+  Args:
+    default_command: str, the name of the command to execute by default.
+  """
+  # pylint: disable-msg=W0603,C6409
+  global _cmd_default
+  _cmd_default = default_command
+
+
 def _CommandsStart(unused_argv):
   """Main initialization.
 
   Calls __main__.main(), and then the command indicated by the first
-  non-flag argument, or 'help' if no argument was given. Only non-flag
-  arguments are passed to main(). If main does not call sys.exit, the
-  return value of the command is used as the exit status.
+  non-flag argument, or 'help' if no argument was given.  (The command
+  to execute if no flag is given can be changed via SetDefaultCommand).
+
+  Only non-flag arguments are passed to main(). If main does not call
+  sys.exit, the return value of the command is used as the exit status.
   """
   # The following is supposed to return after registering additional commands
   try:
@@ -756,7 +772,7 @@ def _CommandsStart(unused_argv):
   if len(GetCommandArgv()) > 1:
     command = GetCommand(command_required=True)
   else:
-    command = GetCommandByName('help')
+    command = GetCommandByName(_cmd_default)
   sys.exit(command.CommandRun(GetCommandArgv()))
 
 

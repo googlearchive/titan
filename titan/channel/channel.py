@@ -83,7 +83,8 @@ class BroadcastChannel(object):
     """
     if not self._file.exists:
       logging.warning(
-          'Skipping message to channel "%s" since no clients have been added.')
+          'Skipping message to channel "%s" since no clients have been added.'
+          % self.key)
       return
     if not isinstance(message, basestring):
       raise ValueError('"message" arg must be a string.')

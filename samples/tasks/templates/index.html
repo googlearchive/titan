@@ -1,54 +1,57 @@
 <!DOCTYPE html>
 <html>
 <title>Titan Tasks Demo</title>
+<link href="//www.google.com/css/maia.css" rel="stylesheet">
+<style>
+  #widget-table td {
+    width: 100px;
+    text-align: center;
+  }
+  .status-queued {
+    background: lightgray;
+    color: darkslategray;
+  }
+  .status-running-legend {
+    background-color: rgba(238,150,40,1);
+  }
+  .status-running {
+    background-color: rgba(238,150,40,1);
+    color: darkslategray;
+    -webkit-animation-name: 'gradient-pulse';
+    -webkit-animation-duration: 1s;
+    -webkit-animation-iteration-count: infinite;
+    -webkit-animation-direction: alternate;
+    -webkit-animation-timing-function: ease-in-out;
+  }
+  .status-successful {
+    background: green;
+    color: lightgreen;
+  }
+  .status-successful .error-message {
+    display: none;
+  }
+  .status-failed {
+    background: red;
+    color: white;
+  }
+
+  @-webkit-keyframes gradient-pulse {
+    0% {
+      background-color:rgba(238,150,40,1);
+    }
+    50% {
+      background-color:rgba(238,150,40,0.5);
+    }
+    100% {
+      background-color:rgba(238,150,40,1);
+    }
+  }
+</style>
 <body>
-  <style>
-    #widget-table td {
-      width: 100px;
-      text-align: center;
-    }
-    .status-queued {
-      background: lightgray;
-      color: darkslategray;
-    }
-    .status-running-legend {
-      background-color: rgba(238,150,40,1);
-    }
-    .status-running {
-      background-color: rgba(238,150,40,1);
-      color: darkslategray;
-      -webkit-animation-name: 'gradient-pulse';
-      -webkit-animation-duration: 1s;
-      -webkit-animation-iteration-count: infinite;
-      -webkit-animation-direction: alternate;
-      -webkit-animation-timing-function: ease-in-out;
-    }
-    .status-successful {
-      background: green;
-      color: lightgreen;
-    }
-    .status-successful .error-message {
-      display: none;
-    }
-    .status-failed {
-      background: red;
-      color: white;
-    }
-
-    @-webkit-keyframes gradient-pulse {
-      0% {
-        background-color:rgba(238,150,40,1);
-      }
-      50% {
-        background-color:rgba(238,150,40,0.5);
-      }
-      100% {
-        background-color:rgba(238,150,40,1);
-      }
-    }
-  </style>
-  <link href="//www.google.com/css/maia.css" rel="stylesheet">
-
+  <h1>Titan Tasks demo</h1>
+  <p>
+    <a href="https://code.google.com/p/titan-files/wiki/Tasks">Documentation</a>
+    | <a href="https://code.google.com/p/titan-files/source/browse/#git%2Fsamples%2Ftasks">Source</a>
   <table style="float: right">
     <tr>
       <td class="status-queued">Task Queued
@@ -83,8 +86,8 @@
     goog.require('goog.events.EventTarget');
     goog.require('goog.net.XhrIo');
   </script>
-  <script src="/static/titan/channel/js/channel.js"></script>
-  <script src="/static/titan/tasks/js/tasks.js"></script>
+  <script src="/_titan/channel/js/channel.js"></script>
+  <script src="/_titan/tasks/js/tasks.js"></script>
   <!-- For the Channel API -->
   <script type="text/javascript" src="/_ah/channel/jsapi"></script>
   <script>

@@ -143,8 +143,7 @@ titan.channel.BroadcastChannel.prototype.subscribe = function() {
         // an event so that custom messages can be handled elsewhere.
         this.dispatch_(EventType.UNKNOWN_MESSAGE, message);
       } else if (data['broadcast_channel_key'] == this.key_) {
-        var message = goog.json.parse(data['message']);
-        this.dispatch_(EventType.MESSAGE, message);
+        this.dispatch_(EventType.MESSAGE, data['message']);
       }
   }, this);
 };

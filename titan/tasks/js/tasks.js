@@ -6,11 +6,11 @@ goog.provide('titan.tasks.TaskManager');
 
 goog.require('goog.events.Event');
 goog.require('goog.events.EventTarget');
+goog.require('goog.json');
 goog.require('goog.net.EventType');
 goog.require('goog.net.XhrIo');
 goog.require('goog.uri.utils');
 goog.require('titan.channel.BroadcastChannel');
-
 
 
 /**
@@ -154,9 +154,10 @@ titan.tasks.TaskManager.prototype.initListeners_ = function() {
     goog.events.listen(
         this.broadcastChannel,
         titan.channel.BroadcastChannel.EventType.MESSAGE, function(e) {
-      var status = e.message['status'];
-      var taskKey = e.message['task_key'];
-      var error = e.message['error'];
+      var message = goog.json.parse(e.message);
+      var status = message['status'];
+      var taskKey = message['task_key'];
+      var error = message['error'];
       this.dispatch_(EventType.TASK_STATUS, taskKey, status, error);
     }, false, this);
   }

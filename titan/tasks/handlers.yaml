@@ -1,4 +1,6 @@
 handlers:
+- url: /_titan/tasks/js/
+  static_dir: titan/tasks/js/
 - url: /_titan/tasks/taskmanager(/subscribe)?
   script: titan.tasks.handlers.application
   # Not "login: admin" because normal users will be common consumers of this

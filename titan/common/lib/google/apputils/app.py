@@ -246,7 +246,8 @@ def _actual_start():
     return
   # just in case there's non-trivial stuff happening in __main__
   del tb
-  sys.exc_clear()
+  if hasattr(sys, 'exc_clear'):
+    sys.exc_clear()  # This functionality is gone in Python 3.
 
   try:
     really_start()
