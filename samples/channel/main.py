@@ -17,8 +17,9 @@
 
 import cgi
 import hashlib
-import jinja2
 import os
+
+import jinja2
 import webapp2
 
 from titan import channel
