@@ -447,7 +447,7 @@ class TaskManager(object):
     # Make a ~unique key for the task manager instance by using the
     # current app server instance ID, request ID hash, and time.
     key = hashlib.md5()
-    key.update(os.environ['INSTANCE_ID'])
+    key.update(os.environ.get('INSTANCE_ID', ''))  # Not on dev_appserver. :(
     key.update(os.environ['REQUEST_ID_HASH'])
     key.update(str(time.time()))
     key = key.hexdigest()
