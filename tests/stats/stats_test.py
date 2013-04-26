@@ -18,60 +18,57 @@
 from tests.common import testing
 
 import datetime
+import mock
 from titan.common.lib.google.apputils import basetest
-from titan import stats
+from titan.stats import stats
 
 class StatsTestCase(testing.BaseTestCase):
 
-  def setUp(self):
-    super(StatsTestCase, self).setUp()
-    self.stubs.SmartSet(stats, 'TASKQUEUE_LEASE_BUFFER_SECONDS', 0)
-
-  def testCounterBuffer(self):
+  @mock.patch('titan.stats.stats._GetWindow')
+  def testCounterBuffer(self, internal_window):
+    internal_window.return_value = 0
     page_counter = stats.Counter('page/view')
     widget_counter = stats.Counter('widget/render')
     page_counter.Increment()
     page_counter.Increment()
 
     # Buffered until save.
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
-    self.assertEqual({}, aggregator.ProcessNextWindow())
+    def counters_func():
+      return [stats.Counter('page/view'), stats.Counter('widget/render')]
 
     # Push local stats to a task.
-    stats.SaveCounters([page_counter], timestamp=0)
+    processors = self._log_counters([page_counter], counters_func)
+    processor = self._get_processor_from_processors(processors)
     expected = {
-        'counters': {
-            'page/view': 2,
-        },
-        'window': 0,
+        0: {
+            'counters': {
+                'page/view': 2,
+            },
+            'window': 0,
+        }
     }
-    self.assertEqual(expected, aggregator.ProcessNextWindow())
+    self.assertEqual(expected, processor.serialize())
+
     widget_counter.Offset(15)
     widget_counter.Offset(-5)
-    stats.SaveCounters([page_counter, widget_counter], timestamp=0)
+    self._log_counters([page_counter, widget_counter], counters_func,
+                       processors=processors)
     expected = {
-        'counters': {
-            'page/view': 4,  # Increased since it is saved twice.
-            'widget/render': 10,
-        },
-        'window': 0,
+        0: {
+            'counters': {
+                'page/view': 4,  # Increased since it is saved twice.
+                'widget/render': 10,
+            },
+            'window': 0,
+        }
     }
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
+    self.assertEqual(expected, processor.serialize())
 
     # Finalize() should be idempotent.
     self.assertEqual(10, widget_counter.Finalize())
     self.assertEqual(10, widget_counter.Finalize())
 
-    # Save aggregate information to Titan Files.
-    aggregator.ProcessNextWindow()
-
-    # The next window should not contain any data.
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
-    self.assertEqual({}, aggregator.ProcessNextWindow())
-
+  def testErrors(self):
     # Error handling:
     self.assertRaises(ValueError, stats.Counter, 'test:with:colons')
     self.assertRaises(ValueError, stats.Counter, '/test/left/slash')
@@ -89,7 +86,7 @@ class StatsTestCase(testing.BaseTestCase):
     counter.Offset(111)
     self.assertEqual((102.75, 4), counter.Finalize())
 
-    # Aggregation between requests (from the cron job).
+    # Aggregation between requests.
     counter = stats.AverageCounter('widget/render/latency')
     counter.Aggregate((100.0, 3))
     self.assertEqual((100.0, 3), counter.Finalize())
@@ -101,6 +98,11 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertAlmostEqual(144.4285714, value)
     self.assertEqual(7, weight)
 
+    # Aggregation between requests (with empty counter values).
+    counter = stats.AverageCounter('widget/render/latency')
+    counter.Aggregate((0, 0))
+    self.assertEqual((0, 0), counter.Finalize())
+
   def testAverageTimingCounter(self):
     counter = stats.AverageTimingCounter('widget/render/latency')
     counter.Start()
@@ -109,63 +111,65 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertTrue(isinstance(value, int))
     self.assertEqual(1, weight)
 
-  def testAggregatorAndCountersService(self):
+  @mock.patch('titan.stats.stats._GetWindow')
+  def testAggregatorAndCountersService(self, internal_window):
     # Setup some data.
+    def counters_func():
+      return [stats.Counter('page/view'), stats.Counter('widget/render')]
     page_counter = stats.Counter('page/view')
     widget_counter = stats.Counter('widget/render')
+    internal_window.return_value = 0
+
+    # Log an initial set into the 3600 window.
     page_counter.Offset(10)
     widget_counter.Offset(20)
-    stats.SaveCounters([page_counter, widget_counter], timestamp=3600)
+    processors = self._log_counters([page_counter, widget_counter],
+                                    counters_func, timestamp=3600)
+    processor = self._get_processor_from_processors(processors)
     # Save another set of data, an hour later:
     page_counter.Increment()
     widget_counter.Increment()
-    stats.SaveCounters([page_counter, widget_counter], timestamp=7200)
+    self._log_counters([page_counter, widget_counter], counters_func,
+                       processors=processors, timestamp=7200)
     # Save another set of data, a day later:
     page_counter.Increment()
     widget_counter.Increment()
-    stats.SaveCounters([page_counter, widget_counter], timestamp=93600)
-
+    self._log_counters([page_counter, widget_counter], counters_func,
+                       processors=processors, timestamp=93600)
     expected = {
-        'window': 3600,
-        'counters': {
-            'page/view': 10,
-            'widget/render': 20,
+        3600: {
+            'window': 3600,
+            'counters': {
+                'page/view': 10,
+                'widget/render': 20,
+            }
+        },
+        7200: {
+            'window': 7200,
+            'counters': {
+                'page/view': 11,
+                'widget/render': 21,
+            }
+        },
+        93600: {
+            'window': 93600,
+            'counters': {
+                'page/view': 12,
+                'widget/render': 22,
+            }
         }
     }
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
-    aggregate_data = aggregator.ProcessNextWindow()
-    self.assertEqual(expected, aggregate_data)
-
-    expected = {
-        'window': 7200,
-        'counters': {
-            'page/view': 11,
-            'widget/render': 21,
-        }
-    }
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
-    aggregate_data = aggregator.ProcessNextWindow()
-    self.assertEqual(expected, aggregate_data)
-
-    expected = {
-        'window': 93600,
-        'counters': {
-            'page/view': 12,
-            'widget/render': 22,
-        }
-    }
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
-    aggregate_data = aggregator.ProcessNextWindow()
-    self.assertEqual(expected, aggregate_data)
+    self.assertEqual(expected, processor.serialize())
 
     # Save again, to make sure that duplicate data is collapsed when saved.
-    stats.SaveCounters([page_counter, widget_counter], timestamp=93600)
-    all_counters = [stats.Counter('page/view'), stats.Counter('widget/render')]
-    aggregator = stats.Aggregator(all_counters)
-    aggregate_data = aggregator.ProcessNextWindow()
+    self._log_counters([page_counter, widget_counter], counters_func,
+                       processors=processors, timestamp=93600)
+    self.assertEqual(expected, processor.serialize())
+
+    # Save the data as if from a batch processor.
+    batch_processor = processor.batch_processor
+    batch_processor.process(processor.serialize())
+    batch_processor.finalize()
 
     # Get the data from the CountersService.
     counters_service = stats.CountersService()
@@ -178,16 +182,82 @@ class StatsTestCase(testing.BaseTestCase):
         ['page/view', 'widget/render'], start_date=start_date)
     self.assertEqual(expected, counter_data)
 
-    # Weakly test execution path of ProcessWindowsWithBackoff:
-    self.assertTrue(aggregator.ProcessWindowsWithBackoff(0))
+  @mock.patch('titan.stats.stats._GetWindow')
+  def testAggregatorCounterUnusedCounterInWindow(self, internal_window):
+    # Setup some data.
+    def counters_func():
+      return [stats.Counter('page/view'), stats.Counter('widget/render')]
+    page_counter = stats.Counter('page/view')
+    widget_counter = stats.Counter('widget/render')
+    internal_window.return_value = 0
 
-  def testSaveCountersAggregation(self):
+    # Log an initial set into the 3600 window.
+    page_counter.Offset(10)
+    processors = self._log_counters([page_counter],
+                                    counters_func)
+    processor = self._get_processor_from_processors(processors)
+
+    # Save different counter in a different window:
+    widget_counter.Increment()
+    self._log_counters([widget_counter], counters_func,
+                       processors=processors, timestamp=3600)
+    # Save both counters in a later window:
+    page_counter.Increment()
+    widget_counter.Increment()
+    self._log_counters([page_counter, widget_counter], counters_func,
+                       processors=processors, timestamp=7200)
+    expected = {
+        0: {
+            'window': 0,
+            'counters': {
+                'page/view': 10,
+            }
+        },
+        3600: {
+            'window': 3600,
+            'counters': {
+                'widget/render': 1,
+            }
+        },
+        7200: {
+            'window': 7200,
+            'counters': {
+                'page/view': 11,
+                'widget/render': 2,
+            }
+        },
+    }
+    self.assertEqual(expected, processor.serialize())
+
+    # Save the data as if from a batch processor.
+    batch_processor = processor.batch_processor
+    batch_processor.process(processor.serialize())
+    batch_processor.finalize()
+
+    # Get the data from the CountersService.
+    counters_service = stats.CountersService()
+    # The counters should not exist in an empty state between windows.
+    expected = {
+        'page/view': [(0, 10), (7200, 11)],
+        'widget/render': [(3600, 1), (7200, 2)],
+    }
+    start_date = datetime.datetime.utcfromtimestamp(0)
+    counter_data = counters_service.GetCounterData(
+        ['page/view', 'widget/render'], start_date=start_date)
+    self.assertEqual(expected, counter_data)
+
+  @mock.patch('titan.stats.stats._GetWindow')
+  def testSaveCountersAggregation(self, internal_window):
+    internal_window.return_value = 0
     widget_counter1 = stats.Counter('widget/render')
     widget_counter2 = stats.Counter('widget/render')
     latency_counter1 = stats.AverageCounter('widget/render/latency')
     latency_counter2 = stats.AverageCounter('widget/render/latency')
-    all_counters = [widget_counter1, widget_counter2]
-    all_counters += [latency_counter1, latency_counter2]
+    counters = [widget_counter1, widget_counter2]
+    counters += [latency_counter1, latency_counter2]
+    def counters_func():
+      return [stats.Counter('widget/render'),
+              stats.AverageCounter('widget/render/latency')]
 
     # SaveCounters should aggregate counters of the same type.
     # This is to make sure that different code paths in a request can
@@ -198,7 +268,8 @@ class StatsTestCase(testing.BaseTestCase):
     widget_counter2.Increment()
     latency_counter1.Offset(50)
     latency_counter2.Offset(100)
-    actual = stats.SaveCounters(all_counters, timestamp=0)
+    processors = self._log_counters(counters, counters_func)
+    processor = self._get_processor_from_processors(processors)
     expected = {
         0: {
             'window': 0,
@@ -208,11 +279,16 @@ class StatsTestCase(testing.BaseTestCase):
             }
         }
     }
-    self.assertEqual(expected, actual)
+    self.assertEqual(expected, processor.serialize())
 
-  def testManualCounterTimestamp(self):
+  @mock.patch('titan.stats.stats._GetWindow')
+  def testManualCounterTimestamp(self, internal_window):
+    def counters_func():
+      return [stats.Counter('widget/render')]
+
     normal_counter = stats.Counter('widget/render')
     normal_counter.Offset(20)
+    internal_window.return_value = 10000
 
     old_counter = stats.Counter('widget/render')
     old_counter.Offset(10)
@@ -222,40 +298,46 @@ class StatsTestCase(testing.BaseTestCase):
     oldest_counter.Offset(5)
     oldest_counter.timestamp = 0
 
-    all_counters = [normal_counter, old_counter, oldest_counter]
-    stats.SaveCounters(all_counters, eta=0)
+    counters = [normal_counter, old_counter, oldest_counter]
+    processors = self._log_counters(counters, counters_func)
+    processor = self._get_processor_from_processors(processors)
 
     expected = {
-        'window': 0,
-        'counters': {
-            'widget/render': 5,
-        }
+        0: {
+            'window': 0,
+            'counters': {
+                'widget/render': 5,
+            }
+        },
+        3600: {
+            'window': 3600,
+            'counters': {
+                'widget/render': 10,
+            }
+        },
+        10000: {
+            'window': 10000,
+            'counters': {
+                'widget/render': 20,
+            }
+        },
     }
-    aggregator = stats.Aggregator([stats.Counter('widget/render')])
-    aggregate_data = aggregator.ProcessNextWindow()
-    self.assertEqual(expected, aggregate_data)
+    self.assertEqual(expected, processor.serialize())
 
-    expected = {
-        'window': 3600,
-        'counters': {
-            'widget/render': 10,
-        }
-    }
-    aggregator = stats.Aggregator([stats.Counter('widget/render')])
-    aggregate_data = aggregator.ProcessNextWindow()
-    self.assertEqual(expected, aggregate_data)
+  def _log_counters(self, counters, counters_func, processors=None,
+                    timestamp=None):
+    if timestamp is not None:
+      for counter in counters:
+        counter.timestamp = timestamp
+    activity = stats.StatsActivity(counters=counters)
+    activity_logger = stats.StatsActivityLogger(
+        activity, counters_func=counters_func)
+    processors = processors or activity_logger.processors
+    activity_logger.process(processors)
+    return processors
 
-    expected = {
-        'counters': {
-            'widget/render': 20,
-        }
-    }
-    aggregator = stats.Aggregator([stats.Counter('widget/render')])
-    aggregate_data = aggregator.ProcessNextWindow()
-    # normal_counter's timestamp is automatically set to the current time.
-    self.assertGreater(aggregate_data['window'], 10000)
-    del aggregate_data['window']
-    self.assertEqual(expected, aggregate_data)
+  def _get_processor_from_processors(self, processors):
+    return [p for p in processors.values()][0]
 
 if __name__ == '__main__':
   basetest.main()

@@ -61,7 +61,7 @@ class FileHandler(handlers.BaseHandler):
       return
     # TODO(user): when full=True, this may fail for files with byte-string
     # content.
-    self.WriteJsonResponse(titan_file, full=full)
+    self.write_json_response(titan_file, full=full)
 
   def post(self):
     """POST handler."""
@@ -87,7 +87,7 @@ class FileHandler(handlers.BaseHandler):
     mime_type = self.request.get('mime_type', None)
 
     try:
-      files.File(path, **file_kwargs).Write(
+      files.File(path, **file_kwargs).write(
           content, blob=blob, mime_type=mime_type, meta=meta, **method_kwargs)
       self.response.set_status(201)
       # Headers must be byte-strings, not unicode strings.
@@ -109,7 +109,7 @@ class FileHandler(handlers.BaseHandler):
       self.error(400)
       return
     try:
-      files.File(path, **file_kwargs).Delete(**method_kwargs)
+      files.File(path, **file_kwargs).delete(**method_kwargs)
     except files.BadFileError:
       self.error(404)
     except (TypeError, ValueError):
@@ -134,7 +134,7 @@ class FilesHandler(handlers.BaseHandler):
       try:
         titan_files = files.Files(paths=paths)
         # Get rid of non-existent files so they are not serialized.
-        titan_files.Load()
+        titan_files.load()
       except (TypeError, ValueError):
         self.error(400)
         _MaybeLogException('Bad request:')
@@ -152,19 +152,19 @@ class FilesHandler(handlers.BaseHandler):
           self.error(400)
           self.response.out.write('Invalid depth parameter')
       try:
-        titan_files = files.OrderedFiles.List(dir_path=dir_path,
+        titan_files = files.OrderedFiles.list(dir_path=dir_path,
                                               recursive=recursive,
                                               depth=depth)
         if ids_only:
           result = {'paths': titan_files.keys()}
-          self.WriteJsonResponse(result)
+          self.write_json_response(result)
           return
       except ValueError:
         self.error(400)
         _MaybeLogException('Invalid parameter')
         return
 
-    self.WriteJsonResponse(titan_files)
+    self.write_json_response(titan_files)
 
 class FileReadHandler(blobstore_handlers.BlobstoreDownloadHandler):
   """Handler to return contents of a file."""
@@ -223,7 +223,7 @@ class FileFinalizeBlobHandler(blobstore_handlers.BlobstoreUploadHandler):
     blob = str(uploads[0].key())
     # Magic: BlobstoreUploadHandlers must return redirects, so we pass the
     # blobkey back as a query param. The client should followup with a call
-    # to Write() and include the blobkey.
+    # to write() and include the blobkey.
     params = urllib.urlencode({'blob': blob})
     self.redirect('/_titan/file/finalizeblob?%s' % params)
 
@@ -235,8 +235,8 @@ class DirsHandler(handlers.BaseHandler):
     dir_path = self.request.get('dir_path')
     if not dir_path:
       self.abort(400)
-    titan_dirs = dirs.Dirs.List(dir_path)
-    self.WriteJsonResponse(titan_dirs)
+    titan_dirs = dirs.Dirs.list(dir_path)
+    self.write_json_response(titan_dirs)
 
 class DirsProcessDataHandler(handlers.BaseHandler):
   """Dirs processing handler."""
@@ -245,8 +245,8 @@ class DirsProcessDataHandler(handlers.BaseHandler):
     """GET handler; must be GET because it is run from a cron job."""
     runtime = self.request.get('runtime', dirs.DEFAULT_CRON_RUNTIME_SECONDS)
     dir_task_consumer = dirs.DirTaskConsumer()
-    results = dir_task_consumer.ProcessWindowsWithBackoff(runtime=int(runtime))
-    self.WriteJsonResponse(results)
+    results = dir_task_consumer.process_windows_with_backoff(runtime=int(runtime))
+    self.write_json_response(results)
 
 def _GetExtraParams(request_params):
   """Returns a two-tuple of (file_kwargs, method_kwargs)."""

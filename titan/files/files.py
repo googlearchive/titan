@@ -20,19 +20,43 @@ Documentation:
 
 Usage:
   titan_file = files.File('/some/file')
-  titan_file.Write(content='hello world')
-  titan_file.Delete()
-  titan_file.CopyTo(files.File('/destination/file'))
-  titan_file.MoveTo(files.File('/destination/file'))
-  files.File.ValidatePath('/some/file')
+  titan_file.write(content='hello world')
+  titan_file.delete()
+  titan_file.copy_to(files.File('/destination/file'))
+  titan_file.move_to(files.File('/destination/file'))
 
-  titan_files = files.Files.List('/some/dir')
-  titan_files.CopyTo('/destination/', strip_prefix='/some')
-  titan_files.MoveTo('/destination/', strip_prefix='/some')
-  titan_files.Load()
-  titan_files.Delete()
-  files.Files.ValidatePaths(['/some/file', '/other/file'])
+  titan_files = files.Files.list('/some/dir')
+  titan_files.copy_to('/destination/', strip_prefix='/some')
+  titan_files.move_to('/destination/', strip_prefix='/some')
+  titan_files.load()
+  titan_files.delete()
 """
+
+try:
+  # Load appengine_config here to guarantee that custom factories can be
+  # registered before any File operation takes place.
+  import appengine_config
+except ImportError:
+  appengine_config = None
+
+import collections
+import datetime
+import hashlib
+import logging
+import os
+
+try:
+  from concurrent import futures
+except ImportError:
+  # Allow Titan Files to be imported without the futures library present,
+  # since only copy_to and move_to methods require this dependency.
+  futures = None
+from google.appengine.ext import blobstore
+from google.appengine.ext import ndb
+
+from titan.common import sharded_cache
+from titan import users
+from titan.common import utils
 
 __all__ = [
     # Constants.
@@ -52,36 +76,10 @@ __all__ = [
     'OrderedFiles',
     'FileProperty',
     # Functions.
-    'RegisterFileFactory',
-    'UnregisterFileFactory',
-    'RegisterFileMixins',
+    'register_file_factory',
+    'unregister_file_factory',
+    'register_file_mixins',
 ]
-
-try:
-  # Load appengine_config here to guarantee that custom factories can be
-  # registered before any File operation takes place.
-  import appengine_config
-except ImportError:
-  appengine_config = None
-
-import collections
-import datetime
-import hashlib
-import logging
-import os
-
-try:
-  from concurrent import futures
-except ImportError:
-  # Allow Titan Files to be imported without the futures library present,
-  # since only CopyTo and MoveTo methods require this dependency.
-  futures = None
-from google.appengine.ext import blobstore
-from google.appengine.ext import ndb
-
-from titan import users
-from titan.common import utils
-from titan.files import files_cache
 
 # Arbitrary cutoff for when content will be stored in blobstore.
 # This value should be mirrored by titan_client.DIRECT_TO_BLOBSTORE_SIZE.
@@ -89,6 +87,8 @@ MAX_CONTENT_SIZE = 1 << 19  # 500 KiB
 
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_MAX_WORKERS = 25
+
+_BLOB_MEMCACHE_PREFIX = 'titan-blob:'
 
 class Error(Exception):
   pass
@@ -119,11 +119,11 @@ class File(object):
 
   Usage:
     titan_file = File('/path/to/file.html')
-    titan_file.Write('Some content')
-    titan_file.Delete()
-    titan_file.CopyTo(destination_file)
-    titan_file.MoveTo(destination_file)
-    titan_file.Serialize()
+    titan_file.write('Some content')
+    titan_file.delete()
+    titan_file.copy_to(destination_file)
+    titan_file.move_to(destination_file)
+    titan_file.serialize()
   Attributes:
     name: Filename without path. Example: file.html
     path: Full filename and path. Might be a virtual path from a mixin.
@@ -149,7 +149,7 @@ class File(object):
     modified_by: A users.TitanUser for who last modified the file, or None.
     size: The number of bytes of this file's content.
     md5_hash: Pre-computed md5 hash of the file's content.
-    meta: An object exposing File metadata as attributes. Use the Write()
+    meta: An object exposing File metadata as attributes. Use the write()
         method to update meta information.
 
   Note: be aware that this object performs optimizations to avoid unnecessary
@@ -167,8 +167,8 @@ class File(object):
     Returns:
       File instance.
     """
-    # Validate path before class creation and mixins.
-    File.ValidatePath(path)
+    # validate path before class creation and mixins.
+    File.validate_path(path)
     if _global_file_factory.is_registered and not _from_factory:
       # Get the correct class instance for this path, determined by the factory:
       file_class = _global_file_factory(path=path, **kwargs)
@@ -186,7 +186,7 @@ class File(object):
           unnecessary RPCs.
       _from_factory: An internal-only flag for factory handling.
     """
-    File.ValidatePath(path)
+    File.validate_path(path)
     self._path = path
     self._real_path = None
     self._name = os.path.basename(self._path)
@@ -216,7 +216,7 @@ class File(object):
     # implementing __getstate__ and __setstate__.
     #
     # http://docs.python.org/library/pickle.html#object.__reduce__
-    return _UnpickleFile, (self._original_kwargs,), {}
+    return _unpickle_file, (self._original_kwargs,), {}
 
   @property
   def _file(self):
@@ -304,7 +304,7 @@ class File(object):
 
   @property
   def content(self):
-    return _ReadContentOrBlob(self)
+    return _read_content_or_blob(self)
 
   @property
   def blob(self):
@@ -361,7 +361,7 @@ class File(object):
   def close(self):
     pass
 
-  def _MaybeEncodeContent(self, content, encoding):
+  def _maybe_encode_content(self, content, encoding):
     # If given unicode, encode it as UTF-8 and flag it for future decoding.
     if isinstance(content, unicode):
       if encoding is not None:
@@ -372,7 +372,7 @@ class File(object):
       content = content.encode(encoding)
     return content, encoding
 
-  def _MaybeWriteToBlobstore(self, content, blob, force_blobstore=False):
+  def _maybe_write_to_blobstore(self, content, blob, force_blobstore=False):
     if content and blob:
       raise TypeError('Exactly one of "content" or "blob" must be given.')
     if force_blobstore or content and len(content) > MAX_CONTENT_SIZE:
@@ -381,12 +381,12 @@ class File(object):
             'Content size %s exceeds %s bytes, uploading to blobstore.',
             len(content), MAX_CONTENT_SIZE)
       old_blobinfo = self.blob if self.exists else None
-      blob = utils.WriteToBlobstore(content, old_blobinfo=old_blobinfo)
-      files_cache.StoreBlob(self.real_path, content)
+      blob = utils.write_to_blobstore(content, old_blobinfo=old_blobinfo)
+      _store_blob_cache(self.real_path, content)
       content = None
     return content, blob
 
-  def _GetCreatedByUser(self):
+  def _get_created_by_user(self):
     """Returns the user that should be saved when a file is first created.
 
     Can be overridden by subclasses.
@@ -394,9 +394,9 @@ class File(object):
     Returns:
       A users.TitanUser object.
     """
-    return users.GetCurrentUser()
+    return users.get_current_user()
 
-  def _GetModifiedByUser(self):
+  def _get_modified_by_user(self):
     """Returns the user that should be saved when a file is modified.
 
     Can be overridden by subclasses.
@@ -404,14 +404,14 @@ class File(object):
     Returns:
       A users.TitanUser object.
     """
-    return users.GetCurrentUser()
+    return users.get_current_user()
 
   # TODO(user): remove _delete_old_blob, refactor into versions subclass.
-  def Write(self, content=None, blob=None, mime_type=None, meta=None,
-            encoding=None, _delete_old_blob=True):
+  def write(self, content=None, blob=None, mime_type=None, meta=None,
+            encoding=None, created=None, modified=None, _delete_old_blob=True):
     """Write or update a File.
 
-    Updates: if the File already exists, Write will accept any of the given args
+    Updates: if the File already exists, write will accept any of the given args
     and only perform an update of the given data, without affecting other data.
 
     Args:
@@ -426,9 +426,12 @@ class File(object):
       encoding: The optional encoding of the content if given a bytestring.
           The encoding will be automatically determined if "content" is passed
           a unicode string.
+      created: Optional datetime.datetime to override the created property.
+      modified: Optional datetime.datetime to override the modified property.
       _delete_old_blob: Whether or not to delete the old blob if it changed.
     Raises:
       TypeError: For missing arguments.
+      ValueError: For invalid arguments.
       BadFileError: If updating meta information on a non-existent file.
     Returns:
       Self-reference.
@@ -436,28 +439,34 @@ class File(object):
     logging.info('Writing Titan file: %s', self.real_path)
 
     # Argument sanity checks.
-    _TitanFile.ValidateMetaProperties(meta)
+    _TitanFile.validate_meta_properties(meta)
     is_content_update = content is not None or blob is not None
-    is_meta_update = mime_type is not None or meta is not None
+    is_meta_update = (mime_type is not None or meta is not None
+                      or created is not None or modified is not None)
     if not is_content_update and not is_meta_update:
       raise TypeError('Arguments expected, but none given.')
     if not self.exists and is_meta_update and not is_content_update:
       raise BadFileError('File does not exist: %s' % self.real_path)
+    if created is not None and not hasattr(created, 'timetuple'):
+      raise ValueError('"created" must be a datetime.datetime instance.')
+    if modified is not None and not hasattr(modified, 'timetuple'):
+      raise ValueError('"modified" must be a datetime.datetime instance.')
 
     # If given unicode, encode it as UTF-8 and flag it for future decoding.
-    content, encoding = self._MaybeEncodeContent(content, encoding)
+    content, encoding = self._maybe_encode_content(content, encoding)
 
     # If big enough, store content in blobstore. Must come after encoding.
-    content, blob = self._MaybeWriteToBlobstore(content, blob)
+    content, blob = self._maybe_write_to_blobstore(content, blob)
 
+    now = datetime.datetime.now()
     if not self.exists:
       # Create new _File entity.
       # Guess the MIME type if not given.
       if not mime_type:
-        mime_type = utils.GuessMimeType(self.real_path)
+        mime_type = utils.guess_mime_type(self.real_path)
 
       # Create a new _File.
-      paths = utils.SplitPath(self.real_path)
+      paths = utils.split_path(self.real_path)
       self._file_ent = _TitanFile(
           id=self.real_path,
           name=os.path.basename(self.real_path),
@@ -467,13 +476,14 @@ class File(object):
           depth=len(paths) - 1,
           mime_type=mime_type,
           encoding=encoding,
-          modified=datetime.datetime.now(),
+          created=created or now,
+          modified=modified or now,
           content=content,
           blob=blob,
           # Backwards-compatibility with deprecated "blobs" property:
           blobs=[],
-          created_by=self._GetCreatedByUser(),
-          modified_by=self._GetModifiedByUser(),
+          created_by=self._get_created_by_user(),
+          modified_by=self._get_modified_by_user(),
           md5_hash=None if blob else hashlib.md5(content).hexdigest(),
       )
       # Add meta attributes.
@@ -482,11 +492,17 @@ class File(object):
           setattr(self._file, key, value)
       self._file.put()
     else:
+      blob_to_delete = None
+
       # Updating an existing _File.
-      self._file.modified_by = self._GetModifiedByUser()
+      self._file.modified_by = self._get_modified_by_user()
 
       if mime_type and self._file.mime_type != mime_type:
         self._file.mime_type = mime_type
+
+      if created:
+        self._file.created = created
+      self._file.modified = modified or now
 
       # Auto-migrate entities from old "blobs" to new "blob" property on write:
       if self._file.blobs:
@@ -497,15 +513,13 @@ class File(object):
         self._file.content = content
         self._file.md5_hash = hashlib.md5(content).hexdigest()
         if self._file.blob and _delete_old_blob:
-          # Delete the actual blobstore data.
-          _DeleteBlobsForFiles([self])
+          blob_to_delete = self.blob
         # Clear the current blob association for this file.
         self._file.blob = None
 
       if blob is not None and self._file.blob != blob:
         if self._file.blob and _delete_old_blob:
-          # Delete the actual blobstore data.
-          _DeleteBlobsForFiles([self])
+          blob_to_delete = self.blob
         # Associate the new blob to this file.
         self._file.blob = blob
         self._file.md5_hash = None
@@ -520,9 +534,15 @@ class File(object):
           if not hasattr(self._file, key) or getattr(self._file, key) != value:
             setattr(self._file, key, value)
       self._file.put()
+
+      if blob_to_delete and _delete_old_blob:
+        # Delete the actual blobstore data after the file write to avoid
+        # orphaned files.
+        _delete_blobs(blobs=[blob_to_delete], file_paths=[self.real_path])
+
     return self
 
-  def Delete(self, _delete_old_blob=True, _run_mixins_only=False):
+  def delete(self, _delete_old_blob=True, _run_mixins_only=False):
     """Delete file.
 
     Args:
@@ -534,14 +554,16 @@ class File(object):
     """
     if _run_mixins_only:
       return
-    if self.blob and _delete_old_blob:
-      _DeleteBlobsForFiles([self])
+    blob_to_delete = self.blob
     self._file.key.delete()
+    if blob_to_delete and _delete_old_blob:
+      _delete_blobs(blobs=[blob_to_delete], file_paths=[self.real_path])
+
     self._file_ent = None
     self._meta = None
     return self
 
-  def CopyTo(self, destination_file, exclude_meta=None):
+  def copy_to(self, destination_file, exclude_meta=None):
     """Copy this and all of its properties to a different path.
 
     Args:
@@ -558,16 +580,16 @@ class File(object):
         raise BadFileError('File does not exist: %s' % self.real_path)
       if destination_file.exists:
         # TODO(user): make this DeleteAsync when available.
-        destination_file.Delete()
+        destination_file.delete()
 
       # Copy meta attributes, except ones that are excluded.
-      meta = self.meta.Serialize()
+      meta = self.meta.serialize()
       if exclude_meta:
         for key in exclude_meta:
           if key in meta:
             del meta[key]
 
-      destination_file.Write(
+      destination_file.write(
           content=self._file.content,
           blob=self._file.blob,
           mime_type=self.mime_type,
@@ -577,7 +599,7 @@ class File(object):
       logging.exception('Error copying file: %s', self.path)
       raise CopyFileError(destination_file)
 
-  def MoveTo(self, destination_file):
+  def move_to(self, destination_file):
     """Move this and all of its properties to a different path.
 
     Args:
@@ -589,15 +611,15 @@ class File(object):
     logging.info('Moving Titan file: %s --> %s', self.real_path,
                  destination_file.real_path)
     try:
-      self.CopyTo(destination_file)
-      self.Delete(_delete_old_blob=False)
+      self.copy_to(destination_file)
+      self.delete(_delete_old_blob=False)
       return self
     except:
       logging.exception('Error moving file: %s', self.path)
       raise MoveFileError(destination_file)
 
-  def Serialize(self, full=False):
-    """Serialize the File object to native Python types.
+  def serialize(self, full=False):
+    """serialize the File object to native Python types.
 
     Args:
       full: Whether or not to include this object's content. Potentially
@@ -628,12 +650,12 @@ class File(object):
     return result
 
   @staticmethod
-  def ValidatePath(path):
-    return utils.ValidateFilePath(path)
+  def validate_path(path):
+    return utils.validate_file_path(path)
 
 # This must be a top-level module function. The File class cannot be used
 # directly in __reduce__ because pickle does not support keyword arguments.
-def _UnpickleFile(kwargs):
+def _unpickle_file(kwargs):
   return File(**kwargs)
 
 class FactoryState(object):
@@ -649,16 +671,16 @@ class FactoryState(object):
   def __call__(self, *args, **kwargs):
     return self.factory(*args, **kwargs)
 
-  def Register(self, factory):
+  def register(self, factory):
     self.factory = factory
 
-  def Unregister(self):
+  def unregister(self):
     self.factory = None
 
 # Internal FileFactoryState. See RegisterFileFactory().
 _global_file_factory = FactoryState()
 
-def RegisterFileFactory(file_factory):
+def register_file_factory(file_factory):
   """Register a global file factory, which returns a File subclass.
 
   In advanced usage, all File object instantiations can be magically
@@ -670,13 +692,13 @@ def RegisterFileFactory(file_factory):
   Args:
     file_factory: A callable which returns a File subclass.
   """
-  _global_file_factory.Register(file_factory)
+  _global_file_factory.register(file_factory)
 
-def UnregisterFileFactory():
+def unregister_file_factory():
   """Clear the global file factory."""
-  _global_file_factory.Unregister()
+  _global_file_factory.unregister()
 
-def RegisterFileMixins(mixin_classes):
+def register_file_mixins(mixin_classes):
   """Registers a factory that returns a dynamic subclass of File with mixins.
 
   This method will overwrite any previously-registered factory method.
@@ -691,16 +713,16 @@ def RegisterFileMixins(mixin_classes):
     shared_mixin_state = {}
     for mixin_cls in mixin_classes:
       # Mixins are enabled by default. Optionally, they can have a classmethod
-      # named "ShouldApplyMixin" which tells if the mixin should be enabled
+      # named "should_apply_mixin" which tells if the mixin should be enabled
       # based on the given kwargs.
-      should_apply_mixin_fn = getattr(mixin_cls, 'ShouldApplyMixin', None)
+      should_apply_mixin_fn = getattr(mixin_cls, 'should_apply_mixin', None)
       if (not should_apply_mixin_fn
           or should_apply_mixin_fn(_mixin_state=shared_mixin_state, **kwargs)):
         base_classes.append(mixin_cls)
     # Dynamically create a files.File subclass with all of the given mixins.
     base_classes.append(File)
     return type('DynamicFile', tuple(base_classes), {})
-  RegisterFileFactory(DynamicFileFactory)
+  register_file_factory(DynamicFileFactory)
 
 class Files(collections.Mapping):
   """A mapping of paths to File objects."""
@@ -724,13 +746,13 @@ class Files(collections.Mapping):
       raise ValueError('"files" must be an iterable.')
     if paths is not None:
       for path in paths:
-        self._AddFile(File(path=path, **kwargs))
+        self._add_file(File(path=path, **kwargs))
     elif files is not None:
       for titan_file in files:
-        self._AddFile(titan_file)
+        self._add_file(titan_file)
 
   def __delitem__(self, path):
-    self._RemoveFile(path)
+    self._remove_file(path)
 
   def __getitem__(self, path):
     return self._titan_files[path]
@@ -762,21 +784,21 @@ class Files(collections.Mapping):
   def __repr__(self):
     return '<Files %r>' % self.keys()
 
-  def _AddFile(self, titan_file):
+  def _add_file(self, titan_file):
     # Use .path here to allow virtual file path, not forcing real_path.
     self._titan_files[titan_file.path] = titan_file
 
-  def _RemoveFile(self, path):
+  def _remove_file(self, path):
     del self._titan_files[path]
 
   def update(self, other_titan_files):
     for titan_file in other_titan_files.itervalues():
-      self._AddFile(titan_file)
+      self._add_file(titan_file)
 
   def clear(self):
     self._titan_files = {}
 
-  def Delete(self):
+  def delete(self):
     """Delete all files in this container.
 
     This function does not error if the files are already deleted.
@@ -787,18 +809,26 @@ class Files(collections.Mapping):
     for titan_file in self.itervalues():
       # Run all the mixins, but skip the actual delete RPC.
       # This may break mixins that expect the file to be synchronously deleted.
-      titan_file.Delete(_run_mixins_only=True)
+      titan_file.delete(_run_mixins_only=True)
 
-    # Load the files to avoid iterative RPCs in _DeleteBlobsForFiles,
-    # and to prevent errors from when the index hasn't caught up yet.
-    self.Load()
+    # Load the files to avoid iterative RPCs in _delete_blobs,
+    # and to prevent errors from when the index hasn't caught up to deleted
+    # files yet.
+    self.load()
+    real_paths = [f.real_path for f in self.values()]
+    blobs_to_delete = [f.blob for f in self.values() if f.blob]
 
-    _DeleteBlobsForFiles([f for f in self.values() if f.blob])
     ndb.delete_multi([f._file.key for f in self.itervalues()])
+
+    # Avoid orphaning files by deleting blobs after the delete_multi succeeds.
+    # This introduces the other case where _delete_blobs may fail and
+    # orphan blobs, but that is more desirable than orphaned files.
+    if blobs_to_delete:
+      _delete_blobs(blobs=blobs_to_delete, file_paths=real_paths)
 
     return self
 
-  def CopyTo(self, dir_path, **kwargs):
+  def copy_to(self, dir_path, **kwargs):
     """Copy current files to the given dir_path.
 
     Args:
@@ -815,10 +845,10 @@ class Files(collections.Mapping):
     Returns:
       Self-reference.
     """
-    self._MoveOrCopyTo(dir_path, is_move=False, **kwargs)
+    self._move_or_copy_to(dir_path, is_move=False, **kwargs)
     return self
 
-  def MoveTo(self, dir_path, **kwargs):
+  def move_to(self, dir_path, **kwargs):
     """Move current files to the given dir_path.
 
     Args:
@@ -835,13 +865,13 @@ class Files(collections.Mapping):
     Returns:
       Self-reference.
     """
-    self._MoveOrCopyTo(dir_path, is_move=True, **kwargs)
+    self._move_or_copy_to(dir_path, is_move=True, **kwargs)
     return self
 
-  def Load(self):
+  def load(self):
     """If not loaded, load associated paths and remove non-existing ones."""
     real_path_to_paths = {f.real_path: f.path for f in self.itervalues()}
-    file_ents = _GetTitanFileEnts(real_path_to_paths.keys())
+    file_ents = _get_titan_file_ents(real_path_to_paths.keys())
     paths_to_clear = []
     for real_path in real_path_to_paths:
       path = real_path_to_paths[real_path]
@@ -856,8 +886,8 @@ class Files(collections.Mapping):
       del self[path]
     return self
 
-  def Serialize(self, full=False):
-    """Serialize the File object to native Python types.
+  def serialize(self, full=False):
+    """serialize the File object to native Python types.
 
     Args:
       full: Whether to return a full representation of the files.
@@ -867,15 +897,15 @@ class Files(collections.Mapping):
     """
     result = {}
     for path, titan_file in self._titan_files.iteritems():
-      result[path] = titan_file.Serialize(full=full)
+      result[path] = titan_file.serialize(full=full)
     return result
 
-  def _MoveOrCopyTo(self, dir_path, is_move=False, strip_prefix=None,
+  def _move_or_copy_to(self, dir_path, is_move=False, strip_prefix=None,
                     timeout=None, result_files=None, failed_files=None,
                     max_workers=DEFAULT_MAX_WORKERS, **kwargs):
-    """This encapsulate repeated logic for CopyTo and MoveTo methods."""
-    utils.ValidateDirPath(dir_path)
-    destination_map = utils.MakeDestinationPathsMap(
+    """This encapsulate repeated logic for copy_to and move_to methods."""
+    utils.validate_dir_path(dir_path)
+    destination_map = utils.make_destination_paths_map(
         self.keys(), destination_dir_path=dir_path, strip_prefix=strip_prefix)
 
     future_results = []
@@ -889,7 +919,7 @@ class Files(collections.Mapping):
         destination_file = File(destination_path, **kwargs)
         if result_files is not None:
           result_files.update(Files(files=[destination_file]))
-        file_method = source_file.MoveTo if is_move else source_file.CopyTo
+        file_method = source_file.move_to if is_move else source_file.copy_to
         future = executor.submit(file_method, destination_file)
         future_results.append(future)
       futures.wait(future_results, timeout=timeout)
@@ -914,14 +944,14 @@ class Files(collections.Mapping):
           'Failed to copy files: \n%s' % '\n'.join([str(e) for e in errors]))
 
   @classmethod
-  def Merge(cls, first_files, second_files):
+  def merge(cls, first_files, second_files):
     """Return a new Files instance merged from two others."""
     new_titan_files = cls(first_files.keys())
     new_titan_files.update(cls(second_files.keys()))
     return new_titan_files
 
   @classmethod
-  def List(cls, dir_path, recursive=False, depth=None, filters=None,
+  def list(cls, dir_path, recursive=False, depth=None, filters=None,
            limit=None, offset=None, **kwargs):
     """Factory method to return a lazy Files mapping for the given dir.
 
@@ -938,7 +968,7 @@ class Files(collections.Mapping):
     Returns:
       A populated Files mapping.
     """
-    files_query = _CreateFilesQuery(dir_path, recursive=recursive, depth=depth,
+    files_query = _create_files_query(dir_path, recursive=recursive, depth=depth,
                                     filters=filters)
     # TODO(user): support cursors.
     file_keys = files_query.fetch(limit=limit, offset=offset, keys_only=True)
@@ -946,7 +976,7 @@ class Files(collections.Mapping):
     return titan_files
 
   @staticmethod
-  def Count(dir_path, recursive=False, depth=None, filters=None):
+  def count(dir_path, recursive=False, depth=None, filters=None):
     """Factory method to count the number of files within a directory.
 
     Args:
@@ -960,16 +990,16 @@ class Files(collections.Mapping):
     Returns:
       A count of files that match the query.
     """
-    files_query = _CreateFilesQuery(dir_path, recursive=recursive, depth=depth,
+    files_query = _create_files_query(dir_path, recursive=recursive, depth=depth,
                                     filters=filters)
     return files_query.count()
 
   @staticmethod
-  def ValidatePaths(paths):
+  def validate_paths(paths):
     if not hasattr(paths, '__iter__'):
       raise ValueError('"paths" must be an iterable.')
     for path in paths:
-      utils.ValidateFilePath(path)
+      utils.validate_file_path(path)
 
 class OrderedFiles(Files):
   """An ordered mapping of paths to File objects."""
@@ -978,20 +1008,20 @@ class OrderedFiles(Files):
     self._ordered_paths = []
     super(OrderedFiles, self).__init__(*args, **kwargs)
 
-  def _AddFile(self, titan_file):
+  def _add_file(self, titan_file):
     if titan_file.path not in self._titan_files:
       self._ordered_paths.append(titan_file.path)
-    super(OrderedFiles, self)._AddFile(titan_file)
+    super(OrderedFiles, self)._add_file(titan_file)
 
-  def _RemoveFile(self, path):
+  def _remove_file(self, path):
     self._ordered_paths.remove(path)
-    super(OrderedFiles, self)._RemoveFile(path)
+    super(OrderedFiles, self)._remove_file(path)
 
   def clear(self):
     super(OrderedFiles, self).clear()
     self._ordered_paths = []
 
-  def Sort(self):
+  def sort(self):
     self._ordered_paths.sort()
 
   def __eq__(self, other):
@@ -1006,11 +1036,11 @@ class OrderedFiles(Files):
       yield path
 
 class FileProperty(ndb.GenericProperty):
-  """A convenience wrapper for creating filters for Files.List.
+  """A convenience wrapper for creating filters for Files.list.
 
   Usage:
     filters = [files.FileProperty('color') == 'blue']
-    files.Files.List('/', recursive=True, filters=filters)
+    files.Files.list('/', recursive=True, filters=filters)
   """
 
 class _TitanFile(ndb.Expando):
@@ -1044,12 +1074,11 @@ class _TitanFile(ndb.Expando):
   depth = ndb.IntegerProperty()
   mime_type = ndb.StringProperty()
   encoding = ndb.StringProperty()
-  created = ndb.DateTimeProperty(auto_now_add=True)
-  modified = ndb.DateTimeProperty(auto_now=True)
+  created = ndb.DateTimeProperty()
+  modified = ndb.DateTimeProperty()
   content = ndb.BlobProperty()
   blob = ndb.BlobKeyProperty()
-  # Deprecated; use "blob" instead.
-  blobs = ndb.BlobKeyProperty(repeated=True)
+  blobs = ndb.BlobKeyProperty(repeated=True)  # Deprecated; use "blob" instead.
   created_by = users.TitanUserProperty()
   modified_by = users.TitanUserProperty()
   md5_hash = ndb.StringProperty(indexed=False)
@@ -1092,7 +1121,7 @@ class _TitanFile(ndb.Expando):
     return meta_properties
 
   @staticmethod
-  def ValidateMetaProperties(meta):
+  def validate_meta_properties(meta):
     """Verify that meta properties are valid."""
     if not meta:
       return
@@ -1102,7 +1131,7 @@ class _TitanFile(ndb.Expando):
 
 # ------------------------------------------------------------------------------
 
-def _GetTitanFileEnts(paths):
+def _get_titan_file_ents(paths):
   """Internal method for getting _File entities.
 
   Args:
@@ -1118,7 +1147,7 @@ def _GetTitanFileEnts(paths):
       file_objs[f.path] = f
   return file_objs
 
-def _GetFileEntities(titan_files):
+def _get_file_entities(titan_files):
   """Get _TitanFile entities from File objects; use sparingly."""
   # This function should be the only place we access the protected _file attr
   # on File objects. This centralizes the high coupling to one location.
@@ -1130,7 +1159,7 @@ def _GetFileEntities(titan_files):
     file_ents.append(titan_file._file if titan_file else None)
   return file_ents
 
-def _CreateFilesQuery(dir_path, recursive=False, depth=None, filters=None):
+def _create_files_query(dir_path, recursive=False, depth=None, filters=None):
   """Creates a ndb.Query object for listing _TitanFile entities."""
   if depth is not None and depth <= 0:
     raise ValueError('depth argument must be a positive integer.')
@@ -1138,7 +1167,7 @@ def _CreateFilesQuery(dir_path, recursive=False, depth=None, filters=None):
     raise ValueError('depth queries require recursive=True.')
   if filters is not None and not hasattr(filters, '__iter__'):
     raise ValueError('"filters" must be an iterable.')
-  utils.ValidateDirPath(dir_path)
+  utils.validate_dir_path(dir_path)
 
   # Strip trailing slash.
   if dir_path != '/' and dir_path.endswith('/'):
@@ -1159,18 +1188,18 @@ def _CreateFilesQuery(dir_path, recursive=False, depth=None, filters=None):
     files_query = files_query.filter(*filters)
   return files_query
 
-def _DeleteBlobsForFiles(file_objs):
-  blobstore.delete([f.blob.key() for f in file_objs])
-  files_cache.ClearBlobsForFiles(file_objs)
+def _delete_blobs(blobs, file_paths):
+  blobstore.delete([b.key() for b in blobs])
+  _clear_blob_cache_for_paths(file_paths)
 
-def _ReadContentOrBlob(titan_file):
-  file_ent = _GetFileEntities(titan_file)
+def _read_content_or_blob(titan_file):
+  file_ent = _get_file_entities(titan_file)
   if not file_ent:
     raise BadFileError('File does not exist: %s' % titan_file.path)
   if file_ent.content is not None:
     content = file_ent.content
   else:
-    content = files_cache.GetBlob(file_ent.path)
+    content = _get_blob_cache(file_ent.path)
     if content is None:
       blob = file_ent.blob
       if not file_ent.blob:
@@ -1183,7 +1212,20 @@ def _ReadContentOrBlob(titan_file):
       except blobstore.BlobNotFoundError:
         raise blobstore.BlobNotFoundError(
             'Blob associated to path was not found: %s' % titan_file.path)
-      files_cache.StoreBlob(file_ent.path, content)
+      _store_blob_cache(file_ent.path, content)
   if file_ent.encoding:
     return content.decode(file_ent.encoding)
   return content
+
+def _get_blob_cache(path):
+  """Get a blob's content from the sharded cache."""
+  return sharded_cache.Get(_BLOB_MEMCACHE_PREFIX + path)
+
+def _store_blob_cache(path, content):
+  """Set a blob's content in the sharded cache."""
+  return sharded_cache.Set(_BLOB_MEMCACHE_PREFIX + path, content)
+
+def _clear_blob_cache_for_paths(paths):
+  """Delete blobs from the sharded cache."""
+  for path in paths:
+    sharded_cache.Delete(_BLOB_MEMCACHE_PREFIX + path)

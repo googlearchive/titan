@@ -57,7 +57,7 @@ def _DebugHandler(exc_class, value, tb):
 
 def Init():
   # Must back up old excepthook.
-  global old_excepthook  # pylint: disable-msg=W0603
+  global old_excepthook  # pylint: disable=global-statement
   if old_excepthook is None:
     old_excepthook = sys.excepthook
     sys.excepthook = _DebugHandler

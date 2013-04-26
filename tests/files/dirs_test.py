@@ -29,53 +29,53 @@ PATH_DELETE_ACTION = dirs.ModifiedPath.DELETE
 class DirManagerTest(testing.BaseTestCase):
 
   def tearDown(self):
-    files.UnregisterFileFactory()
+    files.unregister_file_factory()
     super(DirManagerTest, self).tearDown()
 
   def testEndToEnd(self):
-    files.RegisterFileMixins([dirs.DirManagerMixin])
+    files.register_file_mixins([dirs.DirManagerMixin])
 
-    files.File('/a/b/foo').Write('')
-    files.File('/a/b/bar').Write('')
-    files.File('/a/d/foo').Write('')
+    files.File('/a/b/foo').write('')
+    files.File('/a/b/bar').write('')
+    files.File('/a/d/foo').write('')
 
     # List root dir.
-    self.assertEqual(dirs.Dirs(['/a']), dirs.Dirs.List('/'))
+    self.assertEqual(dirs.Dirs(['/a']), dirs.Dirs.list('/'))
     # List /a.
-    self.assertEqual(dirs.Dirs(['/a/b', '/a/d']), dirs.Dirs.List('/a/'))
+    self.assertEqual(dirs.Dirs(['/a/b', '/a/d']), dirs.Dirs.list('/a/'))
     # List /a/b/.
-    self.assertEqual(dirs.Dirs([]), dirs.Dirs.List('/a/b/'))
+    self.assertEqual(dirs.Dirs([]), dirs.Dirs.list('/a/b/'))
     # List /fake/dir.
-    self.assertEqual(dirs.Dirs([]), dirs.Dirs.List('/fake/dir'))
+    self.assertEqual(dirs.Dirs([]), dirs.Dirs.list('/fake/dir'))
 
     # Test deleting directories.
     self.assertTrue(dirs.Dir('/a/d').exists)
-    files.File('/a/d/foo').Delete()
+    files.File('/a/d/foo').delete()
     self.assertFalse(dirs.Dir('/a/d').exists)
     # List /a.
-    self.assertEqual(dirs.Dirs(['/a/b']), dirs.Dirs.List('/a/'))
-    self.assertEqual(dirs.Dirs(['/a']), dirs.Dirs.List('/'))
+    self.assertEqual(dirs.Dirs(['/a/b']), dirs.Dirs.list('/a/'))
+    self.assertEqual(dirs.Dirs(['/a']), dirs.Dirs.list('/'))
     # Delete the remaining files and list again.
-    files.File('/a/b/foo').Delete()
-    files.File('/a/b/bar').Delete()
-    self.assertEqual(dirs.Dirs([]), dirs.Dirs.List('/'))
+    files.File('/a/b/foo').delete()
+    files.File('/a/b/bar').delete()
+    self.assertEqual(dirs.Dirs([]), dirs.Dirs.list('/'))
 
-    # Verify behavior of SetMeta and meta.
+    # Verify behavior of set_meta and meta.
     self.assertRaises(
         dirs.InvalidDirectoryError,
-        lambda: dirs.Dir('/a/b').SetMeta({'flag': True}))
+        lambda: dirs.Dir('/a/b').set_meta({'flag': True}))
     self.assertRaises(
         dirs.InvalidMetaError,
-        lambda: dirs.Dir('/a/b').SetMeta({'name': 'foo'}))
+        lambda: dirs.Dir('/a/b').set_meta({'name': 'foo'}))
 
-    files.File('/a/b/foo').Write('')
-    # Also, weakly test execution path of ProcessWindowsWithBackoff.
+    files.File('/a/b/foo').write('')
+    # Also, weakly test execution path of process_windows_with_backoff.
     dir_task_consumer = dirs.DirTaskConsumer()
-    dir_task_consumer.ProcessWindowsWithBackoff(runtime=2)
+    dir_task_consumer.process_windows_with_backoff(runtime=2)
     titan_dir = dirs.Dir('/a/b')
     self.assertRaises(AttributeError, lambda: titan_dir.meta.flag)
 
-    titan_dir.SetMeta(meta={'flag': True})
+    titan_dir.set_meta(meta={'flag': True})
     titan_dir = dirs.Dir('/a/b')
     self.assertTrue(titan_dir.meta.flag)
 
@@ -84,14 +84,14 @@ class DirManagerTest(testing.BaseTestCase):
     self.assertEqual('/a/b', titan_dir.path)
 
   def testModifiedPath(self):
-    # Test Serialize().
+    # Test serialize().
     now = datetime.datetime.now()
     expected = {
         'path': '/foo',
         'modified': now,
         'action': dirs._STATUS_AVAILABLE,
     }
-    self.assertEqual(expected, dirs.ModifiedPath(**expected).Serialize())
+    self.assertEqual(expected, dirs.ModifiedPath(**expected).serialize())
 
   def testComputeAffectedDirs(self):
     dir_service = dirs.DirService()
@@ -99,7 +99,7 @@ class DirManagerTest(testing.BaseTestCase):
     # /a/b/foo is written.
     modified_path = dirs.ModifiedPath(
         '/a/b/foo', modified=0, action=PATH_WRITE_ACTION)
-    affected_dirs = dir_service.ComputeAffectedDirs([modified_path])
+    affected_dirs = dir_service.compute_affected_dirs([modified_path])
     expected_affected_dirs = {
         'dirs_with_adds': set(['/a', '/a/b']),
         'dirs_with_deletes': set(),
@@ -109,7 +109,7 @@ class DirManagerTest(testing.BaseTestCase):
     # /a/b/foo is deleted.
     modified_path = dirs.ModifiedPath(
         '/a/b/foo', modified=0, action=PATH_DELETE_ACTION)
-    affected_dirs = dir_service.ComputeAffectedDirs([modified_path])
+    affected_dirs = dir_service.compute_affected_dirs([modified_path])
     expected_affected_dirs = {
         'dirs_with_adds': set(),
         'dirs_with_deletes': set(['/a', '/a/b']),
@@ -121,7 +121,7 @@ class DirManagerTest(testing.BaseTestCase):
         '/a/b/foo', modified=123123.1, action=PATH_WRITE_ACTION)
     deleted_path = dirs.ModifiedPath(
         '/a/b/foo', modified=123123.2, action=PATH_DELETE_ACTION)
-    affected_dirs = dir_service.ComputeAffectedDirs([added_path, deleted_path])
+    affected_dirs = dir_service.compute_affected_dirs([added_path, deleted_path])
     expected_affected_dirs = {
         'dirs_with_adds': set(),
         'dirs_with_deletes': set(['/a', '/a/b']),
@@ -133,7 +133,7 @@ class DirManagerTest(testing.BaseTestCase):
         '/a/b/foo', modified=123123.1, action=PATH_WRITE_ACTION)
     deleted_path = dirs.ModifiedPath(
         '/a/b/c/d/bar', modified=123123.2, action=PATH_DELETE_ACTION)
-    affected_dirs = dir_service.ComputeAffectedDirs([added_path, deleted_path])
+    affected_dirs = dir_service.compute_affected_dirs([added_path, deleted_path])
     expected_affected_dirs = {
         'dirs_with_adds': set(['/a', '/a/b']),
         'dirs_with_deletes': set(['/a', '/a/b', '/a/b/c', '/a/b/c/d']),
@@ -147,7 +147,7 @@ class DirManagerTest(testing.BaseTestCase):
         '/a/b/foo', modified=123123.2, action=PATH_WRITE_ACTION)
     path3 = dirs.ModifiedPath(
         '/a/b/foo', modified=123123.1, action=PATH_DELETE_ACTION)
-    affected_dirs = dir_service.ComputeAffectedDirs([path1, path2, path3])
+    affected_dirs = dir_service.compute_affected_dirs([path1, path2, path3])
     expected_affected_dirs = {
         'dirs_with_adds': set(['/a', '/a/b']),
         'dirs_with_deletes': set(),
@@ -156,16 +156,16 @@ class DirManagerTest(testing.BaseTestCase):
 
   def testInitializeDirsFromCurrentState(self):
     # Don't register the factory before doing this (so the dirs aren't created):
-    files.File('/a/b/foo').Write('')
-    files.File('/a/b/bar').Write('')
-    files.File('/a/d/foo').Write('').Delete()
+    files.File('/a/b/foo').write('')
+    files.File('/a/b/bar').write('')
+    files.File('/a/d/foo').write('').delete()
 
     # Force the initializer to run twice by making batch size < len(files).
     # This does not test the respawning code path.
     self.stubs.SmartSet(dirs, 'INITIALIZER_BATCH_SIZE', 2)
 
     self.assertFalse(dirs.Dir('/a').exists)
-    dirs.InitializeDirsFromCurrentState()
+    dirs.init_dirs_from_current_state()
     self.RunDeferredTasks('default')
     self.assertTrue(dirs.Dir('/a').exists)
     self.assertTrue(dirs.Dir('/a/b').exists)

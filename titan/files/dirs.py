@@ -58,23 +58,23 @@ class RespawnSignalError(Error):
 class DirManagerMixin(files.File):
   """Mixin to initiate directory update tasks when files change."""
 
-  def Write(self, *args, **kwargs):
+  def write(self, *args, **kwargs):
     async = kwargs.pop('_dir_manager_async', True)
-    result = super(DirManagerMixin, self).Write(*args, **kwargs)
+    result = super(DirManagerMixin, self).write(*args, **kwargs)
     # Update parent dirs synchronously (the actual directory update RPC is
     # asynchronous, to effectively ignore write contention issues which will
     # rarely occur when many parent dirs don't exist and a large set of files
     # with common parent parents are concurrently created).
-    self.UpdateTitanDirs(async=async)
+    self.update_titan_dirs(async=async)
     return result
 
-  def Delete(self, *args, **kwargs):
-    result = super(DirManagerMixin, self).Delete(*args, **kwargs)
+  def delete(self, *args, **kwargs):
+    result = super(DirManagerMixin, self).delete(*args, **kwargs)
     # Update dirs eventually.
-    self.AddTitanDirDeleteTask()
+    self.add_titan_dir_delete_task()
     return result
 
-  def UpdateTitanDirs(self, async=True):
+  def update_titan_dirs(self, async=True):
     """Updates parent path directories to make sure they exist."""
     modified_path = ModifiedPath(
         path=self.path,
@@ -82,7 +82,7 @@ class DirManagerMixin(files.File):
         action=_STATUS_AVAILABLE,
     )
     dir_service = DirService()
-    affected_dirs_kwargs = dir_service.ComputeAffectedDirs([modified_path])
+    affected_dirs_kwargs = dir_service.compute_affected_dirs([modified_path])
 
     # Evil, but really really convenient. If in test or dev_appserver, just
     # update the directory entities synchronously with the request.
@@ -91,12 +91,12 @@ class DirManagerMixin(files.File):
       async = False
 
     affected_dirs_kwargs['async'] = async
-    dir_service.UpdateAffectedDirs(**affected_dirs_kwargs)
+    dir_service.update_affected_dirs(**affected_dirs_kwargs)
 
-  def AddTitanDirDeleteTask(self):
+  def add_titan_dir_delete_task(self):
     """Add a task to the pull queue about which path was deleted."""
     now = time.time()
-    window = _GetWindow(now)
+    window = _get_window(now)
     path_data = {
         'path': self.path,
         'modified': now,
@@ -118,12 +118,12 @@ class DirManagerMixin(files.File):
     server_software = os.environ.get('SERVER_SOFTWARE', '')
     if server_software.lower().startswith(('dev', 'test')):
       dir_task_consumer = DirTaskConsumer()
-      dir_task_consumer.ProcessNextWindow()
+      dir_task_consumer.process_next_window()
 
 class DirTaskConsumer(object):
   """Service which consumes and processes path-modification tasks."""
 
-  def ProcessNextWindow(self):
+  def process_next_window(self):
     """Lease one window-worth of tasks and update the corresponding dirs.
 
     Returns:
@@ -161,24 +161,24 @@ class DirTaskConsumer(object):
 
     # Compute the affected directories and then update them if needed.
     dir_service = DirService()
-    affected_dirs = dir_service.ComputeAffectedDirs(modified_paths)
-    dir_service.UpdateAffectedDirs(**affected_dirs)
+    affected_dirs = dir_service.compute_affected_dirs(modified_paths)
+    dir_service.update_affected_dirs(**affected_dirs)
 
-    for tasks_to_delete in utils.ChunkGenerator(tasks):
+    for tasks_to_delete in utils.chunk_generator(tasks):
       queue.delete_tasks(tasks_to_delete)
 
     return modified_paths
 
-  def ProcessWindowsWithBackoff(self, runtime=DEFAULT_CRON_RUNTIME_SECONDS):
+  def process_windows_with_backoff(self, runtime=DEFAULT_CRON_RUNTIME_SECONDS):
     """Long-running function to process multiple windows.
 
     Args:
       runtime: How long to process data for.
     Returns:
-      A list of results from ProcessNextWindow().
+      A list of results from process_next_window().
     """
-    results = utils.RunWithBackoff(
-        func=self.ProcessNextWindow,
+    results = utils.run_with_backoff(
+        func=self.process_next_window,
         runtime=runtime,
         max_backoff=TASKQUEUE_LEASE_SECONDS)
     return results
@@ -197,12 +197,12 @@ class ModifiedPath(object):
       modified: Unix timestamp float.
       action: One of ModifiedPath.WRITE or ModifiedPath.DELETE.
     """
-    utils.ValidateFilePath(path)
+    utils.validate_file_path(path)
     self.path = path
     self.modified = modified
     self.action = action
 
-  def Serialize(self):
+  def serialize(self):
     results = {
         'path': self.path,
         'modified': self.modified,
@@ -213,7 +213,7 @@ class ModifiedPath(object):
 class DirService(object):
   """Service for managing directory entities."""
 
-  def ComputeAffectedDirs(self, modified_paths):
+  def compute_affected_dirs(self, modified_paths):
     """Compute which dirs are affected by path modifications.
 
     Args:
@@ -229,7 +229,7 @@ class DirService(object):
     for modified_path in sorted_paths:
       if modified_path.path.startswith('/_titan/ver/'):
         # Small integration with versions mixin: don't create directories
-        # for versioned file paths. See note in _CreateAllDirsWithRespawn.
+        # for versioned file paths. See note in _create_all_dirs_with_respawn.
         continue
       new_modified_paths[modified_path.path] = modified_path
     sorted_paths = sorted(new_modified_paths.values(),
@@ -242,7 +242,7 @@ class DirService(object):
     dirs_with_adds = set()
     dirs_with_deletes = set()
     for modified_path in sorted_paths:
-      current_dirs = utils.SplitPath(modified_path.path)
+      current_dirs = utils.split_path(modified_path.path)
       if modified_path.action == ModifiedPath.WRITE:
         dirs_with_adds = dirs_with_adds.union(set(current_dirs))
       elif modified_path.action == ModifiedPath.DELETE:
@@ -258,8 +258,9 @@ class DirService(object):
     }
     return affected_dirs
 
-  def UpdateAffectedDirs(self, dirs_with_adds, dirs_with_deletes, async=False):
-    """Manage changes to _TitanDir entities computed by ComputeAffectedDirs."""
+  @ndb.toplevel
+  def update_affected_dirs(self, dirs_with_adds, dirs_with_deletes, async=False):
+    """Manage changes to _TitanDir entities computed by compute_affected_dirs."""
     # Order deletes by depth first. This isn't actually by depth, but all we
     # need to guarantee here is that paths with common subdirs are deleted
     # depth-first, which can be accomplished by sorting in reverse
@@ -273,11 +274,11 @@ class DirService(object):
     #   3. The directory path is not present in dirs_with_adds.
     dirs_paths_to_delete = []
     for path in dirs_with_deletes:
-      if path in dirs_with_adds or files.Files.List(path, limit=1,
+      if path in dirs_with_adds or files.Files.list(path, limit=1,
                                                     _internal=True):
         # The directory is marked for addition, or files still exist in it.
         continue
-      subdirs = Dirs.List(path, limit=2)
+      subdirs = Dirs.list(path, limit=2)
       if len(subdirs) > 1:
         # Multiple subdirs exist, cannot delete dir.
         continue
@@ -312,7 +313,7 @@ class DirService(object):
             id=path,
             name=os.path.basename(path),
             parent_path=os.path.dirname(path),
-            parent_paths=utils.SplitPath(path),
+            parent_paths=utils.split_path(path),
             status=_STATUS_DELETED,
         )
       # Whitespace. Important.
@@ -332,13 +333,13 @@ class DirService(object):
             id=path,
             name=os.path.basename(path),
             parent_path=os.path.dirname(path),
-            parent_paths=utils.SplitPath(path),
+            parent_paths=utils.split_path(path),
             status=_STATUS_AVAILABLE,
         )
       # Whitespace. Important.
       changed_dir_ents.append(ent)
 
-    for dir_ents in utils.ChunkGenerator(changed_dir_ents, chunk_size=100):
+    for dir_ents in utils.chunk_generator(changed_dir_ents, chunk_size=100):
       if not async:
         ndb.put_multi(dir_ents)
       else:
@@ -350,7 +351,7 @@ class Dir(object):
   # TODO(user): implement Copy and Move methods, and properties.
 
   def __init__(self, path):
-    Dir.ValidatePath(path)
+    Dir.validate_path(path)
     # Strip trailing slash.
     if path != '/' and path.endswith('/'):
       path = path[:-1]
@@ -395,18 +396,18 @@ class Dir(object):
     return self._name
 
   @staticmethod
-  def ValidatePath(path):
-    return utils.ValidateDirPath(path)
+  def validate_path(path):
+    return utils.validate_dir_path(path)
 
-  def SetMeta(self, meta):
-    _TitanDir.ValidateMetaProperties(meta)
+  def set_meta(self, meta):
+    _TitanDir.validate_meta_properties(meta)
     for key, value in meta.iteritems():
       setattr(self._dir, key, value)
     self._dir.put()
 
-  def Serialize(self):
+  def serialize(self):
     data = {
-        'meta': self._meta.Serialize() if self.meta else None,
+        'meta': self._meta.serialize() if self.meta else None,
         'path': self.path,
         'name': self.name,
     }
@@ -466,7 +467,7 @@ class Dirs(collections.Mapping):
       self[titan_dir.path] = titan_dir
 
   @classmethod
-  def List(cls, path, limit=None):
+  def list(cls, path, limit=None):
     """List the sub-directories of a directory.
 
     Args:
@@ -475,7 +476,7 @@ class Dirs(collections.Mapping):
     Returns:
       A lazy Dirs mapping.
     """
-    Dir.ValidatePath(path)
+    Dir.validate_path(path)
 
     # Strip trailing slash.
     if path != '/' and path.endswith('/'):
@@ -488,13 +489,13 @@ class Dirs(collections.Mapping):
     titan_dirs = cls([key.id() for key in dir_keys])
     return titan_dirs
 
-  def Serialize(self):
+  def serialize(self):
     data = {}
     for titan_dir in self.itervalues():
-      data[titan_dir.name] = titan_dir.Serialize()
+      data[titan_dir.name] = titan_dir.serialize()
     return data
 
-def InitializeDirsFromCurrentState(taskqueue_name='default'):
+def init_dirs_from_current_state(taskqueue_name='default'):
   """Spawns task to create and cleanup all directories from current file state.
 
   This is potentially expensive because it must touch every Titan File in
@@ -503,10 +504,10 @@ def InitializeDirsFromCurrentState(taskqueue_name='default'):
   Args:
     taskqueue_name: The name of the taskqueue which will be used.
   """
-  deferred.defer(_CreateAllDirsWithRespawn, _queue=taskqueue_name)
-  deferred.defer(_CleanDirsWithRespawn, _queue=taskqueue_name)
+  deferred.defer(_create_all_dirs_with_respawn, _queue=taskqueue_name)
+  deferred.defer(_clean_dirs_with_respawn, _queue=taskqueue_name)
 
-def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
+def _create_all_dirs_with_respawn(cursor=None, include_versioned_dirs=False):
   """A long-running, dir-creation task which respawns until completion."""
   now = datetime.datetime.now()
   # Disable the in-context cache to avoid OOM issues from cached query results.
@@ -547,9 +548,9 @@ def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
         modified_paths.append(modified_path)
 
       if modified_paths:
-        affected_dirs = dir_service.ComputeAffectedDirs(modified_paths)
+        affected_dirs = dir_service.compute_affected_dirs(modified_paths)
         if affected_dirs['dirs_with_adds']:
-          dir_service.UpdateAffectedDirs(**affected_dirs)
+          dir_service.update_affected_dirs(**affected_dirs)
           logging.info('Created directories: \n%s',
                        '\n'.join(sorted(list(affected_dirs['dirs_with_adds']))))
 
@@ -566,12 +567,12 @@ def _CreateAllDirsWithRespawn(cursor=None, include_versioned_dirs=False):
     try:
       taskqueue_name = os.environ['HTTP_X_APPENGINE_QUEUENAME']
       deferred.defer(
-          _CreateAllDirsWithRespawn,
+          _create_all_dirs_with_respawn,
           cursor=penultimate_cursor, _queue=taskqueue_name)
     except:
       logging.exception('Unable to finish creating directories!')
 
-def _CleanDirsWithRespawn(cursor=None):
+def _clean_dirs_with_respawn(cursor=None):
   """A long-running, dir-cleanup task which respawns until completion."""
   # Disable the in-context cache to avoid OOM issues from cached query results.
   ndb.get_context().set_cache_policy(False)
@@ -588,7 +589,7 @@ def _CleanDirsWithRespawn(cursor=None):
       dir_keys_to_delete = []
       for ent in ents:
         # A directory is empty if it doesn't have any files, recursively.
-        titan_files = files.Files.List(ent.path, recursive=True, limit=1,
+        titan_files = files.Files.list(ent.path, recursive=True, limit=1,
                                        _internal=True)
         if not titan_files:
           dir_keys_to_delete.append(ent.key)
@@ -603,7 +604,7 @@ def _CleanDirsWithRespawn(cursor=None):
     try:
       taskqueue_name = os.environ['HTTP_X_APPENGINE_QUEUENAME']
       deferred.defer(
-          _CleanDirsWithRespawn,
+          _clean_dirs_with_respawn,
           cursor=penultimate_cursor, _queue=taskqueue_name)
     except:
       logging.exception('Unable to finish cleaning empty directories!')
@@ -652,7 +653,7 @@ class _TitanDir(ndb.Expando):
     return meta_properties
 
   @staticmethod
-  def ValidateMetaProperties(meta):
+  def validate_meta_properties(meta):
     """Verify that meta properties are valid."""
     if not meta:
       return
@@ -660,6 +661,6 @@ class _TitanDir(ndb.Expando):
       if key in _TitanDir.BASE_PROPERTIES:
         raise InvalidMetaError('Invalid name for meta property: "%s"' % key)
 
-def _GetWindow(timestamp=None, window_size=WINDOW_SIZE_SECONDS):
+def _get_window(timestamp=None, window_size=WINDOW_SIZE_SECONDS):
   """Get the window for the given unix time and window size."""
   return int(window_size * round(float(timestamp) / window_size))

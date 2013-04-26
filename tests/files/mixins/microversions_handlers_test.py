@@ -30,13 +30,13 @@ class MicroversionsHandlersTest(testing.BaseTestCase):
   def setUp(self):
     super(MicroversionsHandlersTest, self).setUp()
     self.app = webtest.TestApp(microversions_handlers.application)
-    files.RegisterFileMixins(
+    files.register_file_mixins(
         [microversions.MicroversioningMixin, versions.FileVersioningMixin])
 
   def testProcessMicroversionsHandler(self):
     self.stubs.SmartSet(microversions, 'DEFAULT_PROCESSING_TIMEOUT_SECONDS', 1)
-    self.stubs.Set(microversions, 'ProcessData', lambda _: None)
-    self.stubs.Set(microversions, 'ProcessDataWithBackoff', lambda: None)
+    self.stubs.Set(microversions, 'process_data', lambda _: None)
+    self.stubs.Set(microversions, 'process_data_with_backoff', lambda: None)
 
     # Weakly test execution path; the rest is tested by microversions_test.
     response = self.app.get('/_titan/files/microversions/processdata')

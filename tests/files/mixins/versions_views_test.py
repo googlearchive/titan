@@ -37,7 +37,7 @@ class HandlersTest(testing.BaseTestCase):
   def setUp(self):
     super(HandlersTest, self).setUp()
     self.app = webtest.TestApp(versions_views.application)
-    files.RegisterFileFactory(lambda *args, **kwargs: VersionedFile)
+    files.register_file_factory(lambda *args, **kwargs: VersionedFile)
 
   def testChangesetHandler(self):
     # Weakly test execution path:
@@ -54,11 +54,11 @@ class HandlersTest(testing.BaseTestCase):
 
     # 2nd:
     versions_views.versions.VersionControlService().AndReturn(mock_vcs)
-    mock_vcs.Commit(mox.IgnoreArg(), force=True).AndReturn('success')
+    mock_vcs.commit(mox.IgnoreArg(), force=True).AndReturn('success')
 
     # 3rd:
     versions_views.versions.VersionControlService().AndReturn(mock_vcs)
-    mock_vcs.Commit(mox.IgnoreArg(), force=False).AndReturn('success')
+    mock_vcs.commit(mox.IgnoreArg(), force=False).AndReturn('success')
 
     self.mox.ReplayAll()
 

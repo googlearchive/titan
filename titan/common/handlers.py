@@ -22,7 +22,7 @@ from titan.common import utils
 class BaseHandler(webapp2.RequestHandler):
   """Base handler."""
 
-  def WriteJsonResponse(self, data, **kwargs):
+  def write_json_response(self, data, **kwargs):
     """Data to serialize. Accepts keyword args to pass to the encoder."""
     self.response.headers['Content-Type'] = 'application/json'
     json_data = json.dumps(data, cls=utils.CustomJsonEncoder, **kwargs)

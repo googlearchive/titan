@@ -9,16 +9,16 @@ import logging
 from google.appengine.api import channel as channel_lib
 from titan import files
 
-CHANNELS_DIR = '/_titan/channel/'
-
 __all__ = [
     # Functions.
-    'CreateChannel',
+    'create_channel',
     # Classes.
     'BroadcastChannel',
 ]
 
-def CreateChannel(client_id):
+CHANNELS_DIR = '/_titan/channel/'
+
+def create_channel(client_id):
   """Simple convenience wrapper for App Engine's create_channel.
 
   Args:
@@ -55,9 +55,9 @@ class BroadcastChannel(object):
     return self._file.exists
 
   def _Save(self):
-    self._file.Write(json.dumps(self.Serialize()))
+    self._file.write(json.dumps(self.serialize()))
 
-  def Subscribe(self, client_id):
+  def subscribe(self, client_id):
     """Adds an existing client to the broadcast channel.
 
     Can be called with any App Engine channel client_id, including ones created
@@ -73,7 +73,7 @@ class BroadcastChannel(object):
     self._client_ids.add(client_id)
     self._Save()
 
-  def SendMessage(self, message):
+  def send_message(self, message):
     """Sends a message to all clients registered to the channel.
 
     Args:
@@ -95,7 +95,7 @@ class BroadcastChannel(object):
     for client_id in self._client_ids:
       channel_lib.send_message(client_id, json.dumps(message))
 
-  def Serialize(self):
+  def serialize(self):
     data = {
         'key': self.key,
         'client_ids': list(self._client_ids) if self._file else [],

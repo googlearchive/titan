@@ -48,13 +48,13 @@ class FileTestCase(testing.BaseTestCase):
     self.blob_reader = blobstore.BlobReader(self.blob_key)
 
   def tearDown(self):
-    files.UnregisterFileFactory()
+    files.unregister_file_factory()
     super(FileTestCase, self).tearDown()
 
   def testFile(self):
     meta = {'color': 'blue', 'flag': False}
     titan_file = files.File('/foo/bar.html')
-    titan_file.Write('Test', meta=meta)
+    titan_file.write('Test', meta=meta)
 
     # Init with path only, verify lazy-loading properties.
     titan_file = files.File('/foo/bar.html')
@@ -74,11 +74,11 @@ class FileTestCase(testing.BaseTestCase):
     self.assertTrue(titan_file.is_loaded)
     self.assertIsNotNone(titan_file._file_ent)
 
-    # Write().
+    # write().
     self.assertEqual(titan_file.content, 'Test')
-    titan_file.Write('New content')
+    titan_file.write('New content')
     self.assertEqual(titan_file.content, 'New content')
-    titan_file.Write('')
+    titan_file.write('')
     self.assertEqual(titan_file.content, '')
     # Check meta data.
     self.assertEqual('blue', titan_file.meta.color)
@@ -86,14 +86,14 @@ class FileTestCase(testing.BaseTestCase):
 
     # Delete().
     self.assertTrue(titan_file.exists)
-    titan_file.Delete()
+    titan_file.delete()
     self.assertFalse(titan_file.exists)
-    titan_file.Write(content='Test', meta=meta)
-    titan_file.Delete()
+    titan_file.write(content='Test', meta=meta)
+    titan_file.delete()
     self.assertFalse(titan_file.exists)
 
-    # Serialize().
-    titan_file = files.File('/foo/bar/baz').Write('', meta=meta)
+    # serialize().
+    titan_file = files.File('/foo/bar/baz').write('', meta=meta)
     expected_data = {
         'path': '/foo/bar/baz',
         'real_path': '/foo/bar/baz',
@@ -114,7 +114,7 @@ class FileTestCase(testing.BaseTestCase):
         'md5_hash': hashlib.md5('').hexdigest(),
     }
     self.assertEqual(expected_data,
-                     files.File('/foo/bar/baz').Serialize(full=True))
+                     files.File('/foo/bar/baz').serialize(full=True))
 
     # Properties: name, name_clean, extension, paths, mime_type, created,
     # modified, blob, created_by, modified_by, and size.
@@ -124,7 +124,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual('.html', titan_file.extension)
     # Check bool handling:
     self.assertFalse(titan_file)
-    titan_file.Write('')
+    titan_file.write('')
     self.assertTrue(titan_file)
     self.assertEqual(['/', '/foo', '/foo/bar'], titan_file.paths)
     self.assertEqual('text/html', titan_file.mime_type)
@@ -136,14 +136,14 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(users.TitanUser('titanuser@example.com'),
                      titan_file.modified_by)
     # Size:
-    titan_file.Write('foo')
+    titan_file.write('foo')
     self.assertEqual(3, titan_file.size)
-    titan_file.Write(u'f♥♥')
+    titan_file.write(u'f♥♥')
     # "size" should represent the number of bytes, not the number of characters.
     # 'f♥♥' == 'f\xe2\x99\xa5\xe2\x99\xa5' == 1 + 3 + 3 == 7
     self.assertEqual(7, titan_file.size)
     # "size" should use blob size if present:
-    titan_file.Write(LARGE_FILE_CONTENT)
+    titan_file.write(LARGE_FILE_CONTENT)
     self.assertEqual(1 << 21, titan_file.size)
 
     # read() and content property.
@@ -156,8 +156,8 @@ class FileTestCase(testing.BaseTestCase):
     titan_file = files.File('/foo/fake.html')
     self.assertRaises(files.BadFileError, lambda: titan_file.paths)
     self.assertRaises(files.BadFileError, lambda: titan_file.content)
-    self.assertRaises(files.BadFileError, titan_file.Delete)
-    self.assertRaises(files.BadFileError, titan_file.Serialize)
+    self.assertRaises(files.BadFileError, titan_file.delete)
+    self.assertRaises(files.BadFileError, titan_file.serialize)
 
     # Bad path arguments:
     self.assertRaises(ValueError, files.File, None)
@@ -191,18 +191,18 @@ class FileTestCase(testing.BaseTestCase):
     dates = ['modified', 'created']
 
     # Synchronous write of a new file.
-    actual_file = files.File('/foo/bar.html').Write('Test', meta=meta)
+    actual_file = files.File('/foo/bar.html').write('Test', meta=meta)
     self.assertNdbEntityEqual(expected_file, actual_file._file, ignore=dates)
     self.assertNotEqual(None, actual_file.modified, 'modified is not being set')
 
     # Synchronous update without changes.
-    actual_file = files.File('/foo/bar.html').Write(meta=meta)
+    actual_file = files.File('/foo/bar.html').write(meta=meta)
     self.assertNdbEntityEqual(expected_file, actual_file._file, ignore=dates)
 
     # Synchronous update with changes.
     old_modified = actual_file.modified
     actual_file = files.File('/foo/bar.html')
-    actual_file.Write('New content', meta=new_meta, mime_type='fake/type')
+    actual_file.write('New content', meta=new_meta, mime_type='fake/type')
     expected_file.content = 'New content'
     expected_file.md5_hash = hashlib.md5('New content').hexdigest()
     expected_file.flag = True
@@ -211,25 +211,40 @@ class FileTestCase(testing.BaseTestCase):
     self.assertNotEqual(old_modified, actual_file.modified)
 
     # Allow writing blank files.
-    actual_file = files.File('/foo/bar.html').Write('')
+    actual_file = files.File('/foo/bar.html').write('')
     self.assertEqual(actual_file.content, '')
 
     # Allow overwriting mime_type and meta without touching content.
-    files.File('/foo/bar.html').Write(content='Test')
-    actual_file = files.File('/foo/bar.html').Write(mime_type='fake/mimetype')
+    files.File('/foo/bar.html').write(content='Test')
+    actual_file = files.File('/foo/bar.html').write(mime_type='fake/mimetype')
     self.assertEqual('fake/mimetype', actual_file.mime_type)
     self.assertEqual('Test', actual_file.content)
 
-    actual_file = files.File('/foo/bar.html').Write(meta=new_meta)
+    actual_file = files.File('/foo/bar.html').write(meta=new_meta)
     self.assertEqual(True, actual_file.meta.flag)
     self.assertEqual('Test', actual_file.content)
 
+    # Allow overwriting created and modified without touching content.
+    files.File('/foo/bar.html').write(content='Test')
+    now = datetime.datetime.now() + datetime.timedelta(days=1)
+    actual_file = files.File('/foo/bar.html').write(created=now, modified=now)
+    self.assertEqual(now, actual_file.created)
+    self.assertEqual(now, actual_file.modified)
+    # Verify the same behavior for the file creation codepath.
+    files.File('/foo/bar.html').delete().write(
+        'Test', created=now, modified=now)
+    self.assertEqual(now, actual_file.created)
+    self.assertEqual(now, actual_file.modified)
+    # Error handling.
+    self.assertRaises(ValueError, files.File('/a').write, '', created='foo')
+    self.assertRaises(ValueError, files.File('/a').write, '', modified='foo')
+
     # Cleanup.
     expected_file = original_expected_file
-    files.File('/foo/bar.html').Delete()
+    files.File('/foo/bar.html').delete()
 
-    # Write large content to blobstore.
-    titan_file = files.File('/foo/bar.html').Write(content=LARGE_FILE_CONTENT)
+    # write large content to blobstore.
+    titan_file = files.File('/foo/bar.html').write(content=LARGE_FILE_CONTENT)
     blob_key = titan_file.blob.key()
     self.assertTrue(blob_key)
     self.assertEqual(LARGE_FILE_CONTENT, titan_file.content)
@@ -241,7 +256,7 @@ class FileTestCase(testing.BaseTestCase):
     # De-duping check: verify the blob key doesn't change if the content
     # doesn't change.
     old_blob_key = blob_key
-    titan_file = files.File('/foo/bar.html').Write(content=LARGE_FILE_CONTENT)
+    titan_file = files.File('/foo/bar.html').write(content=LARGE_FILE_CONTENT)
     blob_key = titan_file.blob.key()
     self.assertEqual(old_blob_key, blob_key)
     self.assertEqual(LARGE_FILE_CONTENT, titan_file.content)
@@ -249,28 +264,28 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(LARGE_FILE_CONTENT, files.File('/foo/bar.html').content)
     self.stubs.SmartUnsetAll()
 
-    # Write with a blob key and encoding; verify proper decoding.
+    # write with a blob key and encoding; verify proper decoding.
     encoded_foo = u'f♥♥'.encode('utf-8')
-    blob_key = utils.WriteToBlobstore(encoded_foo)
+    blob_key = utils.write_to_blobstore(encoded_foo)
     titan_file = files.File('/foo/bar.html')
     # Verify that without encoding, the encoded bytestring is returned.
-    titan_file.Write(blob=blob_key)
+    titan_file.write(blob=blob_key)
     self.assertEqual(encoded_foo, titan_file.content)
     # Verify that with encoding, a unicode string is returned.
-    titan_file.Write(blob=blob_key, encoding='utf-8')
+    titan_file.write(blob=blob_key, encoding='utf-8')
     self.assertEqual(u'f♥♥', titan_file.content)
     # Argument error handling for mixing encoding and unicode content:
-    self.assertRaises(TypeError, titan_file.Write, content=u'Test',
+    self.assertRaises(TypeError, titan_file.write, content=u'Test',
                       encoding='utf-8')
 
     # Make sure the blob is deleted with the file:
-    titan_file.Delete()
+    titan_file.delete()
     self.assertIsNone(blobstore.get(blob_key))
     self.assertRaises(files.BadFileError, lambda: titan_file.blob)
     # Make sure the blob is deleted if the file gets smaller:
-    titan_file = files.File('/foo/bar.html').Write(content=LARGE_FILE_CONTENT)
+    titan_file = files.File('/foo/bar.html').write(content=LARGE_FILE_CONTENT)
     blob_key = titan_file.blob.key()
-    titan_file.Write(content='Test')
+    titan_file.write(content='Test')
     self.assertIsNone(blobstore.get(blob_key))
     # Test the current object and a new instance:
     self.assertEqual('Test', titan_file.content)
@@ -278,8 +293,8 @@ class FileTestCase(testing.BaseTestCase):
     self.assertIsNone(titan_file.blob)
     self.assertIsNone(files.File('/foo/bar.html').blob)
 
-    # Write with a BlobKey:
-    titan_file = files.File('/foo/bar.html').Write(blob=self.blob_key)
+    # write with a BlobKey:
+    titan_file = files.File('/foo/bar.html').write(blob=self.blob_key)
     blob_content = self.blob_reader.read()
     # Test the current object and a new instance:
     self.assertEqual(blob_content, files.File('/foo/bar.html').content)
@@ -289,65 +304,65 @@ class FileTestCase(testing.BaseTestCase):
 
     # Cleanup.
     expected_file = original_expected_file
-    files.File('/foo/bar.html').Delete()
+    files.File('/foo/bar.html').delete()
 
     # Error handling:
     # Updating mime_type or meta when entity doesn't exist.
     titan_file = files.File('/fake/file')
-    self.assertRaises(files.BadFileError, titan_file.Write, meta=meta)
-    self.assertRaises(files.BadFileError, titan_file.Write,
+    self.assertRaises(files.BadFileError, titan_file.write, meta=meta)
+    self.assertRaises(files.BadFileError, titan_file.write,
                       mime_type='fake/mimetype')
 
     # Bad arguments:
-    self.assertRaises(TypeError, titan_file.Write)
-    self.assertRaises(TypeError, titan_file.Write, content=None, blob=None)
-    self.assertRaises(TypeError, titan_file.Write, content='Test',
+    self.assertRaises(TypeError, titan_file.write)
+    self.assertRaises(TypeError, titan_file.write, content=None, blob=None)
+    self.assertRaises(TypeError, titan_file.write, content='Test',
                       blob=self.blob_key)
 
     # Attempt to set invalid dynamic property.
     meta = {'path': False}
-    self.assertRaises(AttributeError, titan_file.Write, content='', meta=meta)
+    self.assertRaises(AttributeError, titan_file.write, content='', meta=meta)
     meta = {'mime_type': 'fail'}
     self.assertRaises(files.InvalidMetaError,
-                      titan_file.Write, content='', meta=meta)
+                      titan_file.write, content='', meta=meta)
 
   def testDelete(self):
     # Synchronous delete.
-    titan_file = files.File('/foo/bar.html').Write('')
+    titan_file = files.File('/foo/bar.html').write('')
     self.assertTrue(titan_file.exists)
-    titan_file.Delete()
+    titan_file.delete()
     # Recreate object, just in case memoization is hiding an error:
     self.assertFalse(files.File('/foo/bar.html').exists)
 
     # Error handling.
-    self.assertRaises(files.BadFileError, files.File('/fake.html').Delete)
+    self.assertRaises(files.BadFileError, files.File('/fake.html').delete)
 
   def testFileMixins(self):
-    # Support behavior: subclass File and make Write() also touch a
+    # Support behavior: subclass File and make write() also touch a
     # centralized file, while avoiding infinite recursion.
 
     class TouchRootMixin(files.File):
 
-      def Write(self, *args, **kwargs):
+      def write(self, *args, **kwargs):
         # Note: this mixin is a bad idea in practice. Don't directly touch a
         # centralized file on every write, due to write rate limits.
         if self.path != '/root-touched-file':
-          files.File('/root-touched-file').Write('')
-        super(TouchRootMixin, self).Write(*args, **kwargs)
+          files.File('/root-touched-file').write('')
+        super(TouchRootMixin, self).write(*args, **kwargs)
 
     class CustomFile(TouchRootMixin, files.File):
       pass
 
     custom_file = CustomFile('/foo/bar')
-    custom_file.Write('foo')
+    custom_file.write('foo')
     self.assertTrue(custom_file.exists)
     self.assertTrue(files.File('/foo/bar').exists)
     self.assertTrue(files.File('/root-touched-file').exists)
 
   def testCopyTo(self):
-    files.File('/foo.html').Write('Test', mime_type='test/mimetype',
+    files.File('/foo.html').write('Test', mime_type='test/mimetype',
                                   meta={'color': 'blue'})
-    files.File('/foo.html').CopyTo(files.File('/bar/qux.html'))
+    files.File('/foo.html').copy_to(files.File('/bar/qux.html'))
     titan_file = files.File('/bar/qux.html')
     self.assertEqual('/bar/qux.html', titan_file.path)
     self.assertEqual(['/', '/bar'], titan_file.paths)
@@ -361,17 +376,17 @@ class FileTestCase(testing.BaseTestCase):
         'size': 'large',
         'full_name': 'John Doe',
     }
-    titan_file = files.File('/meta.html').Write('hello', meta=meta)
+    titan_file = files.File('/meta.html').write('hello', meta=meta)
     dest_file = files.File('/meta2.html')
-    titan_file.CopyTo(dest_file, exclude_meta=['full_name'])
+    titan_file.copy_to(dest_file, exclude_meta=['full_name'])
     self.assertEqual('blue', dest_file.meta.color)
     self.assertEqual('large', dest_file.meta.size)
     self.assertRaises(AttributeError, lambda: dest_file.meta.full_name)
 
     # Blobs instead of content.
-    files.File('/foo.html').Delete()
-    files.File('/foo.html').Write(blob=self.blob_key, meta={'flag': False})
-    files.File('/foo.html').CopyTo(files.File('/bar/qux.html'))
+    files.File('/foo.html').delete()
+    files.File('/foo.html').write(blob=self.blob_key, meta={'flag': False})
+    files.File('/foo.html').copy_to(files.File('/bar/qux.html'))
     titan_file = files.File('/bar/qux.html')
     blob_content = self.blob_reader.read()
     self.assertEqual(blob_content, titan_file.content)
@@ -381,24 +396,24 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(AttributeError, lambda: titan_file.meta.color)
 
     # Error handling:
-    self.assertRaises(AssertionError, files.File('/foo.html').CopyTo, '/test')
-    self.assertRaises(files.CopyFileError, files.File('/fake').CopyTo,
+    self.assertRaises(AssertionError, files.File('/foo.html').copy_to, '/test')
+    self.assertRaises(files.CopyFileError, files.File('/fake').copy_to,
                       files.File('/test/fake'))
     # Verify that the exception is populated with the failed destination file.
     try:
-      files.File('/fake').CopyTo(files.File('/test/fake'))
+      files.File('/fake').copy_to(files.File('/test/fake'))
     except files.CopyFileError as e:
       self.assertEqual('/test/fake', e.titan_file.path)
 
   def testMoveTo(self):
-    files.File('/foo.html').Write('Test', meta={'color': 'blue'})
-    files.File('/foo.html').MoveTo(files.File('/bar/qux.html'))
+    files.File('/foo.html').write('Test', meta={'color': 'blue'})
+    files.File('/foo.html').move_to(files.File('/bar/qux.html'))
     self.assertFalse(files.File('/foo.html').exists)
     self.assertTrue(files.File('/bar/qux.html').exists)
 
     # Blob instead of content.
-    files.File('/foo.html').Write(blob=self.blob_key, meta={'flag': False})
-    files.File('/foo.html').MoveTo(files.File('/bar/qux.html'))
+    files.File('/foo.html').write(blob=self.blob_key, meta={'flag': False})
+    files.File('/foo.html').move_to(files.File('/bar/qux.html'))
     titan_file = files.File('/bar/qux.html')
     blob_content = self.blob_reader.read()
     self.assertEqual(blob_content, titan_file.content)
@@ -406,7 +421,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual(False, titan_file.meta.flag)
     self.assertRaises(AttributeError, lambda: titan_file.meta.color)
 
-    self.assertRaises(AssertionError, files.File('/foo.html').MoveTo, '/test')
+    self.assertRaises(AssertionError, files.File('/foo.html').move_to, '/test')
 
   def testRegisterFileFactory(self):
 
@@ -423,7 +438,7 @@ class FileTestCase(testing.BaseTestCase):
         return BarFile
       return files.File
 
-    files.RegisterFileFactory(TitanFileFactory)
+    files.register_file_factory(TitanFileFactory)
     foo_file = files.File('/foo/files/a')
     bar_file = files.File('/bar/files/b')
     normal_file = files.File('/c')
@@ -439,12 +454,12 @@ class FileTestCase(testing.BaseTestCase):
     class BarFileMixin(files.File):
 
       @classmethod
-      def ShouldApplyMixin(cls, **kwargs):
+      def should_apply_mixin(cls, **kwargs):
         if kwargs['path'].startswith('/bar/files/'):
           return True
         return False
 
-    files.RegisterFileMixins([FooFileMixin, BarFileMixin])
+    files.register_file_mixins([FooFileMixin, BarFileMixin])
 
     # Pickle and unpickle each file to verify __reduce__ behavior.
     foo_file = pickle.loads(pickle.dumps(files.File('/foo/files/a')))
@@ -467,8 +482,8 @@ class FilesTestCase(testing.BaseTestCase):
         '/foo/bar/baz.html',
         '/foo/bar/baz.txt',
     ])
-    root_and_first_levels = files.Files.Merge(root_level, first_level)
-    first_and_second_levels = files.Files.Merge(first_level, second_level)
+    root_and_first_levels = files.Files.merge(root_level, first_level)
+    first_and_second_levels = files.Files.merge(first_level, second_level)
 
     # files.Files.update().
     all_files = files.Files([])
@@ -482,63 +497,63 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertFalse(files.Files(['/a', '/b']) == files.Files(['/a']))
 
     for titan_file in all_files.itervalues():
-      titan_file.Write('')
+      titan_file.write('')
 
     # Empty.
-    self.assertSameObjects(files.Files(), files.Files.List('/fake/path'))
-    self.assertSameObjects(files.Files([]), files.Files.List('/fake/path'))
+    self.assertSameObjects(files.Files(), files.Files.list('/fake/path'))
+    self.assertSameObjects(files.Files([]), files.Files.list('/fake/path'))
 
     # From root.
-    self.assertSameObjects(root_level, files.Files.List('/'))
-    titan_files = files.Files.List('/', recursive=True)
+    self.assertSameObjects(root_level, files.Files.list('/'))
+    titan_files = files.Files.list('/', recursive=True)
     self.assertSameObjects(all_files, titan_files)
 
     # From first level dir.
-    self.assertSameObjects(first_level, files.Files.List('/foo'))
-    self.assertSameObjects(first_level, files.Files.List('/foo/'))
-    titan_files = files.Files.List('/foo', recursive=True)
+    self.assertSameObjects(first_level, files.Files.list('/foo'))
+    self.assertSameObjects(first_level, files.Files.list('/foo/'))
+    titan_files = files.Files.list('/foo', recursive=True)
     self.assertSameObjects(first_and_second_levels, titan_files)
 
     # From second level dir.
-    self.assertSameObjects(second_level, files.Files.List('/foo/bar'))
-    titan_files = files.Files.List('/foo/bar', recursive=True)
+    self.assertSameObjects(second_level, files.Files.list('/foo/bar'))
+    titan_files = files.Files.list('/foo/bar', recursive=True)
     self.assertSameObjects(second_level, titan_files)
 
     # Limit recursion depth.
-    titan_files = files.Files.List('/', recursive=True, depth=1)
+    titan_files = files.Files.list('/', recursive=True, depth=1)
     self.assertSameObjects(root_and_first_levels, titan_files)
-    titan_files = files.Files.List('/', recursive=True, depth=2)
+    titan_files = files.Files.list('/', recursive=True, depth=2)
     self.assertSameObjects(all_files, titan_files)
-    titan_files = files.Files.List('/foo/', recursive=True, depth=1)
+    titan_files = files.Files.list('/foo/', recursive=True, depth=1)
     self.assertSameObjects(first_and_second_levels, titan_files)
 
     # Limit the number of files returned.
-    titan_files = files.Files.List('/foo', recursive=True, limit=1)
+    titan_files = files.Files.list('/foo', recursive=True, limit=1)
     self.assertEqual(1, len(titan_files))
 
     # Support trailing slashes.
-    self.assertSameObjects(second_level, files.Files.List('/foo/bar/'))
-    titan_files = files.Files.List('/foo/bar/', recursive=True)
+    self.assertSameObjects(second_level, files.Files.list('/foo/bar/'))
+    titan_files = files.Files.list('/foo/bar/', recursive=True)
     self.assertSameObjects(second_level, titan_files)
 
     # Custom filters:
-    files.File('/a/foo').Write('', meta={'color': 'red', 'count': 1})
-    files.File('/a/bar/qux').Write('', meta={'color': 'red', 'count': 2})
-    files.File('/a/baz').Write('', meta={'color': 'blue', 'count': 3})
+    files.File('/a/foo').write('', meta={'color': 'red', 'count': 1})
+    files.File('/a/bar/qux').write('', meta={'color': 'red', 'count': 2})
+    files.File('/a/baz').write('', meta={'color': 'blue', 'count': 3})
     # Single filter:
     filters = [files.FileProperty('color') == 'red']
-    titan_files = files.Files.List('/a', filters=filters)
+    titan_files = files.Files.list('/a', filters=filters)
     self.assertSameObjects(['/a/foo'], titan_files)
     # Multiple filters:
     filters = [
         files.FileProperty('color') == 'blue',
         files.FileProperty('count') == 3,
     ]
-    titan_files = files.Files.List('/', recursive=True, filters=filters)
+    titan_files = files.Files.list('/', recursive=True, filters=filters)
     self.assertEqual(files.Files(['/a/baz']), titan_files)
     # Recursive:
     filters = [files.FileProperty('color') == 'red']
-    titan_files = files.Files.List('/', recursive=True, filters=filters)
+    titan_files = files.Files.list('/', recursive=True, filters=filters)
     self.assertEqual(files.Files(['/a/foo', '/a/bar/qux']), titan_files)
     # Non-meta property:
     user = users.TitanUser('titanuser@example.com')
@@ -546,16 +561,16 @@ class FilesTestCase(testing.BaseTestCase):
         files.FileProperty('created_by') == str(user),
         files.FileProperty('count') == 2,
     ]
-    titan_files = files.Files.List('/a/', recursive=True, filters=filters)
+    titan_files = files.Files.list('/a/', recursive=True, filters=filters)
     self.assertEqual(files.Files(['/a/bar/qux']), titan_files)
 
     # Error handling.
-    self.assertRaises(ValueError, files.Files.List, '')
-    self.assertRaises(ValueError, files.Files.List, '//')
-    self.assertRaises(ValueError, files.Files.List, '/..')
-    self.assertRaises(ValueError, files.Files.List, '/',
+    self.assertRaises(ValueError, files.Files.list, '')
+    self.assertRaises(ValueError, files.Files.list, '//')
+    self.assertRaises(ValueError, files.Files.list, '/..')
+    self.assertRaises(ValueError, files.Files.list, '/',
                       recursive=True, depth=0)
-    self.assertRaises(ValueError, files.Files.List, '/',
+    self.assertRaises(ValueError, files.Files.list, '/',
                       recursive=False, depth=1)
 
   def testFilesCount(self):
@@ -567,51 +582,51 @@ class FilesTestCase(testing.BaseTestCase):
         '/foo/bar/baz.html',
         '/foo/bar/baz.txt',
     ])
-    root_and_first_levels = files.Files.Merge(root_level, first_level)
+    root_and_first_levels = files.Files.merge(root_level, first_level)
     all_files = files.Files(root_level.keys() +
                             first_level.keys() +
                             second_level.keys())
 
     for titan_file in all_files.itervalues():
-      titan_file.Write('')
+      titan_file.write('')
 
     # Empty.
-    self.assertEqual(0, files.Files.Count('/fake/path'))
+    self.assertEqual(0, files.Files.count('/fake/path'))
 
     # From root.
-    self.assertEqual(len(root_level), files.Files.Count('/'))
-    self.assertEqual(len(all_files), files.Files.Count('/', recursive=True))
+    self.assertEqual(len(root_level), files.Files.count('/'))
+    self.assertEqual(len(all_files), files.Files.count('/', recursive=True))
 
     # Limit recursion depth.
     self.assertEqual(len(root_and_first_levels),
-                     files.Files.Count('/', recursive=True, depth=1))
+                     files.Files.count('/', recursive=True, depth=1))
 
     # Custom filters:
-    files.File('/a/foo').Write('', meta={'color': 'red', 'item_id': 1})
-    files.File('/a/bar/qux').Write('', meta={'color': 'red', 'item_id': 2})
-    files.File('/a/baz').Write('', meta={'color': 'blue', 'item_id': 3})
+    files.File('/a/foo').write('', meta={'color': 'red', 'item_id': 1})
+    files.File('/a/bar/qux').write('', meta={'color': 'red', 'item_id': 2})
+    files.File('/a/baz').write('', meta={'color': 'blue', 'item_id': 3})
     # Single filter:
     filters = [files.FileProperty('color') == 'blue']
-    self.assertEqual(1, files.Files.Count('/', recursive=True, filters=filters))
+    self.assertEqual(1, files.Files.count('/', recursive=True, filters=filters))
     # Multiple filters:
     filters = [
         files.FileProperty('color') == 'red',
         files.FileProperty('item_id') == 2,
     ]
-    self.assertEqual(1, files.Files.Count('/', recursive=True, filters=filters))
+    self.assertEqual(1, files.Files.count('/', recursive=True, filters=filters))
 
   def testOrderedFiles(self):
     # Create files for testing.
     root_level = files.OrderedFiles([
         # These need to be alphabetically ordered here because they will be
-        # usually returned that way from queries inside files.Files.List(),
+        # usually returned that way from queries inside files.Files.list(),
         # except for when other filters are applied.
         '/bar',
         '/baz',
         '/foo',
     ])
     for titan_file in root_level.itervalues():
-      titan_file.Write('')
+      titan_file.write('')
 
     # Verify that equality handles order checking. Do this first to make sure
     # that following assertEqual() calls are also checking for order.
@@ -621,7 +636,7 @@ class FilesTestCase(testing.BaseTestCase):
         '/foo',
         '/bar',
     ])
-    root_level_same_order.Sort()
+    root_level_same_order.sort()
     root_level_different_order = files.OrderedFiles([
         '/foo',
         '/baz',
@@ -642,10 +657,10 @@ class FilesTestCase(testing.BaseTestCase):
     del new_root_level['/qux']
     self.assertEqual(root_level, new_root_level)
 
-    # Test files.OrderedFiles.List().
-    self.assertEqual(root_level, files.OrderedFiles.List('/'))
+    # Test files.OrderedFiles.list().
+    self.assertEqual(root_level, files.OrderedFiles.list('/'))
     self.assertNotEqual(root_level_different_order,
-                        files.OrderedFiles.List('/'))
+                        files.OrderedFiles.list('/'))
 
     # Error handling.
     self.assertRaises(
@@ -655,22 +670,22 @@ class FilesTestCase(testing.BaseTestCase):
     # Populate the in-context cache by reading the file before creation.
     self.assertFalse(files.File('/x/b/foo').exists)
 
-    files.File('/foo').Write('')
-    files.File('/a/foo').Write('')
-    files.File('/a/b/foo').Write('')
-    files.File('/c/foo').Write('')
+    files.File('/foo').write('')
+    files.File('/a/foo').write('')
+    files.File('/a/b/foo').write('')
+    files.File('/c/foo').write('')
 
     result_files = files.Files()
     failed_files = files.Files()
-    files.Files.List('/').CopyTo(dir_path='/x', result_files=result_files,
+    files.Files.list('/').copy_to(dir_path='/x', result_files=result_files,
                                  failed_files=failed_files)
     expected_paths = [
         '/x/foo',
     ]
     self.assertSameElements(expected_paths, result_files.keys())
     self.assertEqual([], failed_files.keys())
-    titan_files = files.Files.List('/a/', recursive=True)
-    titan_files.CopyTo('/x', strip_prefix='/a/', result_files=result_files)
+    titan_files = files.Files.list('/a/', recursive=True)
+    titan_files.copy_to('/x', strip_prefix='/a/', result_files=result_files)
     expected_paths = [
         '/x/foo',
         '/x/b/foo',
@@ -678,13 +693,13 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertSameElements(expected_paths, result_files.keys())
     # With trailing slashes should be the same.
     result_files.clear()
-    titan_files.CopyTo('/x/', strip_prefix='/a/', result_files=result_files)
+    titan_files.copy_to('/x/', strip_prefix='/a/', result_files=result_files)
     self.assertSameElements(expected_paths, result_files.keys())
 
     result_files = files.Files()
     failed_files = files.Files()
     files_paths = ['/foo', '/fake']
-    self.assertRaises(files.CopyFilesError, files.Files(files_paths).CopyTo,
+    self.assertRaises(files.CopyFilesError, files.Files(files_paths).copy_to,
                       dir_path='/x', result_files=result_files,
                       failed_files=failed_files)
     expected_paths = [
@@ -703,14 +718,14 @@ class FilesTestCase(testing.BaseTestCase):
     # Populate the in-context cache by reading the file before creation.
     self.assertFalse(files.File('/x/b/foo').exists)
 
-    files.File('/foo').Write('')
-    files.File('/a/foo').Write('')
-    files.File('/a/b/foo').Write('')
-    files.File('/c/foo').Write('')
+    files.File('/foo').write('')
+    files.File('/a/foo').write('')
+    files.File('/a/b/foo').write('')
+    files.File('/c/foo').write('')
 
     result_files = files.Files()
-    titan_files = files.Files.List('/a/', recursive=True)
-    titan_files.MoveTo('/x', strip_prefix='/a/', result_files=result_files)
+    titan_files = files.Files.list('/a/', recursive=True)
+    titan_files.move_to('/x', strip_prefix='/a/', result_files=result_files)
     expected_paths = [
         '/x/foo',
         '/x/b/foo',
@@ -724,7 +739,7 @@ class FilesTestCase(testing.BaseTestCase):
     result_files = files.Files()
     failed_files = files.Files()
     files_paths = ['/foo', '/fake']
-    self.assertRaises(files.CopyFilesError, files.Files(files_paths).MoveTo,
+    self.assertRaises(files.CopyFilesError, files.Files(files_paths).move_to,
                       dir_path='/x', result_files=result_files,
                       failed_files=failed_files)
     expected_paths = [
@@ -743,10 +758,10 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertTrue(files.File('/x/b/foo').exists)
 
   def testLoad(self):
-    files.File('/foo').Write('')
-    files.File('/bar').Write('')
+    files.File('/foo').write('')
+    files.File('/bar').write('')
     titan_files = files.Files(paths=['/foo', '/bar', '/fake'])
-    titan_files.Load()
+    titan_files.load()
 
     self.assertIn('/foo', titan_files)
     self.assertIn('/bar', titan_files)
@@ -755,20 +770,20 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertNotIn('/fake', titan_files)
 
   def testDelete(self):
-    files.File('/foo').Write('')
-    files.File('/bar').Write(LARGE_FILE_CONTENT)
-    files.File('/qux').Write('')
+    files.File('/foo').write('')
+    files.File('/bar').write(LARGE_FILE_CONTENT)
+    files.File('/qux').write('')
     blob_key = files.File('/bar').blob.key()
-    files.Files(['/foo', '/bar']).Delete()
+    files.Files(['/foo', '/bar']).delete()
     self.assertEqual(
-        files.Files(['/qux']), files.Files(['/foo', '/bar', '/qux']).Load())
+        files.Files(['/qux']), files.Files(['/foo', '/bar', '/qux']).load())
     # Verify that the blob is also deleted.
     self.assertIsNone(blobstore.get(blob_key))
 
   def testSerialize(self):
-    # Serialize().
-    first_file = files.File('/foo/bar').Write('foobar')
-    second_file = files.File('/foo/bat/baz').Write('foobatbaz')
+    # serialize().
+    first_file = files.File('/foo/bar').write('foobar')
+    second_file = files.File('/foo/bat/baz').write('foobatbaz')
     first_file_data = {
         u'name': u'bar',
         u'path': u'/foo/bar',
@@ -808,8 +823,17 @@ class FilesTestCase(testing.BaseTestCase):
     }
 
     self.assertEqual(expected_data,
-                     files.Files.List(dir_path='/foo/',
-                                      recursive=True).Serialize(full=True))
+                     files.Files.list(dir_path='/foo/',
+                                      recursive=True).serialize(full=True))
+
+class FileCacheTestCase(testing.BaseTestCase):
+
+  def testCacheHelpers(self):
+    result = files._store_blob_cache('/foo.html', 'Test')
+    self.assertTrue(result)
+    self.assertEqual('Test', files._get_blob_cache('/foo.html'))
+    files._clear_blob_cache_for_paths(['/foo.html'])
+    self.assertIsNone(files._get_blob_cache('/foo.html'))
 
 def main(unused_argv):
   basetest.main()

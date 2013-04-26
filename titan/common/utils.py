@@ -21,12 +21,15 @@ import errno
 import functools
 import hashlib
 import inspect
+import itertools
 try:
   import json
 except ImportError:
   import simplejson as json
+import math
 import mimetypes
 import os
+import string
 import time
 try:
   from google.appengine.api import files as blobstore_files
@@ -39,7 +42,7 @@ DEFAULT_CHUNK_SIZE = 1000
 
 BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19  # 500 KiB
 
-def GetCommonDirPath(paths):
+def get_common_dir_path(paths):
   """Given an iterable of file paths, returns the top common prefix."""
   common_dir = os.path.commonprefix(paths)
   if common_dir != '/' and common_dir.endswith('/'):
@@ -47,7 +50,7 @@ def GetCommonDirPath(paths):
   # If common_dir doesn't end in a slash, we need to pop the last directory off.
   return os.path.split(common_dir)[0]
 
-def ValidateFilePath(path):
+def validate_file_path(path):
   """Validates that a given file path is valid.
 
   Args:
@@ -59,9 +62,9 @@ def ValidateFilePath(path):
     raise ValueError('Path is invalid: ' + repr(path))
   if path.endswith('/'):
     raise ValueError('Path cannot end with a trailing "/": %s' % path)
-  _ValidateCommonPath(path)
+  _validate_common_path(path)
 
-def ValidateDirPath(path):
+def validate_dir_path(path):
   """Validates that a given directory path is valid.
 
   Args:
@@ -71,9 +74,9 @@ def ValidateDirPath(path):
   """
   if not path or not isinstance(path, basestring):
     raise ValueError('Path is invalid: %r' % path)
-  _ValidateCommonPath(path)
+  _validate_common_path(path)
 
-def _ValidateCommonPath(path):
+def _validate_common_path(path):
   # TODO(user): re-write this to use a regex.
   if not path.startswith('/'):
     raise ValueError('Path must have a leading "/": %s' % path)
@@ -87,18 +90,28 @@ def _ValidateCommonPath(path):
   if len(path) > 500:
     raise ValueError('Path cannot be longer than 500 characters: %s' % path)
 
-def GuessMimeType(path):
+def guess_mime_type(path):
   return mimetypes.guess_type(path)[0] or 'application/octet-stream'
 
-def SplitPath(path):
+def split_segments(source, sep='/'):
+  """Makes a list of all delimited segments."""
+  # 'path/to/file' --> ['path', 'path/to', 'path/to/file']
+  segments = []
+  current = ''
+  for segment in source.split(sep):
+    current = sep.join([current, segment]) if current else segment
+    segments.append(current)
+  return segments
+
+def split_path(path):
   """Makes a list of all containing dirs."""
   # '/path/to/some/file' --> ['/', '/path', '/path/to', '/path/to/some']
   if path == '/':
     return []
   path = os.path.split(path)[0]
-  return SplitPath(path) + [path]
+  return split_path(path) + [path]
 
-def SafeJoin(base, *paths):
+def safe_join(base, *paths):
   """A safe version of os.path.join.
 
   The os.path.join() method opens a directory traversal vulnerability when a
@@ -126,8 +139,8 @@ def SafeJoin(base, *paths):
       result += '/' + path
   return result
 
-def MakeDestinationPathsMap(source_paths, destination_dir_path,
-                            strip_prefix=None):
+def make_destination_paths_map(source_paths, destination_dir_path,
+                               strip_prefix=None):
   """Create a mapping of source paths to destination paths.
 
   Args:
@@ -164,7 +177,7 @@ def MakeDestinationPathsMap(source_paths, destination_dir_path,
     destination_map[source_path] = destination_path
   return destination_map
 
-def ChunkGenerator(iterable, chunk_size=DEFAULT_CHUNK_SIZE):
+def chunk_generator(iterable, chunk_size=DEFAULT_CHUNK_SIZE):
   """Yield chunks of some iterable number of tasks at a time.
 
   Usage:
@@ -179,7 +192,7 @@ def ChunkGenerator(iterable, chunk_size=DEFAULT_CHUNK_SIZE):
   for i in xrange(0, len(iterable), chunk_size):
     yield iterable[i:i + chunk_size]
 
-def ComposeMethodKwargs(func):
+def compose_method_kwargs(func):
   """Decorator for composing all method arguments to be keyword arguments.
 
   This decorator is specifically created for subclass instance methods that
@@ -237,7 +250,7 @@ def ComposeMethodKwargs(func):
 
   return Wrapper
 
-def MakeDirs(dir_path):
+def make_dirs(dir_path):
   """A thread-safe version of os.makedirs."""
   if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
     try:
@@ -246,11 +259,11 @@ def MakeDirs(dir_path):
       if e.errno == errno.EEXIST:
         # The directory exists (probably from another thread creating it),
         # but we need to keep going all the way until the tail directory.
-        MakeDirs(dir_path)
+        make_dirs(dir_path)
       else:
         raise
 
-def WriteToBlobstore(content, old_blobinfo=None):
+def write_to_blobstore(content, old_blobinfo=None):
   """Write content to blobstore.
 
   Args:
@@ -270,7 +283,7 @@ def WriteToBlobstore(content, old_blobinfo=None):
       and old_blobinfo.md5_hash == hashlib.md5(content).hexdigest()):
     return old_blobinfo.key()
 
-  # Write new blob.
+  # write new blob.
   filename = blobstore_files.blobstore.create()
   content_file = cStringIO.StringIO(content)
   blobstore_file = blobstore_files.open(filename, 'a')
@@ -285,7 +298,7 @@ def WriteToBlobstore(content, old_blobinfo=None):
   blob_key = blobstore_files.blobstore.get_blob_key(filename)
   return blob_key
 
-def RunWithBackoff(func, runtime=60, min_backoff=1, max_backoff=10,
+def run_with_backoff(func, runtime=60, min_backoff=1, max_backoff=10,
                    expontential_backoff=True, stop_on_success=False, **kwargs):
   """Long-running function to process multiple windows.
 
@@ -326,6 +339,29 @@ def RunWithBackoff(func, runtime=60, min_backoff=1, max_backoff=10,
         backoff = max_backoff
   return results
 
+def generate_shard_names(num_shards):
+  """Generates strings of of ASCII sequence permutations for naming shards.
+
+  Usage:
+    >>> generate_shard_names(3)
+    ['abc', 'acb', 'bac']
+  Args:
+    num_shards: The number of shard names to generate.
+  Returns:
+    A list of generally monotonically-increasing ASCII sequence strings.
+  """
+  # Find a number of permutations that is larger than the number of shards
+  # requested. The number of ordered permutations is just a factorial.
+  permutation_length = None
+  for i in range(1, 10):  # Support num_shards from 1 to 362880.
+    if math.factorial(i) > num_shards:
+      permutation_length = i
+      break
+  # Generate permutations of ASCII letters, then trim it to num_shards.
+  permutable_characters = string.ascii_letters[:permutation_length]
+  tags = [''.join(p) for p in itertools.permutations(permutable_characters)]
+  return tags[:num_shards]
+
 class CustomJsonEncoder(json.JSONEncoder):
   """A custom JSON encoder to support objects providing a Serialize() method."""
 
@@ -336,10 +372,11 @@ class CustomJsonEncoder(json.JSONEncoder):
   def default(self, obj):
     """Override of json.JSONEncoder method."""
     # Objects with custom Serialize() function.
-    if hasattr(obj, 'Serialize'):
+    serialize_func = getattr(obj, 'serialize', getattr(obj, 'Serialize', None))
+    if serialize_func:
       if self.full is not None:
-        return obj.Serialize(full=self.full)
-      return obj.Serialize()
+        return serialize_func(full=self.full)
+      return serialize_func()
 
     # Datetime objects => Unix timestamp.
     if hasattr(obj, 'timetuple'):
@@ -362,14 +399,18 @@ class DictAsObject(object):
                            % (self.__class__.__name__, name))
 
   def __eq__(self, other):
-    if not hasattr(other, 'Serialize'):
+    serialize_func = getattr(
+        self, 'serialize', getattr(self, 'Serialize', None))
+    other_serialize_func = getattr(
+        other, 'serialize', getattr(other, 'Serialize', None))
+    if not serialize_func or not other_serialize_func:
       return False
-    return self.Serialize() == other.Serialize()
+    return serialize_func() == other_serialize_func()
 
-  def Serialize(self):
+  def serialize(self):
     return self._data.copy()
 
-def HumanizeDuration(duration, separator=' '):
+def humanize_duration(duration, separator=' '):
   """Formats a nonnegative number of seconds into a human-readable string.
 
   Args:
@@ -382,10 +423,10 @@ def HumanizeDuration(duration, separator=' '):
   try:
     delta = datetime.timedelta(seconds=duration)
   except OverflowError:
-    return '>=' + HumanizeTimeDelta(datetime.timedelta.max)
-  return HumanizeTimeDelta(delta, separator=separator)
+    return '>=' + humanize_time_delta(datetime.timedelta.max)
+  return humanize_time_delta(delta, separator=separator)
 
-def HumanizeTimeDelta(delta, separator=' '):
+def humanize_time_delta(delta, separator=' '):
   """Format a datetime.timedelta into a human-readable string.
 
   Args:

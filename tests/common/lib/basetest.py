@@ -68,8 +68,12 @@ class AppEngineTestCase(basetest.TestCase):
     # different app instance.
     request_id_hash = ''.join(random.sample(string.letters + string.digits, 26))
     instance_id = ''.join(random.sample(string.letters + string.digits, 26))
+    # More like the production environment: "testbed-version.123123123", rather
+    # than the default "testbed-version".
+    current_version_id = 'testbed-version.%s' % random.randint(1, 1000000000000)
     self.testbed.setup_env(
-        request_id_hash=request_id_hash, instance_id=instance_id)
+        request_id_hash=request_id_hash, instance_id=instance_id,
+        current_version_id=current_version_id)
 
     self.Logout()
     super(AppEngineTestCase, self).setUp()

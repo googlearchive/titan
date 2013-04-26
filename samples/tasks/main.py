@@ -37,10 +37,10 @@ class MainHandler(webapp2.RequestHandler):
     # This is the low-level App Engine Channel API client_id, and should
     # be unique for each individual JavaScript client.
     # https://developers.google.com/appengine/docs/python/channel/functions
-    user = users.GetCurrentUser()
+    user = users.get_current_user()
     client_id = hashlib.md5(user.email + os.environ['REQUEST_ID_HASH'])
     client_id = client_id.hexdigest()
-    token = channel.CreateChannel(client_id)
+    token = channel.create_channel(client_id)
     context = {
         'client_id': client_id,
         'token': token,
@@ -53,11 +53,11 @@ class WidgetsTasksNewHandler(webapp2.RequestHandler):
     # Create a new broadcast channel for each new widget creation task to avoid
     # collisions between task manager events.
     broadcast_channel_key = 'widgets-channel-%s' % os.environ['REQUEST_ID_HASH']
-    task_manager = tasks.TaskManager.New(
+    task_manager = tasks.TaskManager.new(
         group='create-widgets',
         broadcast_channel_key=broadcast_channel_key)
     self.response.headers['Content-Type'] = 'application/json'
-    self.response.out.write(json.dumps(task_manager.Serialize(full=False)))
+    self.response.out.write(json.dumps(task_manager.serialize(full=False)))
 
 class WidgetsTasksStartHandler(webapp2.RequestHandler):
 
@@ -78,22 +78,22 @@ class WidgetsTasksStartHandler(webapp2.RequestHandler):
     if len(widget_ids) < 100:
       # If we think that enqueuing the tasks will take < 60s, just do it
       # sychronously with the start request to not delay the UI.
-      CreateDeferredWidgets(task_manager, widget_ids)
+      create_deferred_widgets(task_manager, widget_ids)
     else:
       # Since just enqueuing the tasks may take > 60s, defer a task that
       # enqueues the tasks so we can take up to 10 minutes.
-      deferred.Defer(CreateDeferredWidgets, task_manager, widget_ids,
+      deferred.defer(create_deferred_widgets, task_manager, widget_ids,
                      _queue='deferrer')
 
     self.response.headers['Content-Type'] = 'application/json'
     self.response.out.write(json.dumps({'widget_ids': widget_ids}))
 
-def CreateDeferredWidgets(task_manager, widget_ids):
+def create_deferred_widgets(task_manager, widget_ids):
   for task_key in widget_ids:
-    task_manager.DeferTask(task_key, CreateWidget)
+    task_manager.DeferTask(task_key, create_widget)
   task_manager.Finalize()
 
-def CreateWidget():
+def create_widget():
   # A fake method.
   # Do something expensive, like create a new widget.
   time.sleep(random.uniform(0, 3))
@@ -103,7 +103,7 @@ def CreateWidget():
     raise tasks.TaskError('Check out this custom error message!')
 
 jinja_environment = jinja2.Environment(
-    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)))
+    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)), autoescape=True)
 
 application = webapp2.WSGIApplication((
     ('/', MainHandler),

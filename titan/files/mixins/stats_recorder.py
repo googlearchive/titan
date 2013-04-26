@@ -47,7 +47,7 @@ class StatsRecorderMixin(files.File):
         self._stats_invocation_counters[unique_id],
         self._stats_latency_counters[unique_id],
     ]
-    stats.StoreRequestLocalCounters(counters)
+    stats.log_counters(counters, counters_func=make_all_counters)
 
   @property
   def _file(self):
@@ -61,35 +61,35 @@ class StatsRecorderMixin(files.File):
     finally:
       self._StopStatsRecording(unique_counter_name)
 
-  def Write(self, *args, **kwargs):
-    unique_counter_name = _UniqueCounterName('files/File/Write')
+  def write(self, *args, **kwargs):
+    unique_counter_name = _UniqueCounterName('files/File/write')
     self._StartStatsRecording(unique_counter_name)
     try:
-      return super(StatsRecorderMixin, self).Write(*args, **kwargs)
+      return super(StatsRecorderMixin, self).write(*args, **kwargs)
     finally:
       self._StopStatsRecording(unique_counter_name)
 
-  def CopyTo(self, *args, **kwargs):
-    unique_counter_name = _UniqueCounterName('files/File/CopyTo')
+  def copy_to(self, *args, **kwargs):
+    unique_counter_name = _UniqueCounterName('files/File/copy_to')
     self._StartStatsRecording(unique_counter_name)
     try:
-      return super(StatsRecorderMixin, self).CopyTo(*args, **kwargs)
+      return super(StatsRecorderMixin, self).copy_to(*args, **kwargs)
     finally:
       self._StopStatsRecording(unique_counter_name)
 
-  def Delete(self, *args, **kwargs):
-    unique_counter_name = _UniqueCounterName('files/File/Delete')
+  def delete(self, *args, **kwargs):
+    unique_counter_name = _UniqueCounterName('files/File/delete')
     self._StartStatsRecording(unique_counter_name)
     try:
-      return super(StatsRecorderMixin, self).Delete(*args, **kwargs)
+      return super(StatsRecorderMixin, self).delete(*args, **kwargs)
     finally:
       self._StopStatsRecording(unique_counter_name)
 
-  def Serialize(self, *args, **kwargs):
-    unique_counter_name = _UniqueCounterName('files/File/Serialize')
+  def serialize(self, *args, **kwargs):
+    unique_counter_name = _UniqueCounterName('files/File/serialize')
     self._StartStatsRecording(unique_counter_name)
     try:
-      return super(StatsRecorderMixin, self).Serialize(*args, **kwargs)
+      return super(StatsRecorderMixin, self).serialize(*args, **kwargs)
     finally:
       self._StopStatsRecording(unique_counter_name)
 
@@ -107,35 +107,33 @@ class _UniqueCounterName(object):
   def __hash__(self):
     return id(self) + self.random_offset
 
-def MakeAllCounters():
+def make_all_counters():
   """Make a new list of all counters which can be aggregated and saved."""
   counters = [
       # Invocation counters.
       stats.Counter('files/File/load'),
-      stats.Counter('files/File/Write'),
-      stats.Counter('files/File/Touch'),
-      stats.Counter('files/File/Delete'),
-      stats.Counter('files/File/Serialize'),
+      stats.Counter('files/File/write'),
+      stats.Counter('files/File/delete'),
+      stats.Counter('files/File/serialize'),
 
       # TODO(user): Add these when the new APIs are implemented.
-      # stats.Counter('files/Files/List'),
-      # stats.Counter('files/File/Copy'),
-      # stats.Counter('files/Dir/Copy'),
-      # stats.Counter('files/Dir/List'),
+      # stats.Counter('files/Files/list'),
+      # stats.Counter('files/File/copy'),
+      # stats.Counter('files/Dir/copy'),
+      # stats.Counter('files/Dir/list'),
       # stats.Counter('files/Dir/exists'),
 
       # Timing counters.
       stats.AverageTimingCounter('files/File/load/latency'),
-      stats.AverageTimingCounter('files/File/Write/latency'),
-      stats.AverageTimingCounter('files/File/Touch/latency'),
-      stats.AverageTimingCounter('files/File/Delete/latency'),
-      stats.AverageTimingCounter('files/File/Serialize/latency'),
+      stats.AverageTimingCounter('files/File/write/latency'),
+      stats.AverageTimingCounter('files/File/delete/latency'),
+      stats.AverageTimingCounter('files/File/serialize/latency'),
 
       # TODO(user): Add these when the new APIs are implemented.
-      # stats.AverageTimingCounter('files/Files/List/latency'),
-      # stats.AverageTimingCounter('files/File/Copy/latency'),
-      # stats.AverageTimingCounter('files/Dir/Copy/latency'),
-      # stats.AverageTimingCounter('files/Dir/List/latency'),
+      # stats.AverageTimingCounter('files/Files/list/latency'),
+      # stats.AverageTimingCounter('files/File/copy/latency'),
+      # stats.AverageTimingCounter('files/Dir/copy/latency'),
+      # stats.AverageTimingCounter('files/Dir/list/latency'),
       # stats.AverageTimingCounter('files/Dir/exists/latency'),
   ]
   return counters

@@ -17,19 +17,20 @@
 
 from tests.common import testing
 
+import os
 from titan.common.lib.google.apputils import basetest
+from titan import activities
 from titan import files
 from titan.files.mixins import stats_recorder
-from titan import stats
 
 class StatsRecorderTest(testing.BaseTestCase):
 
   def setUp(self):
-    files.RegisterFileMixins([stats_recorder.StatsRecorderMixin])
+    files.register_file_mixins([stats_recorder.StatsRecorderMixin])
     super(StatsRecorderTest, self).setUp()
 
   def tearDown(self):
-    files.UnregisterFileFactory()
+    files.unregister_file_factory()
     super(StatsRecorderTest, self).tearDown()
 
   def testRecordStats(self):
@@ -38,29 +39,39 @@ class StatsRecorderTest(testing.BaseTestCase):
 
     # +2 counters (files/File/load and files/File/load/latency).
     _ = files.File('/foo').exists
-    self.assertEqual(2, len(stats.GetRequestLocalCounters()))
+    self.assertEqual(2, self.CountLoggers())
 
-    # +6 (internal of Write() + plus load counters).
-    files.File('/foo').Write('bar')
-    self.assertEqual(8, len(stats.GetRequestLocalCounters()))
+    # +6 (internal of write() + plus load counters).
+    files.File('/foo').write('bar')
+    self.assertEqual(8, self.CountLoggers())
 
     # +4.
-    files.File('/foo').Serialize()
-    self.assertEqual(12, len(stats.GetRequestLocalCounters()))
+    files.File('/foo').serialize()
+    self.assertEqual(12, self.CountLoggers())
 
     # +12.
-    files.File('/foo').CopyTo(files.File('/bar'))
-    self.assertEqual(24, len(stats.GetRequestLocalCounters()))
+    files.File('/foo').copy_to(files.File('/bar'))
+    self.assertEqual(24, self.CountLoggers())
 
     # +4.
-    files.File('/foo').Delete()
-    self.assertEqual(28, len(stats.GetRequestLocalCounters()))
+    files.File('/foo').delete()
+    self.assertEqual(28, self.CountLoggers())
 
     # TODO(user): Add these when implemented and increment count.
-    # files.Files.List('/')
+    # files.Files.list('/')
     # files.Dir('/').Copy('/baz')
-    # files.Dir('/foo').List()
+    # files.Dir('/foo').list()
     # files.Dir('/foo').exists
+
+  def CountLoggers(self):
+    return len(self.GetCounters())
+
+  def GetCounters(self):
+    counters = []
+    loggers = os.environ[activities.ACTIVITIES_ENVIRON_KEY]
+    for logger in loggers:
+      counters += getattr(logger.activity, 'counters', [])
+    return counters
 
 if __name__ == '__main__':
   basetest.main()

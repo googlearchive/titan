@@ -26,9 +26,9 @@ class ProcessMicroversionsHandler(handlers.BaseHandler):
     # Must be a GET handler because this runs in a cron job.
     max_tasks = int(self.request.get('max_tasks', 0))
     if max_tasks:
-      self.WriteJsonResponse(microversions.ProcessData(max_tasks=max_tasks))
+      self.write_json_response(microversions.process_data(max_tasks=max_tasks))
     else:
-      self.WriteJsonResponse(microversions.ProcessDataWithBackoff())
+      self.write_json_response(microversions.process_data_with_backoff())
 
 ROUTES = (
     ('/_titan/files/microversions/processdata', ProcessMicroversionsHandler),

@@ -141,7 +141,7 @@ titan.channel.BroadcastChannel.prototype.subscribe = function() {
       if (!data['message'] || !data['broadcast_channel_key']) {
         // The message was not sent through a broadcast channel, dispatch
         // an event so that custom messages can be handled elsewhere.
-        this.dispatch_(EventType.UNKNOWN_MESSAGE, message);
+        this.dispatch_(EventType.UNKNOWN_MESSAGE, data['message']);
       } else if (data['broadcast_channel_key'] == this.key_) {
         this.dispatch_(EventType.MESSAGE, data['message']);
       }

@@ -39,14 +39,14 @@ class FilesClientTestCase(testing.BaseTestCase):
         host=os.environ['HTTP_HOST'])
 
   def testRemoteFile(self):
-    remote_file = self.remote_file_factory.MakeRemoteFile('/a/foo')
+    remote_file = self.remote_file_factory.make_remote_file('/a/foo')
     actual_file = files.File('/a/foo')
 
     # Error handling for non-existent files.
     self.assertRaises(files_client.BadRemoteFileError, lambda: remote_file.name)
     self.assertEqual(actual_file.exists, remote_file.exists)
 
-    actual_file.Write('foo!', meta={'flag': False})
+    actual_file.write('foo!', meta={'flag': False})
 
     # Test properties.
     self.assertEqual(actual_file.name, remote_file.name)
@@ -60,23 +60,23 @@ class FilesClientTestCase(testing.BaseTestCase):
     self.assertEqual(actual_file.content, remote_file.content)
     self.assertEqual(actual_file.exists, remote_file.exists)
     # Different remote API (string of blob_key rather than BlobKey):
-    self.assertEqual(actual_file.Serialize()['blob'], remote_file.blob)
+    self.assertEqual(actual_file.serialize()['blob'], remote_file.blob)
     # Different remote API (string of email addresses rather than User objects).
     self.assertEqual(
-        actual_file.Serialize()['created_by'], remote_file.created_by)
+        actual_file.serialize()['created_by'], remote_file.created_by)
     self.assertEqual(
-        actual_file.Serialize()['modified_by'], remote_file.modified_by)
+        actual_file.serialize()['modified_by'], remote_file.modified_by)
     self.assertEqual(actual_file.md5_hash, remote_file.md5_hash)
     self.assertEqual(actual_file.meta, remote_file.meta)
 
-    # Test Write().
-    remote_file.Write(content='bar')
+    # Test write().
+    remote_file.write(content='bar')
     actual_file = files.File('/a/foo')
     self.assertEqual('bar', remote_file.content)
     self.assertEqual('bar', actual_file.content)
 
     # Test Delete().
-    remote_file.Delete()
+    remote_file.delete()
     actual_file = files.File('/a/foo')
     self.assertRaises(files_client.BadRemoteFileError, lambda: remote_file.name)
     self.assertFalse(actual_file.exists)
@@ -86,20 +86,20 @@ class FilesClientTestCase(testing.BaseTestCase):
 
   def testRemoteFiles(self):
     actual_file = files.File('/a/foo')
-    actual_file.Write('foo!', meta={'flag': False})
-    remote_file = self.remote_file_factory.MakeRemoteFile('/a/foo')
+    actual_file.write('foo!', meta={'flag': False})
+    remote_file = self.remote_file_factory.make_remote_file('/a/foo')
 
-    remote_files = self.remote_file_factory.MakeRemoteFiles()
+    remote_files = self.remote_file_factory.make_remote_files()
     self.assertEqual([], remote_files.keys())
-    remote_files = self.remote_file_factory.MakeRemoteFiles([])
+    remote_files = self.remote_file_factory.make_remote_files([])
     self.assertEqual([], remote_files.keys())
-    remote_files = self.remote_file_factory.MakeRemoteFiles(['/a/foo'])
+    remote_files = self.remote_file_factory.make_remote_files(['/a/foo'])
     self.assertEqual(['/a/foo'], remote_files.keys())
-    remote_files = self.remote_file_factory.MakeRemoteFiles(files=[remote_file])
+    remote_files = self.remote_file_factory.make_remote_files(files=[remote_file])
     self.assertEqual(['/a/foo'], remote_files.keys())
 
     # Test mapping properties.
-    remote_files['/a/bar'] = self.remote_file_factory.MakeRemoteFile('/a/bar')
+    remote_files['/a/bar'] = self.remote_file_factory.make_remote_file('/a/bar')
     self.assertSameElements(['/a/foo', '/a/bar'], remote_files.keys())
     del remote_files['/a/bar']
     self.assertEqual(['/a/foo'], remote_files.keys())
@@ -110,12 +110,12 @@ class FilesClientTestCase(testing.BaseTestCase):
 
     # Test List().
     # Different remote API: List is not a class method due to authentication.
-    remote_files = self.remote_file_factory.MakeRemoteFiles()
-    remote_files.List('/', recursive=True)
+    remote_files = self.remote_file_factory.make_remote_files()
+    remote_files.list('/', recursive=True)
     self.assertEqual(['/a/foo'], remote_files.keys())
 
     # Test Delete().
-    remote_files.Delete()
+    remote_files.delete()
     actual_file = files.File('/a/foo')
     self.assertFalse(actual_file.exists)
 

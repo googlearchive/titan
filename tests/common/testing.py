@@ -19,7 +19,8 @@ import os
 import mox
 from mox import stubout
 from google.appengine.ext import testbed
-from tests.common import basetest as common_basetest
+from tests.common.lib import basetest as common_basetest
+from tests.common.lib import endpointstest
 from titan.files import dirs
 
 class MockableTestCase(common_basetest.AppEngineTestCase):
@@ -50,13 +51,13 @@ class BaseTestCase(MockableTestCase):
     self.taskqueue_stub = self.testbed.get_stub(testbed.TASKQUEUE_SERVICE_NAME)
 
     # Login a default, non-admin user and set the hostname.
-    self.Login('titanuser@example.com')
+    self.login('titanuser@example.com')
     self.SetHostname(hostname='testbed.example.com')
 
     # Make this buffer negative so dir tasks are available instantly for lease.
     self.stubs.SmartSet(dirs, 'TASKQUEUE_LEASE_ETA_BUFFER', -86400)
 
-  def InitTestbed(self):
+  def InitTestbed(self):  # Method override, must be named non-PEP8 style.
     # Setup and activate the testbed.
     self.testbed = testbed.Testbed()
     self.testbed.activate()
@@ -78,7 +79,7 @@ class BaseTestCase(MockableTestCase):
     self.testbed.init_user_stub()
     self.testbed.init_xmpp_stub()
 
-  def Login(self, *args, **kwargs):
+  def login(self, *args, **kwargs):
     """Override to have a default titan user email."""
     email = kwargs.pop('email', None)
     if not email and args:
@@ -98,10 +99,10 @@ class BaseTestCase(MockableTestCase):
     """
     if not ent or not other_ent:
       raise AssertionError('%r != %r' % (ent, other_ent))
-    if not self._EntityEquals(ent, other_ent):
-      properties = self._GetDereferencedProperties(ent)
+    if not self._entity_equals(ent, other_ent):
+      properties = self._get_dereferenced_properties(ent)
       properties.update(ent._dynamic_properties)
-      other_properties = self._GetDereferencedProperties(other_ent)
+      other_properties = self._get_dereferenced_properties(other_ent)
       other_properties.update(other_ent._dynamic_properties)
       if ignore:
         for item in ignore:
@@ -121,7 +122,7 @@ class BaseTestCase(MockableTestCase):
         # Shortcut: display debug if we expect the two entities to be equal:
         if ent.key() == other_ent.key():
           self.assertEntityEqual(ent, other_ent)
-        if self._EntityEquals(ent, other_ent):
+        if self._entity_equals(ent, other_ent):
           found = True
       if not found:
         raise AssertionError('%s not found in %s' % (ent, other_entities))
@@ -154,15 +155,15 @@ class BaseTestCase(MockableTestCase):
       if obj not in other_objs:
         raise AssertionError('%s not found in %s' % (obj, other_objs))
 
-  def _EntityEquals(self, ent, other_ent):
+  def _entity_equals(self, ent, other_ent):
     """Compares entities by comparing their properties and keys."""
-    props = self._GetDereferencedProperties(ent)
-    other_props = self._GetDereferencedProperties(other_ent)
+    props = self._get_dereferenced_properties(ent)
+    other_props = self._get_dereferenced_properties(other_ent)
     return (ent.key().name() == other_ent.key().name()
             and props == other_props
             and ent._dynamic_properties == other_ent._dynamic_properties)
 
-  def _GetDereferencedProperties(self, ent):
+  def _get_dereferenced_properties(self, ent):
     """Directly get properties since they don't dereference nicely."""
     # ent.properties() contains lazy-loaded objects which are always equal even
     # if their actual contents are different. Dereference all the references!
@@ -170,4 +171,7 @@ class BaseTestCase(MockableTestCase):
     for key in ent.properties():
       props[key] = ent.__dict__['_' + key]
     return props
+
+class EndpointsTestCase(endpointstest.EndpointsTestCase, BaseTestCase):
+  pass
 

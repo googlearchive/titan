@@ -17,6 +17,8 @@
 
 from tests.common import testing
 
+import datetime
+import json
 from google.appengine.ext import blobstore
 from titan.common.lib.google.apputils import app
 from titan.common.lib.google.apputils import basetest
@@ -24,40 +26,52 @@ from titan.common import utils
 
 class UtilsTestCase(testing.BaseTestCase):
 
-  def testGetCommonDirPath(self):
-    paths = ['/foo/bar/baz/test.html', '/foo/bar/test.html']
-    self.assertEqual('/foo/bar', utils.GetCommonDirPath(paths))
-    paths = ['/foo/bar/baz/test.html', '/z/test.html']
-    self.assertEqual('/', utils.GetCommonDirPath(paths))
-    paths = ['/foo/bar/baz/test.html', '/footest/bar.html']
-    self.assertEqual('/', utils.GetCommonDirPath(paths))
-
   def testSplitPath(self):
     # No containing paths of '/'.
-    self.assertEqual([], utils.SplitPath('/'))
+    self.assertEqual([], utils.split_path('/'))
     # / contains /file
-    self.assertEqual(['/'], utils.SplitPath('/file'))
+    self.assertEqual(['/'], utils.split_path('/file'))
     # / and /foo contain /foo/bar
-    self.assertEqual(['/', '/foo'], utils.SplitPath('/foo/bar'))
+    self.assertEqual(['/', '/foo'], utils.split_path('/foo/bar'))
 
     expected = ['/', '/path', '/path/to', '/path/to/some']
-    self.assertEqual(expected, utils.SplitPath('/path/to/some/file.txt'))
-    self.assertEqual(expected, utils.SplitPath('/path/to/some/file'))
+    self.assertEqual(expected, utils.split_path('/path/to/some/file.txt'))
+    self.assertEqual(expected, utils.split_path('/path/to/some/file'))
+
+    expected = []
+
+  def testGetCommonDirPath(self):
+    paths = ['/foo/bar/baz/test.html', '/foo/bar/test.html']
+    self.assertEqual('/foo/bar', utils.get_common_dir_path(paths))
+    paths = ['/foo/bar/baz/test.html', '/z/test.html']
+    self.assertEqual('/', utils.get_common_dir_path(paths))
+    paths = ['/foo/bar/baz/test.html', '/footest/bar.html']
+    self.assertEqual('/', utils.get_common_dir_path(paths))
+
+  def testSplitSegments(self):
+    self.assertEqual(['a'], utils.split_segments('a'))
+    self.assertEqual(['a', 'a/b'], utils.split_segments('a/b'))
+    self.assertEqual(['a', 'a/b', 'a/b/c'], utils.split_segments('a/b/c'))
+
+    self.assertEqual(['a'], utils.split_segments('a', sep='.'))
+    self.assertEqual(['a', 'a.b'], utils.split_segments('a.b', sep='.'))
+    self.assertEqual(['a', 'a.b', 'a.b.c'],
+                     utils.split_segments('a.b.c', sep='.'))
 
   def testSafeJoin(self):
-    self.assertEqual('foo/bar', utils.SafeJoin('foo', 'bar'))
-    self.assertEqual('foo/bar/baz/', utils.SafeJoin('foo', 'bar', 'baz/'))
-    self.assertEqual('foo.html', utils.SafeJoin('', 'foo.html'))
-    self.assertEqual('/foo/bar', utils.SafeJoin('/foo', 'bar'))
-    self.assertEqual('/foo/bar', utils.SafeJoin('/foo/', 'bar'))
+    self.assertEqual('foo/bar', utils.safe_join('foo', 'bar'))
+    self.assertEqual('foo/bar/baz/', utils.safe_join('foo', 'bar', 'baz/'))
+    self.assertEqual('foo.html', utils.safe_join('', 'foo.html'))
+    self.assertEqual('/foo/bar', utils.safe_join('/foo', 'bar'))
+    self.assertEqual('/foo/bar', utils.safe_join('/foo/', 'bar'))
     self.assertEqual('/foo/bar/baz.html',
-                     utils.SafeJoin('/foo', 'bar', 'baz.html'))
+                     utils.safe_join('/foo', 'bar', 'baz.html'))
     self.assertEqual('/foo/bar////baz.html',
-                     utils.SafeJoin('/foo', 'bar////', 'baz.html'))
+                     utils.safe_join('/foo', 'bar////', 'baz.html'))
 
-    self.assertRaises(ValueError, utils.SafeJoin, '/foo', '/bar')
-    self.assertRaises(ValueError, utils.SafeJoin, 'foo', '/bar', 'baz')
-    self.assertRaises(ValueError, utils.SafeJoin, 'foo', 'bar', '/baz')
+    self.assertRaises(ValueError, utils.safe_join, '/foo', '/bar')
+    self.assertRaises(ValueError, utils.safe_join, 'foo', '/bar', 'baz')
+    self.assertRaises(ValueError, utils.safe_join, 'foo', 'bar', '/baz')
 
   def testMakeDestinationPathsMap(self):
     source_paths = [
@@ -72,7 +86,7 @@ class UtilsTestCase(testing.BaseTestCase):
         '/a/b/foo': '/x/a/b/foo',
         '/c/foo': '/x/c/foo',
     }
-    destination_map = utils.MakeDestinationPathsMap(source_paths, '/x')
+    destination_map = utils.make_destination_paths_map(source_paths, '/x')
     self.assertEqual(expected, destination_map)
 
     # Test strip_prefix.
@@ -84,19 +98,19 @@ class UtilsTestCase(testing.BaseTestCase):
         '/a/foo': '/x/foo',
         '/a/b/foo': '/x/b/foo',
     }
-    destination_map = utils.MakeDestinationPathsMap(
+    destination_map = utils.make_destination_paths_map(
         source_paths, destination_dir_path='/x', strip_prefix='/a')
     self.assertEqual(expected, destination_map)
     # With trailing slashes should be equivalent.
-    destination_map = utils.MakeDestinationPathsMap(
+    destination_map = utils.make_destination_paths_map(
         source_paths, destination_dir_path='/x/', strip_prefix='/a/')
     self.assertEqual(expected, destination_map)
 
     # Error handling.
-    self.assertRaises(ValueError, utils.MakeDestinationPathsMap, '/a/b', '/x')
+    self.assertRaises(ValueError, utils.make_destination_paths_map, '/a/b', '/x')
     self.assertRaises(
         ValueError,
-        utils.MakeDestinationPathsMap, ['/a/b'], '/x/', strip_prefix='/fake')
+        utils.make_destination_paths_map, ['/a/b'], '/x/', strip_prefix='/fake')
 
   def testComposeMethodKwargs(self):
 
@@ -107,14 +121,14 @@ class UtilsTestCase(testing.BaseTestCase):
 
     class Child(Parent):
 
-      @utils.ComposeMethodKwargs
+      @utils.compose_method_kwargs
       def Method(self, **kwargs):
         baz_result = '-%s' % kwargs.pop('baz', False)  # Consume "baz" arg.
         return super(Child, self).Method(**kwargs) + baz_result
 
     class GrandChild(Child):
 
-      @utils.ComposeMethodKwargs
+      @utils.compose_method_kwargs
       def Method(self, **kwargs):
         return super(GrandChild, self).Method(**kwargs)
 
@@ -128,16 +142,22 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertEqual('1-True-True', child.Method(foo=1, bar=True, baz=True))
     self.assertEqual('1-True-False', child.Method(bar=True, foo=1))
 
+  def testCustomJsonEncoder(self):
+    original = {'test': datetime.datetime(2013, 04, 02, 10, 11, 12, 123)}
+    self.assertEqual(
+        '{"test": 1364922672.000123}',
+        json.dumps(original, cls=utils.CustomJsonEncoder))
+
   def testRunWithBackoff(self):
     # Returning None forces exponential backoff to occur, and within 5 seconds
     # the callable should be called ~3 times.
-    results = utils.RunWithBackoff(func=lambda: None, runtime=5)
+    results = utils.run_with_backoff(func=lambda: None, runtime=5)
     # Weakly verify it fits in some arbitrary range:
     self.assertGreater(len(results), 1)
     self.assertLess(len(results), 6)
 
     # Test stop_on_success.
-    results = utils.RunWithBackoff(func=lambda: True, stop_on_success=True)
+    results = utils.run_with_backoff(func=lambda: True, stop_on_success=True)
     self.assertEqual([True], results)
 
   def testChunkGenerator(self):
@@ -145,7 +165,7 @@ class UtilsTestCase(testing.BaseTestCase):
 
     # Verify default chunk size.
     new_nums = []
-    for i, some_nums in enumerate(utils.ChunkGenerator(nums)):
+    for i, some_nums in enumerate(utils.chunk_generator(nums)):
       new_nums += some_nums
     # Should have processed in 3 chunks (0, 1, 2):
     self.assertEqual(2, i)
@@ -153,7 +173,7 @@ class UtilsTestCase(testing.BaseTestCase):
 
     # Verify chunk size bigger than input.
     new_nums = []
-    for i, some_nums in enumerate(utils.ChunkGenerator(nums, chunk_size=5000)):
+    for i, some_nums in enumerate(utils.chunk_generator(nums, chunk_size=5000)):
       new_nums += some_nums
     # Should have processed in 1 chunk:
     self.assertEqual(0, i)
@@ -161,17 +181,35 @@ class UtilsTestCase(testing.BaseTestCase):
 
   def testWriteToBlobstore(self):
     # There are stronger tests for the behavior of this in files_test.
-    old_blob_key = utils.WriteToBlobstore('Blobstore!')
+    old_blob_key = utils.write_to_blobstore('Blobstore!')
     self.assertTrue(old_blob_key)
 
     old_blobinfo = blobstore.BlobInfo.get(old_blob_key)
-    new_blob_key = utils.WriteToBlobstore('Blobstore!',
+    new_blob_key = utils.write_to_blobstore('Blobstore!',
                                           old_blobinfo=old_blobinfo)
     self.assertEqual(new_blob_key, old_blob_key)
     self.stubs.SmartUnsetAll()
 
+  def testGenerateShardNames(self):
+    self.assertEqual([], utils.generate_shard_names(0))
+    self.assertEqual(['ab'], utils.generate_shard_names(1))
+    self.assertEqual(['abc', 'acb'], utils.generate_shard_names(2))
+    self.assertEqual(['abc', 'acb', 'bac'], utils.generate_shard_names(3))
+
+    # Verify all the shards are unique.
+    tags = self.assertEqual(60, len(set(utils.generate_shard_names(60))))
+
+    # Weakly verify that larger sharding works.
+    tags = utils.generate_shard_names(10000)
+    self.assertEqual(10000, len(tags))
+    self.assertEqual(8, len(tags[0]))
+
   def testHumanizeDuration(self):
-    self.assertEqual('10s', utils.HumanizeDuration(10))
+    self.assertEqual('10s', utils.humanize_duration(10))
+
+  def testHumanizeTimeDelta(self):
+    self.assertEqual('1d', utils.humanize_time_delta(
+        datetime.timedelta(days=1)))
 
 def main(unused_argv):
   basetest.main()

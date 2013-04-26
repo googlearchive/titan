@@ -15,14 +15,32 @@
 
     var rowIndex = -1;
     var colIndex;
-    {% for counter_name, counter_data in aggregate_data.iteritems %}
+    {% for counter_name, counter_data in aggregate_data.iteritems() %}
       data.addColumn('number', '{{counter_name}}');
-      data.addColumn('string', 'title{{forloop.counter0}}');
-      data.addColumn('string', 'text{{forloop.counter0}}');
+      data.addColumn('string', 'title{{loop.index0}}');
+      data.addColumn('string', 'text{{loop.index0}}');
+      {% set last_window = None %}
+      {% set counterloop = loop %}
       {% for timestamp, value in counter_data %}
+        {% set last_window = last_window or timestamp %}
+        {% if last_window + window_size < timestamp %}
+          data.addRow();
+          rowIndex++;
+          colIndex = {{counterloop.index0}} * 3 + 1;
+          data.setValue(rowIndex, 0, new Date({{last_window + window_size}} * 1000));
+          data.setValue(rowIndex, colIndex, 0);
+          {% if last_window + window_size < timestamp - window_size %}
+            data.addRow();
+            rowIndex++;
+            colIndex = {{counterloop.index0}} * 3 + 1;
+            data.setValue(rowIndex, 0, new Date({{timestamp - window_size}} * 1000));
+            data.setValue(rowIndex, colIndex, 0);
+          {% endif %}
+        {% endif %}
+        {% set last_window = timestamp %}
         data.addRow();
         rowIndex++;
-        colIndex = {{forloop.parentloop.counter0}} * 3 + 1;
+        colIndex = {{counterloop.index0}} * 3 + 1;
         data.setValue(rowIndex, 0, new Date({{timestamp}} * 1000));
         {# Slightly magical: if it's a list, treat the first number as the primary value. #}
         data.setValue(rowIndex, colIndex, {% if value.pop %}{{value.0}}{% else %}{{value}}{% endif %});

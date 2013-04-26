@@ -67,7 +67,7 @@ class FileVersioningMixin(files.File):
   """
 
   @classmethod
-  def ShouldApplyMixin(cls, **kwargs):
+  def should_apply_mixin(cls, **kwargs):
     # Enable always, unless microversions is enabled.
     mixin_state = kwargs.get('_mixin_state')
     if mixin_state and mixin_state.get('is_microversions_enabled'):
@@ -76,7 +76,7 @@ class FileVersioningMixin(files.File):
       mixin_state['is_versions_enabled'] = True
     return True
 
-  @utils.ComposeMethodKwargs
+  @utils.compose_method_kwargs
   def __init__(self, path, **kwargs):
     # If given, this File represents the file at the given changeset.
     # If not, this File represents the lastest committed file version,
@@ -106,15 +106,15 @@ class FileVersioningMixin(files.File):
   def __repr__(self):
     return '<File %s (cs:%r)>' % (self._path, getattr(self, 'changeset', None))
 
-  def _GetCreatedByUser(self):
+  def _get_created_by_user(self):
     if self._created_by_override:
       return self._created_by_override
-    return super(FileVersioningMixin, self)._GetCreatedByUser()
+    return super(FileVersioningMixin, self)._get_created_by_user()
 
-  def _GetModifiedByUser(self):
+  def _get_modified_by_user(self):
     if self._modified_by_override:
       return self._modified_by_override
-    return super(FileVersioningMixin, self)._GetModifiedByUser()
+    return super(FileVersioningMixin, self)._get_modified_by_user()
 
   @property
   def _file(self):
@@ -122,7 +122,7 @@ class FileVersioningMixin(files.File):
     if not self.changeset:
       # No associated changeset. Dynamically pick the file entity based on
       # the latest FilePointers.
-      root_file_pointer = _FilePointer.GetRootKey()
+      root_file_pointer = _FilePointer.get_root_key()
       file_pointer = _FilePointer.get_by_id(self.path, parent=root_file_pointer)
       if file_pointer:
         # Associate to the committed changeset.
@@ -165,15 +165,15 @@ class FileVersioningMixin(files.File):
       raise InvalidChangesetError(
           'File modification requires an associated changeset.')
     if not self._real_path:
-      self._real_path = _MakeVersionedPath(self._path, self.changeset)
+      self._real_path = _make_versioned_path(self._path, self.changeset)
     return self._real_path
 
   @property
   def versioned_path(self):
     return self.real_path
 
-  @utils.ComposeMethodKwargs
-  def Write(self, **kwargs):
+  @utils.compose_method_kwargs
+  def write(self, **kwargs):
     """Write method. See superclass docstring."""
     if not self.changeset:
       raise InvalidChangesetError(
@@ -181,7 +181,7 @@ class FileVersioningMixin(files.File):
 
     kwargs.pop('_run_mixins_only', False)
     delete = kwargs.pop('delete', False)
-    _VerifyIsNewChangeset(self.changeset)
+    _verify_is_new_changeset(self.changeset)
     self.changeset.AssociateFile(self)
 
     # Update meta data.
@@ -201,23 +201,23 @@ class FileVersioningMixin(files.File):
         copy_kwargs = self._original_kwargs.copy()
         del copy_kwargs['changeset']
         del copy_kwargs['path']
-        _CopyFileFromRoot(self.path, self.changeset, **copy_kwargs)
+        _copy_file_from_root(self.path, self.changeset, **copy_kwargs)
       kwargs['meta']['status'] = FILE_EDITED
       kwargs['_delete_old_blob'] = False
 
-    return super(FileVersioningMixin, self).Write(**kwargs)
+    return super(FileVersioningMixin, self).write(**kwargs)
 
-  @utils.ComposeMethodKwargs
-  def Delete(self, **kwargs):
+  @utils.compose_method_kwargs
+  def delete(self, **kwargs):
     if not self.changeset:
       raise InvalidChangesetError(
           'File modification requires an associated changeset.')
 
     # A delete in the files world is a revert in the versions world.
     # The file should be removed entirely from the staging changeset.
-    _VerifyIsNewChangeset(self.changeset)
+    _verify_is_new_changeset(self.changeset)
     self.changeset.DisassociateFile(self)
-    return super(FileVersioningMixin, self).Delete(**kwargs)
+    return super(FileVersioningMixin, self).delete(**kwargs)
 
 # ------------------------------------------------------------------------------
 
@@ -254,7 +254,7 @@ class Changeset(object):
     """Lazy-load the _Changeset entity."""
     if not self._changeset_ent:
       self._changeset_ent = _Changeset.get_by_id(
-          str(self._num), parent=_Changeset.GetRootKey())
+          str(self._num), parent=_Changeset.get_root_key())
       if not self._changeset_ent:
         raise ChangesetError('Changeset %s does not exist.' % self._num)
     return self._changeset_ent
@@ -305,7 +305,7 @@ class Changeset(object):
     except ChangesetError:
       return False
 
-  def GetFiles(self):
+  def get_files(self):
     """Get all files associated with this changeset.
 
     Guarantees strong consistency, but requires that associated file paths
@@ -319,14 +319,14 @@ class Changeset(object):
     if not self._finalized_files:
       raise ChangesetError(
           'Cannot guarantee strong consistency when associated file paths '
-          'have not been finalized. Perhaps you want ListFiles?')
+          'have not been finalized. Perhaps you want list_files?')
     titan_files = files.Files(files=self._associated_files)
     # Force File objects to load so that they are not lazily loaded inside
     # of the commit transaction.
-    titan_files.Load()
+    titan_files.load()
     return titan_files
 
-  def ListFiles(self):
+  def list_files(self):
     """Queries and returns a Files object containing this changeset's files.
 
     This method is always eventually consistent and may not contain recently
@@ -340,12 +340,12 @@ class Changeset(object):
       # The files stored for submitted changesets are actually stored under the
       # the staging changeset's number, since they are never moved.
       changeset = changeset.linked_changeset
-    versioned_files = files.Files.List(changeset.base_path, recursive=True)
-    versioned_files.Load()
+    versioned_files = files.Files.list(changeset.base_path, recursive=True)
+    versioned_files.load()
     # Recreate a Files object to get rid of versioned paths in the keys:
     return files.Files(files=versioned_files.values())
 
-  def Serialize(self):
+  def serialize(self):
     """Serializes changeset data into simple types."""
     data = {
         'num': self.num,
@@ -376,7 +376,7 @@ class Changeset(object):
     self._associated_files.remove(titan_file)
     self._finalized_files = False
 
-  def FinalizeAssociatedFiles(self):
+  def finalize_associated_files(self):
     """Indicate that this specific Changeset object was used for all operations.
 
     This flag is used during commit to indicate if this object can be trusted
@@ -415,7 +415,7 @@ class _Changeset(ndb.Model):
     return '<_Changeset %d status:%s>' % (self.num, self.status)
 
   @staticmethod
-  def GetRootKey():
+  def get_root_key():
     """Get the root key, the parent of all changeset entities."""
     # All changesets are in the same entity group by being children of the
     # arbitrary, non-existent "0" changeset.
@@ -450,7 +450,7 @@ class FileVersion(object):
   def _file_version(self):
     """Lazy-load the _FileVersion entity."""
     if not self._file_version_ent:
-      file_version_id = _FileVersion.MakeKeyName(self._changeset, self._path)
+      file_version_id = _FileVersion.make_key_name(self._changeset, self._path)
       self._file_version_ent = _FileVersion.get_by_id(
           file_version_id, parent=self._changeset.changeset_ent.key)
       if not self._file_version_ent:
@@ -501,7 +501,7 @@ class FileVersion(object):
   def status(self):
     return self._file_version.status
 
-  def Serialize(self):
+  def serialize(self):
     """Serializes a FileVersion into native types."""
     cs_created_by = self.changeset_created_by
     result = {
@@ -549,7 +549,7 @@ class _FileVersion(ndb.Model):
                             self.created, self.status))
 
   @staticmethod
-  def MakeKeyName(changeset, path):
+  def make_key_name(changeset, path):
     return ':'.join([str(changeset.num), path])
 
 class _FilePointer(ndb.Model):
@@ -577,7 +577,7 @@ class _FilePointer(ndb.Model):
     return VERSIONS_PATH_FORMAT % (self.changeset_num, self.key.id())
 
   @staticmethod
-  def GetRootKey():
+  def get_root_key():
     # The parent of all _FilePointers is a non-existent _FilePointer arbitrarily
     # named '/', since no file path can be a single slash.
     return ndb.Key('_FilePointer', '/')
@@ -585,7 +585,7 @@ class _FilePointer(ndb.Model):
 class VersionControlService(object):
   """A service object providing version control methods."""
 
-  def NewStagingChangeset(self, created_by=None):
+  def new_staging_changeset(self, created_by=None):
     """Create a new staging changeset with a unique number ID.
 
     Args:
@@ -593,9 +593,9 @@ class VersionControlService(object):
     Returns:
       A Changeset.
     """
-    return self._NewChangeset(status=CHANGESET_NEW, created_by=created_by)
+    return self._new_changeset(status=CHANGESET_NEW, created_by=created_by)
 
-  def _NewChangeset(self, status, created_by):
+  def _new_changeset(self, status, created_by):
     """Create a changeset with the given status."""
     new_changeset_num = strong_counters.Increment(_CHANGESET_COUNTER_NAME)
     changeset_ent = _Changeset(
@@ -604,17 +604,17 @@ class VersionControlService(object):
         id=str(new_changeset_num),
         num=new_changeset_num,
         status=status,
-        parent=_Changeset.GetRootKey())
+        parent=_Changeset.get_root_key())
     if created_by:
       changeset_ent.created_by = created_by
     else:
-      changeset_ent.created_by = users.GetCurrentUser()
+      changeset_ent.created_by = users.get_current_user()
     changeset_ent.put()
     return Changeset(num=new_changeset_num, changeset_ent=changeset_ent)
 
-  def GetLastSubmittedChangeset(self):
+  def get_last_submitted_changeset(self):
     """Returns a Changeset object of the last submitted changeset."""
-    changeset_root_key = _Changeset.GetRootKey()
+    changeset_root_key = _Changeset.get_root_key()
     # Use an ancestor query to maintain strong consistency.
     changeset_query = _Changeset.query(ancestor=changeset_root_key)
     changeset_query = changeset_query.filter(
@@ -625,7 +625,7 @@ class VersionControlService(object):
       raise ChangesetError('No changesets have been submitted')
     return Changeset(num=latest_changeset[0].num)
 
-  def GetFileVersions(self, path, limit=1000):
+  def get_file_versions(self, path, limit=1000):
     """Get FileVersion objects of the revisions of this file path.
 
     Args:
@@ -650,7 +650,7 @@ class VersionControlService(object):
                       file_version_ent=file_version_ent))
     return file_versions
 
-  def Commit(self, staged_changeset, force=False):
+  def commit(self, staged_changeset, force=False):
     """Commit the given changeset.
 
     Args:
@@ -668,12 +668,12 @@ class VersionControlService(object):
                         % staged_changeset.status)
 
     try:
-      staged_files = staged_changeset.GetFiles()
+      staged_files = staged_changeset.get_files()
     except ChangesetError:
       if not force:
         raise
       # Got force=True, get files with an eventually-consistent query.
-      staged_files = staged_changeset.ListFiles()
+      staged_files = staged_changeset.list_files()
     if not staged_files:
       raise CommitError('Changeset %d contains no file changes.'
                         % staged_changeset.num)
@@ -681,17 +681,17 @@ class VersionControlService(object):
     # Can't nest transactions, so we get a unique final changeset number here.
     # This has the potential to orphan a changeset number (if this submit works
     # but the following transaction does not). However, we don't care.
-    final_changeset = self._NewChangeset(
+    final_changeset = self._new_changeset(
         status=CHANGESET_PRE_SUBMIT, created_by=staged_changeset.created_by)
 
     transaction_func = (
-        lambda: self._Commit(staged_changeset, final_changeset, staged_files))
+        lambda: self._commit(staged_changeset, final_changeset, staged_files))
     ndb.transaction(transaction_func, xg=True)
 
     return final_changeset
 
   @staticmethod
-  def _Commit(staged_changeset, final_changeset, staged_files):
+  def _commit(staged_changeset, final_changeset, staged_files):
     """Commit a staged changeset."""
     manifest = ['%s: %s' % (f.meta.status, f.path)
                 for f in staged_files.values()]
@@ -713,7 +713,7 @@ class VersionControlService(object):
 
     # Get a mapping of paths to current _FilePointers (or None).
     file_pointers = {}
-    root_file_pointer = _FilePointer.GetRootKey()
+    root_file_pointer = _FilePointer.get_root_key()
     ordered_paths = staged_files.keys()
     file_pointer_keys = [ndb.Key(_FilePointer, path, parent=root_file_pointer)
                          for path in ordered_paths]
@@ -734,7 +734,7 @@ class VersionControlService(object):
 
       # Create a _FileVersion entity containing revision metadata.
       new_file_version = _FileVersion(
-          id=_FileVersion.MakeKeyName(final_changeset, titan_file.path),
+          id=_FileVersion.make_key_name(final_changeset, titan_file.path),
           path=titan_file.path,
           changeset_num=final_changeset.num,
           changeset_created_by=final_changeset.created_by,
@@ -774,7 +774,7 @@ class VersionControlService(object):
     logging.info('Submitted changeset %d as changeset %d.',
                  staged_changeset.num, final_changeset.num)
 
-def _MakeVersionedPath(path, changeset):
+def _make_versioned_path(path, changeset):
   """Return a two-tuple of (versioned paths, is_multiple)."""
   # Make sure we're not accidentally using non-strings,
   # which could create a path like /_titan/ver/123<Some object>
@@ -782,27 +782,27 @@ def _MakeVersionedPath(path, changeset):
     raise TypeError('path argument must be a string: %r' % path)
   return VERSIONS_PATH_FORMAT % (changeset.num, path)
 
-def _VerifyIsNewChangeset(changeset):
+def _verify_is_new_changeset(changeset):
   """If changeset is committed, don't allow files to be changed."""
   if changeset.status != CHANGESET_NEW:
     raise ChangesetError('Cannot write files in a "%s" changeset.'
                          % changeset.status)
 
-def _VerifyRootPaths(paths):
+def _verify_root_paths(paths):
   """Make sure all given paths are not versioned paths."""
   is_multiple = hasattr(paths, '__iter__')
   for path in paths if is_multiple else [paths]:
     if VERSIONS_PATH_BASE_REGEX.match(path):
       raise ValueError('Not a root file path: %s' % path)
 
-def _VerifyVersionedPaths(paths):
+def _verify_versioned_paths(paths):
   """Make sure all given paths are versioned paths."""
   is_multiple = hasattr(paths, '__iter__')
   for path in paths if is_multiple else [paths]:
     if not VERSIONS_PATH_BASE_REGEX.match(path):
       raise ValueError('Not a versioned file path: %s' % path)
 
-def _CopyFileFromRoot(path, changeset, **kwargs):
+def _copy_file_from_root(path, changeset, **kwargs):
   """Copy a root file (if it exists) to a new versioned path.
 
   Args:
@@ -820,5 +820,5 @@ def _CopyFileFromRoot(path, changeset, **kwargs):
   # 1) The root file exists.
   # 2) The versioned file doesn't exist or it is being un-deleted.
   if not versioned_file.exists or versioned_file.meta.status == FILE_DELETED:
-    root_file.CopyTo(versioned_file)
+    root_file.copy_to(versioned_file)
   return versioned_file

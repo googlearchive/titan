@@ -45,6 +45,9 @@ flags.DEFINE_boolean('run_with_profiling', 0,
                      'Set to true for profiling the script. '
                      'Execution will be slower, and the output format might '
                      'change over time.')
+flags.DEFINE_string('profile_file', None,
+                    'Dump profile information to a file (for python -m '
+                    'pstats). Implies --run_with_profiling.')
 flags.DEFINE_boolean('use_cprofile_for_profiling', True,
                      'Use cProfile instead of the profile module for '
                      'profiling. This has no effect unless '
@@ -78,10 +81,32 @@ class UsageError(Error):
 
 class HelpFlag(flags.BooleanFlag):
   """Special boolean flag that displays usage and raises SystemExit."""
+  NAME = 'help'
 
   def __init__(self):
-    flags.BooleanFlag.__init__(self, 'help', 0, 'show this help',
+    flags.BooleanFlag.__init__(self, self.NAME, 0, 'show this help',
                                short_name='?', allow_override=1)
+
+  def Parse(self, arg):
+    if arg:
+      usage(shorthelp=1, writeto_stdout=1)
+      # Advertise --helpfull on stdout, since usage() was on stdout.
+      print
+      print 'Try --helpfull to get a list of all flags.'
+      sys.exit(1)
+
+
+class HelpshortFlag(HelpFlag):
+  """--helpshort is an alias for --help."""
+  NAME = 'helpshort'
+
+
+class HelpfullFlag(flags.BooleanFlag):
+  """Display help for flags in this module and all dependent modules."""
+
+  def __init__(self):
+    flags.BooleanFlag.__init__(self, 'helpfull', 0, 'show full help',
+                               allow_override=1)
 
   def Parse(self, arg):
     if arg:
@@ -90,11 +115,11 @@ class HelpFlag(flags.BooleanFlag):
 
 
 class HelpXMLFlag(flags.BooleanFlag):
-  """Similar to HelpFlag, but generates output in XML format."""
+  """Similar to HelpfullFlag, but generates output in XML format."""
 
   def __init__(self):
     flags.BooleanFlag.__init__(self, 'helpxml', False,
-                               'like --help, but generates XML output',
+                               'like --helpfull, but generates XML output',
                                allow_override=1)
 
   def Parse(self, arg):
@@ -103,22 +128,7 @@ class HelpXMLFlag(flags.BooleanFlag):
       sys.exit(1)
 
 
-class HelpshortFlag(flags.BooleanFlag):
-  """Special bool flag that calls usage(shorthelp=1) and raises SystemExit."""
-
-  def __init__(self):
-    flags.BooleanFlag.__init__(self, 'helpshort', 0,
-                               'show usage only for this module',
-                               allow_override=1)
-
-  def Parse(self, arg):
-    if arg:
-      usage(shorthelp=1, writeto_stdout=1)
-      sys.exit(1)
-
-
 class BuildDataFlag(flags.BooleanFlag):
-
   """Boolean flag that writes build data to stdout and exits."""
 
   def __init__(self):
@@ -138,7 +148,7 @@ def parse_flags_with_usage(args):
     return argv
   except flags.FlagsError, error:
     sys.stderr.write('FATAL Flags parsing error: %s\n' % error)
-    sys.stderr.write('Pass --help or --helpshort to see help on flags.\n')
+    sys.stderr.write('Pass --helpshort or --helpfull to see help on flags.\n')
     sys.exit(1)
 
 
@@ -148,13 +158,14 @@ _define_help_flags_called = False
 def DefineHelpFlags():
   """Register help flags. Idempotent."""
   # Use a global to ensure idempotence.
-  # pylint: disable-msg=W0603
+  # pylint: disable=global-statement
   global _define_help_flags_called
 
   if not _define_help_flags_called:
     flags.DEFINE_flag(HelpFlag())
+    flags.DEFINE_flag(HelpshortFlag())  # alias for --help
+    flags.DEFINE_flag(HelpfullFlag())
     flags.DEFINE_flag(HelpXMLFlag())
-    flags.DEFINE_flag(HelpshortFlag())
     flags.DEFINE_flag(BuildDataFlag())
     _define_help_flags_called = True
 
@@ -190,7 +201,7 @@ def really_start(main=None):
     if FLAGS.run_with_pdb:
       sys.exit(pdb.runcall(main, argv))
     else:
-      if FLAGS.run_with_profiling:
+      if FLAGS.run_with_profiling or FLAGS.profile_file:
         # Avoid import overhead since most apps (including performance-sensitive
         # ones) won't be run with profiling.
         import atexit
@@ -199,7 +210,10 @@ def really_start(main=None):
         else:
           import profile
         profiler = profile.Profile()
-        atexit.register(profiler.print_stats)
+        if FLAGS.profile_file:
+          atexit.register(profiler.dump_stats, FLAGS.profile_file)
+        else:
+          atexit.register(profiler.print_stats)
         retval = profiler.runcall(main, argv)
         sys.exit(retval)
       else:

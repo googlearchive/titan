@@ -43,12 +43,12 @@ class BadRemoteFilesError(Error):
 class RemoteFileFactory(titan_rpc.AbstractRemoteFactory):
   """Factory for creating RemoteFile objects."""
 
-  def MakeRemoteFile(self, *args, **kwargs):
+  def make_remote_file(self, *args, **kwargs):
     """Should be used to create all RemoteFile objects."""
     kwargs['_titan_client'] = self.titan_client.Copy()
     return RemoteFile(*args, **kwargs)
 
-  def MakeRemoteFiles(self, *args, **kwargs):
+  def make_remote_files(self, *args, **kwargs):
     """Should be used to create all RemoteFiles objects."""
     kwargs['_titan_client'] = self.titan_client.Copy()
     return RemoteFiles(*args, **kwargs)
@@ -57,7 +57,7 @@ class RemoteFile(object):
   """A remote imitation of files.File."""
 
   def __init__(self, path, **kwargs):
-    utils.ValidateFilePath(path)
+    utils.validate_file_path(path)
     self._path = path
     self._titan_client = kwargs.pop('_titan_client')
     self._file_data = None
@@ -73,7 +73,7 @@ class RemoteFile(object):
         params['file_params'] = json.dumps(self._file_kwargs)
       url = '%s?%s' % (FILE_API_PATH_BASE, urllib.urlencode(params))
       response = self._titan_client.UrlFetch(url)
-      self._VerifyResponse(response)
+      self._verify_response(response)
       self._file_data = json.loads(response.content)
     return self._file_data
 
@@ -114,7 +114,7 @@ class RemoteFile(object):
     url = '%s%s?%s' % (FILE_API_PATH_BASE, FILE_READ_API,
                        urllib.urlencode({'path': self.path}))
     response = self._titan_client.UrlFetch(url)
-    self._VerifyResponse(response)
+    self._verify_response(response)
     # TODO(user): encoding?
     return response.content
 
@@ -153,7 +153,7 @@ class RemoteFile(object):
       self._meta = utils.DictAsObject(self.file_data['meta'])
     return self._meta
 
-  def Write(self, content=None, blob=None, fp=None, mime_type=None, meta=None,
+  def write(self, content=None, blob=None, fp=None, mime_type=None, meta=None,
             **kwargs):
     """Writes contents to a file.
 
@@ -215,13 +215,13 @@ class RemoteFile(object):
       payload = urllib.urlencode(params)
       response = self._titan_client.UrlFetch(url, method='POST',
                                              payload=payload)
-      self._VerifyResponse(response)
+      self._verify_response(response)
     except urllib2.HTTPError, e:
       if e.code == 404:
         raise BadRemoteFileError('File does not exist: %s' % self.path)
       raise
 
-  def Delete(self):
+  def delete(self):
     self._file_data = None
     try:
       params = {'path': self.path}
@@ -229,13 +229,13 @@ class RemoteFile(object):
       payload = urllib.urlencode(params)
       response = self._titan_client.UrlFetch(url, method='DELETE',
                                              payload=payload)
-      self._VerifyResponse(response)
+      self._verify_response(response)
     except urllib2.HTTPError, e:
       if e.code == 404:
         raise BadRemoteFileError('File does not exist: %s' % self.path)
       raise
 
-  def _VerifyResponse(self, response):
+  def _verify_response(self, response):
     if response.status_code == 404:
       raise BadRemoteFileError('File does not exist: %s' % self.path)
     elif not 200 <= response.status_code <= 299:
@@ -255,13 +255,13 @@ class RemoteFiles(collections.Mapping):
       raise ValueError('"files" must be an iterable.')
     if paths is not None:
       for path in paths:
-        self._AddFile(RemoteFile(path=path, **kwargs))
+        self._add_file(RemoteFile(path=path, **kwargs))
     elif files is not None:
       for titan_file in files:
-        self._AddFile(titan_file)
+        self._add_file(titan_file)
 
   def __delitem__(self, path):
-    self._RemoveFile(path)
+    self._remove_file(path)
 
   def __getitem__(self, path):
     return self._titan_files[path]
@@ -292,16 +292,16 @@ class RemoteFiles(collections.Mapping):
   def __repr__(self):
     return '<RemoteFiles %r>' % self.keys()
 
-  def _AddFile(self, titan_file):
+  def _add_file(self, titan_file):
     self._titan_files[titan_file.path] = titan_file
 
-  def _RemoveFile(self, path):
+  def _remove_file(self, path):
     del self._titan_files[path]
 
   def clear(self):
     self._titan_files = {}
 
-  def List(self, dir_path, recursive=False, depth=None):
+  def list(self, dir_path, recursive=False, depth=None):
     """Method to populate the current RemoteFiles mapping for the given dir.
 
     This method knowingly diverges from the API as it doesn't return a
@@ -324,7 +324,7 @@ class RemoteFiles(collections.Mapping):
     url = '%s?%s' % (FILES_API_PATH_BASE, urllib.urlencode(params))
 
     response = self._titan_client.UrlFetch(url)
-    self._VerifyResponse(response)
+    self._verify_response(response)
     data = json.loads(response.content)
 
     if self._titan_files:
@@ -335,15 +335,15 @@ class RemoteFiles(collections.Mapping):
                                            _titan_client=self._titan_client)
     return self
 
-  def Delete(self):
+  def delete(self):
     # TODO(user): implement batch operation. For now, the naive way:
     for remote_file in self.itervalues():
-      remote_file.Delete()
+      remote_file.delete()
     # Empty the container:
     self.clear()
     return self
 
-  def _VerifyResponse(self, response):
+  def _verify_response(self, response):
     if response.status_code == 404:
       raise BadRemoteFilesError('Directory does not exist')
     elif not 200 <= response.status_code <= 299:

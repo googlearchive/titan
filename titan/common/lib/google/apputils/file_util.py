@@ -37,11 +37,8 @@ def ListDirPath(dir_name):
 
 def Read(filename):
   """Read entire contents of file with name 'filename'."""
-  fp = open(filename)
-  try:
+  with open(filename) as fp:
     return fp.read()
-  finally:
-    fp.close()
 
 
 def Write(filename, contents, overwrite_existing=True, mode=0666, gid=None):

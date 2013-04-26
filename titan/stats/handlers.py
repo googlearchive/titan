@@ -24,14 +24,7 @@ import datetime
 import json
 import os
 import time
-
-# Allow Django templates to work even if not configured by this app. Defaults to
-# the Django settings defaults. Override this value in appengine_config if
-# necessary.
-if not 'DJANGO_SETTINGS_MODULE' in os.environ:
-  os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
-from django import template
-
+import jinja2
 import webapp2
 from titan import stats
 
@@ -74,7 +67,6 @@ class GraphHandler(webapp2.RequestHandler):
       Rendered HTML template with graph of counter data.
     """
     params = _ParseRequestParams(self.request)
-
     counters_service = stats.CountersService()
     aggregate_data = counters_service.GetCounterData(
         counter_names=params['counter_names'],
@@ -82,12 +74,9 @@ class GraphHandler(webapp2.RequestHandler):
         end_date=params['end_date'])
     # Render template:
     path = os.path.join(TEMPLATES_PATH, 'graph.html')
-    tpl = template.Template(open(path).read())
-    data = {
-        'aggregate_data': aggregate_data,
-    }
-    context = template.Context(data)
-    self.response.out.write(tpl.render(context))
+    template = jinja2.Template(open(path).read())
+    self.response.out.write(template.render(
+        aggregate_data=aggregate_data, window_size=stats.DEFAULT_WINDOW_SIZE))
 
 def _ParseRequestParams(request):
   counter_names = request.get_all('counter_name')

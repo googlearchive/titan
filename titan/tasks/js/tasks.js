@@ -13,6 +13,7 @@ goog.require('goog.uri.utils');
 goog.require('titan.channel.BroadcastChannel');
 
 
+
 /**
  * Client for Titan Tasks.
  * @param {string} key The server-generated ID.

@@ -31,8 +31,8 @@ class ChangesetHandler(handlers.BaseHandler):
     """POST handler."""
     try:
       vcs = versions.VersionControlService()
-      changeset = vcs.NewStagingChangeset()
-      self.WriteJsonResponse(changeset)
+      changeset = vcs.new_staging_changeset()
+      self.write_json_response(changeset)
       self.response.set_status(201)
     except (TypeError, ValueError):
       self.error(400)
@@ -62,10 +62,10 @@ class ChangesetCommitHandler(handlers.BaseHandler):
           titan_file = files.File(path, changeset=staging_changeset,
                                   _internal=True)
           staging_changeset.AssociateFile(titan_file)
-        staging_changeset.FinalizeAssociatedFiles()
+        staging_changeset.finalize_associated_files()
 
-      final_changeset = vcs.Commit(staging_changeset, force=force)
-      self.WriteJsonResponse(final_changeset)
+      final_changeset = vcs.commit(staging_changeset, force=force)
+      self.write_json_response(final_changeset)
       self.response.set_status(201)
     except (TypeError, ValueError):
       self.error(400)

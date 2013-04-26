@@ -33,12 +33,12 @@ class RemoteChangesetError(Error):
 class RemoteVcsFactory(titan_rpc.AbstractRemoteFactory):
   """Factory for creating RemoteVersionControlService objects."""
 
-  def MakeRemoteVersionControlService(self, *args, **kwargs):
+  def make_remote_vcs(self, *args, **kwargs):
     """Should be used to create all RemoteVersionControlService objects."""
     kwargs['_titan_client'] = self.titan_client
     return RemoteVersionControlService(*args, **kwargs)
 
-  def MakeRemoteChangeset(self, *args, **kwargs):
+  def make_remote_changeset(self, *args, **kwargs):
     """Should be used to create all RemoteChangeset objects."""
     kwargs['_titan_client'] = self.titan_client
     return RemoteChangeset(*args, **kwargs)
@@ -49,7 +49,7 @@ class RemoteVersionControlService(object):
   def __init__(self, **kwargs):
     self._titan_client = kwargs.pop('_titan_client')
 
-  def NewStagingChangeset(self):
+  def new_staging_changeset(self):
     """Imitation of versions.VersionControlService.NewStagingChangeset()."""
     response = self._titan_client.UrlFetch(VERSIONS_CHANGESET_API,
                                            method='POST')
@@ -58,7 +58,7 @@ class RemoteVersionControlService(object):
     return RemoteChangeset(json.loads(response.content)['num'],
                            _titan_client=self._titan_client)
 
-  def Commit(self, staging_changeset, force=False):
+  def commit(self, staging_changeset, force=False):
     """Imitation of versions.VersionControlService.Commit()."""
     api_path = '%s?changeset=%d' % (VERSIONS_CHANGESET_COMMIT_API,
                                     staging_changeset.num)
@@ -68,7 +68,7 @@ class RemoteVersionControlService(object):
     headers = {}
     if not force:
       # Pull manifest from staging_changeset.
-      remote_files = staging_changeset.GetFiles()
+      remote_files = staging_changeset.get_files()
       manifest = remote_files.keys()
       payload = urllib.urlencode({'manifest': json.dumps(manifest)})
     response = self._titan_client.UrlFetch(api_path, method='POST',
@@ -94,28 +94,28 @@ class RemoteChangeset(object):
   def num(self):
     return self._num
 
-  def AssociateFile(self, titan_file):
+  def associate_file(self, titan_file):
     """Imitation of versions.Changeset.AssociateFile()."""
     self._associated_files.append(titan_file)
     self._finalized_files = False
 
-  def DisassociateFile(self, titan_file):
+  def disassociate_file(self, titan_file):
     """Imitation of versions.Changeset.DisassociateFile()."""
     self._associated_files.remove(titan_file)
     self._finalized_files = False
 
-  def FinalizeAssociatedFiles(self):
-    """Imitation of versions.Changeset.FinalizeAssociatedFiles()."""
+  def finalize_associated_files(self):
+    """Imitation of versions.Changeset.finalize_associated_files()."""
     if not self._associated_files:
       raise RemoteChangesetError(
           'Cannot finalize: no associated remote file objects.')
     self._finalized_files = True
 
-  def GetFiles(self):
-    """Imitation of versions.Changeset.GetFiles()."""
+  def get_files(self):
+    """Imitation of versions.Changeset.get_files()."""
     if not self._finalized_files:
       raise RemoteChangesetError(
           'Cannot guarantee strong consistency when associated file paths '
-          'have not been finalized. Perhaps you want ListFiles?')
+          'have not been finalized. Perhaps you want list_files?')
     return files_client.RemoteFiles(files=self._associated_files,
                                     _titan_client=self._titan_client)

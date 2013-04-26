@@ -43,7 +43,7 @@ class TestableRemoteVcsFactory(versions_client.RemoteVcsFactory):
 class VersionsClientTestCase(testing.BaseTestCase):
 
   def setUp(self):
-    files.RegisterFileFactory(lambda *args, **kwargs: VersionedFile)
+    files.register_file_factory(lambda *args, **kwargs: VersionedFile)
     super(VersionsClientTestCase, self).setUp()
     self.remote_vcs_factory = TestableRemoteVcsFactory(
         host=os.environ['HTTP_HOST'])
@@ -51,30 +51,30 @@ class VersionsClientTestCase(testing.BaseTestCase):
         host=os.environ['HTTP_HOST'])
 
   def testRemoteVersionControlService(self):
-    remote_vcs = self.remote_vcs_factory.MakeRemoteVersionControlService()
-    remote_changeset = remote_vcs.NewStagingChangeset()
+    remote_vcs = self.remote_vcs_factory.make_remote_vcs()
+    remote_changeset = remote_vcs.new_staging_changeset()
 
     # Error handling: writing without a changeset.
-    remote_file = self.remote_file_factory.MakeRemoteFile('/a/foo')
+    remote_file = self.remote_file_factory.make_remote_file('/a/foo')
     # TODO(user): build more specific remote objects error handling.
-    self.assertRaises(Exception, remote_file.Write, 'foo!')
+    self.assertRaises(Exception, remote_file.write, 'foo!')
 
-    remote_file = self.remote_file_factory.MakeRemoteFile(
+    remote_file = self.remote_file_factory.make_remote_file(
         '/a/foo', changeset=remote_changeset.num)
-    remote_file.Write('foo!')
-    remote_changeset.AssociateFile(remote_file)
+    remote_file.write('foo!')
+    remote_changeset.associate_file(remote_file)
 
     # Error handling: changeset's files are not finalized.
     self.assertRaises(
         versions_client.RemoteChangesetError,
-        remote_vcs.Commit, remote_changeset)
+        remote_vcs.commit, remote_changeset)
     self.assertRaises(
         versions_client.RemoteChangesetError,
-        remote_changeset.GetFiles)
+        remote_changeset.get_files)
 
-    remote_changeset.FinalizeAssociatedFiles()
-    remote_vcs.Commit(remote_changeset)
-    self.assertEqual(['/a/foo'], remote_changeset.GetFiles().keys())
+    remote_changeset.finalize_associated_files()
+    remote_vcs.commit(remote_changeset)
+    self.assertEqual(['/a/foo'], remote_changeset.get_files().keys())
 
     # Verify actual state.
     actual_file = files.File('/a/foo')
@@ -82,21 +82,21 @@ class VersionsClientTestCase(testing.BaseTestCase):
     self.assertTrue(actual_file.changeset)
 
     # Test Commit(force=True).
-    remote_changeset = remote_vcs.NewStagingChangeset()
+    remote_changeset = remote_vcs.new_staging_changeset()
     self.assertRaises(Exception,
-                      remote_vcs.Commit, remote_changeset, force=True)
-    remote_file = self.remote_file_factory.MakeRemoteFile(
+                      remote_vcs.commit, remote_changeset, force=True)
+    remote_file = self.remote_file_factory.make_remote_file(
         '/a/foo', changeset=remote_changeset.num)
-    remote_file.Write('bar!')
-    # Don't call AssociateFile or FinalizeAssociatedFiles.
-    remote_vcs.Commit(remote_changeset, force=True)
+    remote_file.write('bar!')
+    # Don't call AssociateFile or finalize_associated_files.
+    remote_vcs.commit(remote_changeset, force=True)
     actual_file = files.File('/a/foo')
     self.assertEqual('bar!', actual_file.content)
     self.assertTrue(actual_file.changeset)
 
     # Test MakeRemoteChangeset().
     num = actual_file.changeset.num
-    remote_changeset = self.remote_vcs_factory.MakeRemoteChangeset(num)
+    remote_changeset = self.remote_vcs_factory.make_remote_changeset(num)
 
 if __name__ == '__main__':
   basetest.main()

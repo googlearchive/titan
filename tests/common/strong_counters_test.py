@@ -19,7 +19,7 @@ from google.appengine.datastore import datastore_stub_util
 from google.appengine.ext import testbed
 from titan.common.lib.google.apputils import basetest
 from titan.common import strong_counters
-from tests.common import basetest as common_basetest
+from tests.common.lib import basetest as common_basetest
 
 class StrongCountersTest(common_basetest.AppEngineTestCase):
 

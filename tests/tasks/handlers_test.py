@@ -41,10 +41,10 @@ class TaskManagerHandlerTest(testing.BaseTestCase):
     response = self.app.get(url, expect_errors=True)
     self.assertEqual(404, response.status_int)
 
-    task_manager = tasks.TaskManager.New(group='group')
-    task_manager.DeferTask('task-key0', GoodCallback)
-    task_manager.DeferTask('task-key1', BadCallback)
-    task_manager.Finalize()
+    task_manager = tasks.TaskManager.new(group='group')
+    task_manager.defer_task('task-key0', GoodCallback)
+    task_manager.defer_task('task-key1', BadCallback)
+    task_manager.finalize()
 
     url = '/_titan/tasks/taskmanager?key=%s&group=%s' % (
         task_manager.key, task_manager.group)
@@ -99,8 +99,8 @@ class TaskManagerHandlerTest(testing.BaseTestCase):
     self.assertEqual(404, response.status_int)
 
     client_id = 'unique-client-id'
-    token = channel.CreateChannel(client_id)
-    task_manager = tasks.TaskManager.New(broadcast_channel_key='broadcast')
+    token = channel.create_channel(client_id)
+    task_manager = tasks.TaskManager.new(broadcast_channel_key='broadcast')
     url = '/_titan/tasks/taskmanager/subscribe?key=%s&client_id=%s' % (
         task_manager.key, client_id)
     response = self.app.post(url)
@@ -110,9 +110,9 @@ class TaskManagerHandlerTest(testing.BaseTestCase):
     # This happens automatically by the client scripts in the real world.
     self.channel_stub.connect_channel(token)
 
-    task_manager.DeferTask('task-key0', GoodCallback)
-    task_manager.DeferTask('task-key1', BadCallback)
-    task_manager.Finalize()
+    task_manager.defer_task('task-key0', GoodCallback)
+    task_manager.defer_task('task-key1', BadCallback)
+    task_manager.finalize()
 
     # Weakly assert that messages were sent to the broadcast channel.
     self.assertTrue(self.channel_stub.pop_first_message(token))

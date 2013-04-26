@@ -16,12 +16,12 @@
 """Titan Users module.
 
 This module is a simple wrapper/abstraction around the App Engine Users API and
-the OAuth API. The GetCurrentUser method checks to see if a user is logged in
+the OAuth API. The get_current_user method checks to see if a user is logged in
 via the regular App Engine Users API, and if not, then checks the OAuth API.
 
 Usage:
   # Get the current user and print their email address.
-  user = users.GetCurrentUser()
+  user = users.get_current_user()
   if user:
     print user.email
 
@@ -29,8 +29,8 @@ Usage:
   user = users.TitanUser('example@example.com')
 
   # Get login/logout URLs.
-  users.CreateLoginUrl(dest_url='/afterlogin')
-  users.CreateLogoutUrl(dest_url='/afterlogout')
+  users.create_login_url(dest_url='/afterlogin')
+  users.create_logout_url(dest_url='/afterlogout')
 """
 
 import logging
@@ -43,17 +43,19 @@ from google.appengine.ext.ndb import utils as ndb_utils
 
 __all__ = [
     # Constants.
-    'OAUTH_SCOPE',
+    'OAUTH_SCOPES',
     # Classes.
     'TitanUser',
     'TitanUserProperty',
     # Functions.
-    'GetCurrentUser',
-    'CreateLoginUrl',
-    'CreateLogoutUrl',
+    'get_current_user',
+    'create_login_url',
+    'create_logout_url',
 ]
 
-OAUTH_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
+OAUTH_SCOPES = (
+    'https://www.googleapis.com/auth/userinfo.email',
+)
 
 class TitanUser(object):
   """Simple wrapper around the App Engine Users API.
@@ -61,9 +63,9 @@ class TitanUser(object):
   Attributes:
     email: The email address of the user.
     is_admin: Whether the user is an admin on the App Engine app. This
-        attribute is only available if instantiated via GetCurrentUser().
+        attribute is only available if instantiated via get_current_user().
     user_id: The ID of the user from App Engine's Users API. This attribute is
-        only available if instantiated via GetCurrentUser().
+        only available if instantiated via get_current_user().
   """
 
   def __init__(self, email, organization=None, _user=None, _is_admin=False,
@@ -104,6 +106,16 @@ class TitanUser(object):
   def organization(self):
     return self._organization or self.email.split('@')[1]
 
+  def serialize(self):
+    data = {
+        'email': self.email,
+        'organization': self.organization,
+        'is_admin': self.is_admin,
+    }
+    if self._user:
+      data['user_id'] = self.user_id
+    return data
+
 class TitanUserProperty(ndb.StringProperty):
   """A property for use in NDB models.
 
@@ -138,7 +150,7 @@ class TitanUserProperty(ndb.StringProperty):
   def _prepare_for_put(self, entity):
     if (self._auto_current_user or
         (self._auto_current_user_add and not self._has_value(entity))):
-      value = GetCurrentUser()
+      value = get_current_user()
       if value is not None:
         self._store_value(entity, value)
 
@@ -163,11 +175,11 @@ class TitanUserProperty(ndb.StringProperty):
   def _from_base_type(self, email):
     return TitanUser(email)
 
-def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
+def get_current_user(oauth_scopes=OAUTH_SCOPES):
   """Returns the currently logged in TitanUser or None.
 
   Args:
-    oauth_scope: If provided, the OAuth scope to use to request the current
+    oauth_scopes: If provided, the OAuth scopes to use to request the current
         OAuth user via the OAuth API. Set to None to skip OAuth checking.
   Returns:
     An initialized TitanUser or None if no user is logged in.
@@ -180,10 +192,10 @@ def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
                      _is_admin=is_admin)
 
   # If an OAuth scope is provided, request the current OAuth user, if any.
-  if oauth_scope:
-    user = _GetCurrentOAuthUser(oauth_scope)
+  if oauth_scopes:
+    user = _get_current_oauth_user(oauth_scopes)
     if user:
-      is_admin = oauth.is_current_user_admin(oauth_scope)
+      is_admin = oauth.is_current_user_admin(_format_oauth_scopes(oauth_scopes))
       organization = os.environ.get('USER_ORGANIZATION')
       return TitanUser(user.email(), organization=organization, _user=user,
                        _is_admin=is_admin, _is_oauth_user=True)
@@ -194,15 +206,15 @@ def GetCurrentUser(oauth_scope=OAUTH_SCOPE):
     if email:
       return TitanUser(email)
 
-def CreateLoginUrl(dest_url=None):
+def create_login_url(dest_url=None):
   return users_lib.create_login_url(dest_url)
 
-def CreateLogoutUrl(dest_url):
+def create_logout_url(dest_url):
   return users_lib.create_logout_url(dest_url)
 
-def _GetCurrentOAuthUser(scope):
+def _get_current_oauth_user(oauth_scopes):
   try:
-    user = oauth.get_current_user(scope)
+    user = oauth.get_current_user(_format_oauth_scopes(oauth_scopes))
     return user
   except oauth.NotAllowedError:
     # Raised if the requested URL does not permit OAuth authentication.
@@ -213,3 +225,8 @@ def _GetCurrentOAuthUser(scope):
   except oauth.OAuthRequestError:
     # Raised on any invalid OAuth request.
     logging.exception('Error with OAuth request.')
+
+def _format_oauth_scopes(oauth_scopes):
+  if hasattr(oauth_scopes, '__iter__'):
+    oauth_scopes = ' '.join(oauth_scopes)
+  return oauth_scopes

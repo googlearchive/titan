@@ -34,7 +34,7 @@ class HandlersTest(testing.BaseTestCase):
 class TestHandler(handlers.BaseHandler):
 
   def get(self):
-    self.WriteJsonResponse({'message': 'hello'})
+    self.write_json_response({'message': 'hello'})
 
 test_application = webapp2.WSGIApplication((
     ('/test', TestHandler),

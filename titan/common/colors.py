@@ -22,13 +22,22 @@ Example usage:
 import re
 
 # Color codes.
-BLACK = 30
-BLUE = 34
-BROWN = 33
-CYAN = 36
-GREEN = 32
-PURPLE = 35
-RED = 31
+BLACK = '0;30'
+BLUE = '0;34'
+BROWN = '0;33'
+GREEN = '0;32'
+CYAN = '0;36'
+RED = '0;31'
+PURPLE = '0;35'
+LIGHT_GREY = '0;37'
+DARK_GRAY = '1;30'
+LIGHT_BLUE = '1;34'
+LIGHT_GREEN = '1;32'
+LIGHT_CYAN = '1;36'
+LIGHT_RED = '1;31'
+LIGHT_PURPLE = '1;35'
+YELLOW = '1;33'
+WHITE = '1;37'
 
 _CODE_MAP = {
     'black': BLACK,
@@ -38,11 +47,20 @@ _CODE_MAP = {
     'green': GREEN,
     'purple': PURPLE,
     'red': RED,
+    'light_grey': LIGHT_GREY,
+    'dark_grey': DARK_GRAY,
+    'light_blue': LIGHT_BLUE,
+    'light_green': LIGHT_GREEN,
+    'light_cyan': LIGHT_CYAN,
+    'light_red': LIGHT_RED,
+    'light_purple': LIGHT_PURPLE,
+    'yellow': YELLOW,
+    'white': WHITE,
 }
 
-_FMT_REGEX = re.compile(r'<(%s)>(.*)<\/\1>' % '|'.join(_CODE_MAP.keys()))
+_FMT_REGEX = re.compile(r'<(%s)>(.*?)<\/\1>' % '|'.join(_CODE_MAP.keys()))
 
-def Format(msg, *args, **kwargs):
+def format(msg, *args, **kwargs):
   """Formats a message with bash colors.
 
   Uses an XML-like syntax to format specific snippets in color. For example:
@@ -63,15 +81,16 @@ def Format(msg, *args, **kwargs):
 
   for match in _FMT_REGEX.finditer(msg):
     color, snippet = match.group(1, 2)
+
     if color not in _CODE_MAP:
       continue
 
     color_code = _CODE_MAP[color]
-    colored_msg = FormatColor(color_code, snippet)
+    colored_msg = format_color(color_code, snippet)
     msg = msg.replace(match.group(), colored_msg)
   return msg
 
-def FormatColor(color_code, msg, *args, **kwargs):
+def format_color(color_code, msg, *args, **kwargs):
   """Formats a message using a specific color.
 
   Args:
@@ -86,4 +105,4 @@ def FormatColor(color_code, msg, *args, **kwargs):
     msg %= args
   elif kwargs:
     msg %= kwargs
-  return '\033[0;%dm%s\033[m' % (color_code, msg)
+  return '\033[%sm%s\033[m' % (color_code, msg)

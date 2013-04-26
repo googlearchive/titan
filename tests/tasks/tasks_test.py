@@ -30,7 +30,7 @@ class BadCallbackException(Exception):
 class TasksTestCase(testing.BaseTestCase):
 
   def testTaskManager(self):
-    task_manager = tasks.TaskManager.New(
+    task_manager = tasks.TaskManager.new(
         group='group',
         description='desc',
         broadcast_channel_key='broadcast')
@@ -40,8 +40,8 @@ class TasksTestCase(testing.BaseTestCase):
     self.assertEqual('broadcast', task_manager._broadcast_channel.key)
     self.assertFalse(task_manager._finalized)
     self.assertTrue(task_manager.exists)
-    token = channel.CreateChannel('foo')
-    task_manager.Subscribe('foo')
+    token = channel.create_channel('foo')
+    task_manager.subscribe('foo')
     self.channel_stub.connect_channel(token)
 
     self.assertRaises(
@@ -51,25 +51,25 @@ class TasksTestCase(testing.BaseTestCase):
     task_manager = tasks.TaskManager(key=task_manager.key, group='group')
 
     # First task fails.
-    task_manager.DeferTask('key0', BadCallback)
+    task_manager.defer_task('key0', BadCallback)
     self.assertEqual(1, len(self.channel_stub.get_channel_messages(token)))
     # 10 tasks succeed.
     for i in range(1, 11):
-      task_manager.DeferTask('key%s' % i, GoodCallback, i)
+      task_manager.defer_task('key%s' % i, GoodCallback, i)
 
     # Can't add a task with the same key.
     self.assertRaises(
         tasks.DuplicateTaskError,
-        lambda: task_manager.DeferTask('key0', lambda: None))
-    task_manager.Finalize()
+        lambda: task_manager.defer_task('key0', lambda: None))
+    task_manager.finalize()
     # Cannot add tasks after finalization.
     self.assertRaises(
         tasks.TaskManagerFinalizedError,
-        lambda: task_manager.DeferTask('foo', lambda: None))
+        lambda: task_manager.defer_task('foo', lambda: None))
 
     self.assertTrue(task_manager.exists)
     self.assertTrue(task_manager._finalized)
-    self.assertRaises(tasks.InvalidTaskError, task_manager.GetTask, 'fake-key')
+    self.assertRaises(tasks.InvalidTaskError, task_manager.get_task, 'fake-key')
 
     self.assertEqual(11, task_manager.num_total)
     self.assertEqual(0, task_manager.num_completed)
@@ -99,7 +99,7 @@ class TasksTestCase(testing.BaseTestCase):
     # Cannot add tasks after finalization.
     self.assertRaises(
         tasks.TaskManagerFinalizedError,
-        lambda: task_manager.DeferTask('foo', lambda: None))
+        lambda: task_manager.defer_task('foo', lambda: None))
     self.assertEqual('group', task_manager.group)
     self.assertEqual('desc', task_manager.description)
     self.assertEqual('broadcast', task_manager._broadcast_channel.key)
@@ -176,27 +176,27 @@ class TasksTestCase(testing.BaseTestCase):
 
     # Error handling.
     self.assertRaises(
-        ValueError, lambda: tasks.TaskManager.New(group='Invalid Group'))
+        ValueError, lambda: tasks.TaskManager.new(group='Invalid Group'))
     self.assertRaises(
         tasks.InvalidTaskManagerError,
-        lambda: tasks.TaskManager('fake-key').DeferTask('foo', lambda: None))
+        lambda: tasks.TaskManager('fake-key').defer_task('foo', lambda: None))
     self.assertFalse(tasks.TaskManager(key='fake').exists)
 
   def testList(self):
-    self.assertEqual([], tasks.TaskManager.List())
-    foo_task_manager = tasks.TaskManager.New(group='foo')
-    foo_task_manager.DeferTask('-', GoodCallback, 0)
-    foo_task_manager.Finalize()
+    self.assertEqual([], tasks.TaskManager.list())
+    foo_task_manager = tasks.TaskManager.new(group='foo')
+    foo_task_manager.defer_task('-', GoodCallback, 0)
+    foo_task_manager.finalize()
 
-    foo2_task_manager = tasks.TaskManager.New(group='foo')
-    foo2_task_manager.DeferTask('-', GoodCallback, 0)
-    foo2_task_manager.Finalize()
+    foo2_task_manager = tasks.TaskManager.new(group='foo')
+    foo2_task_manager.defer_task('-', GoodCallback, 0)
+    foo2_task_manager.finalize()
 
-    bar_task_manager = tasks.TaskManager.New(group='bar')
-    bar_task_manager.DeferTask('-', GoodCallback, 0)
-    bar_task_manager.Finalize()
+    bar_task_manager = tasks.TaskManager.new(group='bar')
+    bar_task_manager.defer_task('-', GoodCallback, 0)
+    bar_task_manager.finalize()
 
-    self.assertEqual([], tasks.TaskManager.List())
+    self.assertEqual([], tasks.TaskManager.list())
 
     # Verify __eq__.
     self.assertEqual(
@@ -205,13 +205,13 @@ class TasksTestCase(testing.BaseTestCase):
         bar_task_manager, tasks.TaskManager(foo_task_manager.key, group='foo'))
 
     # Expect order to be descending chronological by creation time.
-    self.assertEqual([], tasks.TaskManager.List())
+    self.assertEqual([], tasks.TaskManager.list())
     self.assertEqual(
         [foo2_task_manager.key, foo_task_manager.key],
-        [tm.key for tm in tasks.TaskManager.List(group='foo')])
+        [tm.key for tm in tasks.TaskManager.list(group='foo')])
     self.assertEqual(
         [bar_task_manager.key],
-        [tm.key for tm in tasks.TaskManager.List(group='bar')])
+        [tm.key for tm in tasks.TaskManager.list(group='bar')])
 
 # These must be module-level functions for pickling.
 def GoodCallback(unused_index):

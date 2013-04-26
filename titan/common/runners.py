@@ -40,32 +40,32 @@ class BaseRunner(object):
 
     self._print_lock = threading.RLock()
 
-  def Print(self, msg):
+  def print_message(self, msg):
     if self.quiet:
       return
-    self._Print(msg)
+    self._print(msg)
 
-  def PrintWarning(self, msg):
+  def print_warning(self, msg):
     if self.suppress_warnings:
       return
-    msg = colors.Format('<red>WARNING</red>: %s', msg)
-    self._Print(msg, to_stderr=True)
+    msg = colors.format('<red>WARNING</red>: %s', msg)
+    self._print(msg, to_stderr=True)
 
-  def PrintError(self, msg):
+  def print_error(self, msg):
     if self.suppress_errors:
       return
-    msg = colors.Format('<red>ERROR</red>: %s', msg)
-    self._Print(msg, to_stderr=True)
+    msg = colors.format('<red>ERROR</red>: %s', msg)
+    self._print(msg, to_stderr=True)
 
-  def PrintJson(self, data):
-    self.Print(json.dumps(data, sort_keys=True, indent=2))
+  def print_json(self, data):
+    self.print_message(json.dumps(data, sort_keys=True, indent=2))
 
-  def _Print(self, msg, to_stderr=False):
+  def _print(self, msg, to_stderr=False):
     target = sys.stderr if to_stderr else sys.stdout
     with self._print_lock:
       target.write(msg + '\n')
 
-  def Confirm(self, message, default=False):
+  def confirm(self, message, default=False):
     if self.force:
       return True
     yes = 'Y' if default else 'y'

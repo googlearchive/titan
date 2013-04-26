@@ -24,10 +24,10 @@ from titan.tasks import deferred
 class DeferredTest(testing.BaseTestCase):
 
   def testDefer(self):
-    self.Login('alice@example.com')
+    self.login('alice@example.com')
     path = '/foo.txt'
     content = 'hello'
-    deferred.Defer(WriteFile, path, content)
+    deferred.defer(WriteFile, path, content)
     self.RunDeferredTasks()
 
     # Verify the task ran.
@@ -39,7 +39,7 @@ class DeferredTest(testing.BaseTestCase):
     self.assertEqual('alice@example.com', titan_file.created_by.email)
 
 def WriteFile(path, content):
-  files.File(path).Write(content)
+  files.File(path).write(content)
 
 if __name__ == '__main__':
   basetest.main()

@@ -36,59 +36,59 @@ EXPLODING_FILE_CONTENT = '\x89' * (1 << 18)  # 256 KiB, explodes to ~1.01 MiB.
 class MicroversioningMixin(microversions.MicroversioningMixin, files.File):
 
   @classmethod
-  def ShouldApplyMixin(cls, **kwargs):
+  def should_apply_mixin(cls, **kwargs):
     if kwargs.get('_no_mixins'):
       return False
-    return microversions.MicroversioningMixin.ShouldApplyMixin(**kwargs)
+    return microversions.MicroversioningMixin.should_apply_mixin(**kwargs)
 
 # The class used during the deferred task action.
 class FileVersioningMixin(versions.FileVersioningMixin, files.File):
 
   @classmethod
-  def ShouldApplyMixin(cls, **kwargs):
+  def should_apply_mixin(cls, **kwargs):
     if kwargs.get('_no_mixins'):
       return False
-    return versions.FileVersioningMixin.ShouldApplyMixin(**kwargs)
+    return versions.FileVersioningMixin.should_apply_mixin(**kwargs)
 
 class MicroversionsTest(testing.BaseTestCase):
 
   def setUp(self):
     super(MicroversionsTest, self).setUp()
     self.vcs = versions.VersionControlService()
-    files.RegisterFileMixins([MicroversioningMixin, FileVersioningMixin])
+    files.register_file_mixins([MicroversioningMixin, FileVersioningMixin])
 
   def testRootTreeHandling(self):
     # Actions should check root tree files, not versioning _FilePointers.
     self.assertFalse(files.File('/foo').exists)
-    files.File('/foo', _no_mixins=True).Write('')
+    files.File('/foo', _no_mixins=True).write('')
     self.assertTrue(files.File('/foo').exists)
-    files.File('/foo', _no_mixins=True).Delete()
+    files.File('/foo', _no_mixins=True).delete()
     self.assertFalse(files.File('/foo').exists)
 
-    # Write(), and Delete() should all modify root tree files
+    # write(), and Delete() should all modify root tree files
     # and defer a versioning task which commits a single-file changeset.
-    files.File('/foo').Write('foo')
+    files.File('/foo').write('foo')
     self.assertEqual(1, len(self.taskqueue_stub.get_filtered_tasks()))
     self.assertEqual('foo', files.File('/foo', _no_mixins=True).content)
-    files.File('/foo').Delete()
+    files.File('/foo').delete()
     self.assertEqual(2, len(self.taskqueue_stub.get_filtered_tasks()))
     self.assertFalse(files.File('/foo', _no_mixins=True).exists)
 
     # Verify large RPC deferred task handling.
-    files.File('/foo').Write(LARGE_FILE_CONTENT)
+    files.File('/foo').write(LARGE_FILE_CONTENT)
     self.assertEqual(3, len(self.taskqueue_stub.get_filtered_tasks()))
     self.assertEqual(
         LARGE_FILE_CONTENT, files.File('/foo', _no_mixins=True).content)
 
   def testContentAndBlobsHandling(self):
-    files.File('/foo').Write('foo')
-    files.File('/foo').Delete()
+    files.File('/foo').write('foo')
+    files.File('/foo').delete()
     # This will immediately go to blobstore, then the deferred task will
     # have a "blob" argument:
-    files.File('/foo').Write(LARGE_FILE_CONTENT)
-    microversions.ProcessData()
+    files.File('/foo').write(LARGE_FILE_CONTENT)
+    microversions.process_data()
     # After tasks run, verify correct content was saved to the versioned paths:
-    file_versions = self.vcs.GetFileVersions('/foo')
+    file_versions = self.vcs.get_file_versions('/foo')
 
     # In reverse-chronological order:
     titan_file = files.File(
@@ -115,15 +115,15 @@ class MicroversionsTest(testing.BaseTestCase):
     self.assertEqual(versions.FILE_CREATED, file_versions[2].status)
 
     # Verify that this doesn't error, the behavior should be the same as above.
-    files.File('/foo').Write(EXPLODING_FILE_CONTENT)
-    microversions.ProcessData()
+    files.File('/foo').write(EXPLODING_FILE_CONTENT)
+    microversions.process_data()
 
   def testMicroversions(self):
-    # Write.
-    files.File('/foo').Write('foo')
+    # write.
+    files.File('/foo').write('foo')
     self.Logout()  # Mimic the cron job.
-    results = microversions.ProcessData()
-    self.Login()
+    results = microversions.process_data()
+    self.login()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
@@ -133,10 +133,10 @@ class MicroversionsTest(testing.BaseTestCase):
     # internally in a cron job and shares multiple user writes.
     self.assertEqual(None, final_changeset.created_by)
 
-    # Write with an existing root file (which should be copied to the version).
-    files.File('/foo', _no_mixins=True).Write('new foo')
-    files.File('/foo').Write(meta={'color': 'blue'})
-    results = microversions.ProcessData()
+    # write with an existing root file (which should be copied to the version).
+    files.File('/foo', _no_mixins=True).write('new foo')
+    files.File('/foo').write(meta={'color': 'blue'})
+    results = microversions.process_data()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(4, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
@@ -145,15 +145,15 @@ class MicroversionsTest(testing.BaseTestCase):
 
     # Delete. Also, this verifies that delete doesn't rely on the presence
     # of the root file.
-    files.File('/foo').Delete()
-    results = microversions.ProcessData()
+    files.File('/foo').delete()
+    results = microversions.process_data()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(6, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
     self.assertEqual('', titan_file.content)
 
     # Check file versions.
-    file_versions = self.vcs.GetFileVersions('/foo')
+    file_versions = self.vcs.get_file_versions('/foo')
     self.assertEqual(6, file_versions[0].changeset.num)
     self.assertEqual(4, file_versions[1].changeset.num)
     self.assertEqual(2, file_versions[2].changeset.num)
@@ -163,15 +163,15 @@ class MicroversionsTest(testing.BaseTestCase):
 
   def testStronglyConsistentCommits(self):
     # Microversions uses FinalizeAssociatedPaths so the Commit() path should use
-    # the always strongly-consistent GetFiles(), rather than a query. Verify
+    # the always strongly-consistent get_files(), rather than a query. Verify
     # this behavior by simulating a never-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=0)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
 
-    files.File('/foo').Write('foo')
+    files.File('/foo').write('foo')
 
-    # Also, test ProcessDataWithBackoff while we're here.
-    results = microversions.ProcessDataWithBackoff(timeout_seconds=5)
+    # Also, test process_data_with_backoff while we're here.
+    results = microversions.process_data_with_backoff(timeout_seconds=5)
     final_changeset = results[0][0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
@@ -187,19 +187,19 @@ class MicroversionsTest(testing.BaseTestCase):
     blob_key = blobstore_files.blobstore.get_blob_key(filename)
 
     # Verify that the blob is not deleted when microversioned content resizes.
-    files.File('/foo').Write(blob=blob_key)
-    microversions.ProcessData()
+    files.File('/foo').write(blob=blob_key)
+    microversions.process_data()
     titan_file = files.File('/foo')
     self.assertTrue(titan_file.blob)
     self.assertEqual('Blobstore!', titan_file.content)
-    microversions.ProcessData()
+    microversions.process_data()
     # Resize as smaller (shouldn't delete the old blob).
-    files.File('/foo').Write('foo')
-    files.File('/foo').Write(blob=blob_key)  # Resize back to large size.
+    files.File('/foo').write('foo')
+    files.File('/foo').write(blob=blob_key)  # Resize back to large size.
     # Delete file (shouldn't delete the old blob).
-    files.File('/foo').Delete()
-    microversions.ProcessData()
-    file_versions = self.vcs.GetFileVersions('/foo')
+    files.File('/foo').delete()
+    microversions.process_data()
+    file_versions = self.vcs.get_file_versions('/foo')
 
     # Deleted file (blob should be None).
     changeset = file_versions[0].changeset.linked_changeset

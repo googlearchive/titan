@@ -85,7 +85,7 @@ class BaseRunnerWithVersions(BaseRunner):
     assert not force_commit and manifest
     # Confirm action.
     msg = 'Commit changeset %d?' % changeset_num
-    if not self.Confirm(msg):
+    if not self.confirm(msg):
       sys.exit('Commit aborted.')
 
     start = time.time()
@@ -99,12 +99,12 @@ class BaseRunnerWithVersions(BaseRunner):
         assert not path.startswith('/_titan/ver/')
         remote_file = self.remote_file_factory.MakeRemoteFile(path)
         staging_changeset.AssociateFile(remote_file)
-      staging_changeset.FinalizeAssociatedFiles()
+      staging_changeset.finalize_associated_files()
 
     final_remote_changeset = remote_vcs.Commit(
         staging_changeset, force=force_commit)
     elapsed_time = time.time() - start
-    print 'Finished commit in %s.' % utils.HumanizeDuration(elapsed_time)
+    print 'Finished commit in %s.' % utils.humanize_duration(elapsed_time)
     return final_remote_changeset
 
 class UploadRunner(BaseRunnerWithVersions):
@@ -136,11 +136,11 @@ class UploadRunner(BaseRunnerWithVersions):
     for filename in filenames:
       absolute_filename = os.path.abspath(filename)
       if not absolute_filename.startswith(root_dir):
-        self.PrintError('Path "%s" not contained within "%s".'
+        self.print_error('Path "%s" not contained within "%s".'
                         % (absolute_filename, root_dir))
         sys.exit()
       remote_path = absolute_filename[len(root_dir) + 1:]
-      remote_path = utils.SafeJoin(target_path, remote_path)
+      remote_path = utils.safe_join(target_path, remote_path)
       filename_to_paths[absolute_filename] = remote_path
 
     # Confirm action.
@@ -150,7 +150,7 @@ class UploadRunner(BaseRunnerWithVersions):
         # Strip the root_dir from view if it's already the working directory.
         filename = '.' + filename[len(root_dir):]
       print '  %s --> %s' % (filename, path)
-    if not self.Confirm('Upload files?'):
+    if not self.confirm('Upload files?'):
       sys.exit('Upload aborted.')
 
     # Versions Mixin:
@@ -186,18 +186,18 @@ class UploadRunner(BaseRunnerWithVersions):
         print 'Uploaded %s' % remote_file.real_path
         total_bytes += remote_file.size
       except UploadFileError as e:
-        self.PrintError('Error uploading %s. Error was: %s %s'
+        self.print_error('Error uploading %s. Error was: %s %s'
                         % (e.target_path, e.__class__.__name__, str(e)))
         failed = True
 
     if failed:
-      self.PrintError('Could not upload one or more files.')
+      self.print_error('Could not upload one or more files.')
       return
 
     manifest = filename_to_paths.values()
     if commit:
       if changeset != 'new' and not confirm_manifest:
-        self.PrintError('Must use --changeset=new with --commit, or pass '
+        self.print_error('Must use --changeset=new with --commit, or pass '
                         '--confirm_manifest.')
         return
       self._CommitChangesetOrExit(changeset_num, manifest=manifest)
@@ -205,7 +205,7 @@ class UploadRunner(BaseRunnerWithVersions):
     elapsed_time = time.time() - start
     print 'Uploaded %d files in %s.' % (
         len(filenames),
-        utils.HumanizeDuration(elapsed_time))
+        utils.humanize_duration(elapsed_time))
     result = {}
     if changeset_num:
       result['changeset_num'] = changeset_num
@@ -224,9 +224,9 @@ class UploadRunner(BaseRunnerWithVersions):
       with open(filename) as fp:
         method_kwargs = method_kwargs or {}
         if os.path.getsize(filename) > DIRECT_TO_BLOBSTORE_SIZE:
-          remote_file.Write(fp=fp, **method_kwargs)
+          remote_file.write(fp=fp, **method_kwargs)
         else:
-          remote_file.Write(content=fp.read(), **method_kwargs)
+          remote_file.write(content=fp.read(), **method_kwargs)
       # Load the RemoteFile to avoid synchronous fetches in the main thread.
       _ = remote_file.real_path
       return remote_file
@@ -253,7 +253,7 @@ class DownloadRunner(BaseRunner):
       DownloadFileError
     """
     if not file_paths and not dir_path:
-      self.PrintError('No files to download. Use --file_path or '
+      self.print_error('No files to download. Use --file_path or '
                       '--dir_path.')
       return
 
@@ -267,29 +267,29 @@ class DownloadRunner(BaseRunner):
         if not remote_file.exists:
           print 'File %s does not exist' % remote_file.path
 
-        target = os.path.abspath(utils.SafeJoin(target_dir, remote_file.name))
+        target = os.path.abspath(utils.safe_join(target_dir, remote_file.name))
         path_map.append([remote_file, target])
 
     elif dir_path:
       dir_kwargs = {'recursive': recursive, 'depth': depth}
       remote_files = self.remote_file_factory.MakeRemoteFiles(paths=[])
-      remote_files.List(dir_path, **dir_kwargs)
+      remote_files.list(dir_path, **dir_kwargs)
 
       for remote_file in remote_files.itervalues():
         target = os.path.abspath(
-            utils.SafeJoin(target_dir, remote_file.path[1:]))
+            utils.safe_join(target_dir, remote_file.path[1:]))
         path_map.append([remote_file, target])
 
     conf_message = ['The following will be downloaded from %s' % self.host]
     for remote_file, target in path_map:
       conf_message.append('  %s --> %s' % (remote_file.path, target))
     print '\n'.join(conf_message)
-    if not self.Confirm(' Are you sure?'):
+    if not self.confirm(' Are you sure?'):
       sys.exit('Download aborted.')
     else:
       print 'Downloading...'
 
-    utils.MakeDirs(target_dir)
+    utils.make_dirs(target_dir)
 
     # Start the download.
     start = time.time()
@@ -299,7 +299,7 @@ class DownloadRunner(BaseRunner):
       for remote_file, target in path_map:
 
         target_base_dir = os.path.dirname(target)
-        utils.MakeDirs(target_base_dir)
+        utils.make_dirs(target_base_dir)
 
         future = executor.submit(self._DownloadFile, remote_file, target)
         future_results.append(future)
@@ -308,15 +308,15 @@ class DownloadRunner(BaseRunner):
     for future in futures.as_completed(future_results):
       try:
         downloaded_file = future.result()
-        self.Print('Downloaded %s to %s' %
+        self.print_message('Downloaded %s to %s' %
                    (downloaded_file['path'], downloaded_file['target']))
       except DownloadFileError as e:
-        self.PrintError('Error downloading %s. Error was: %s %s' %
+        self.print_error('Error downloading %s. Error was: %s %s' %
                         (e.target_path, e.__class__.__name__, str(e)))
         failed = True
 
     if failed:
-      self.PrintError('Could not download one or more files.')
+      self.print_error('Could not download one or more files.')
       return
     elapsed_time = time.time() - start
     print 'Downloaded %d files in %s.' % (len(path_map),
@@ -350,7 +350,7 @@ class CommitRunner(BaseRunnerWithVersions):
     if force_commit and manifest:
       raise TypeError('Exactly one of force_commit or manifest is allowed.')
     if not manifest and not force_commit:
-      self.PrintError(
+      self.print_error(
           'You are attempting to commit a changeset directly, outside of\n'
           'an upload request. This relies on an eventually-consistent list\n'
           'of the files, which has the the potential to miss files if you are\n'

@@ -59,7 +59,7 @@ _extracted_files = False
 
 def GetResourceFilename(name):
   """Get a filename for a resource; see _Call."""
-  global _extracted_files  # pylint: disable-msg=W0603
+  global _extracted_files  # pylint: disable=global-statement
   if not _extracted_files:
     atexit.register(pkg_resources.cleanup_resources)
     _extracted_files = True

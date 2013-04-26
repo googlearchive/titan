@@ -95,7 +95,7 @@ class NoBroadcastChannelError(Error):
 class VariableNotLoaded(object):
   """Used to distinguish between None and unset."""
 
-def RequireFinalized(func):
+def require_finalized(func):
   """Methods decorator which requires that the task manager is finalized."""
 
   @functools.wraps(func)
@@ -148,17 +148,17 @@ class TaskManager(object):
     # This method allows a TaskManager object to be efficiently pickled,
     # such as when it is passed to a deferred task.
     # http://docs.python.org/library/pickle.html#object.__reduce__
-    return _UnpickleTaskManager, (self.key, self.group), {}
+    return _unpickle_task_manager, (self.key, self.group), {}
 
-  def _Initialize(self, description, broadcast_channel_key, queue):
+  def _initialize(self, description, broadcast_channel_key, queue):
     self._description = description
     self._internal_broadcast_channel_key = broadcast_channel_key
     self._internal_queue = queue
     self._internal_finalized = False
-    self._file.Write(json.dumps(self.Serialize(full=False)))
+    self._file.write(json.dumps(self.serialize(full=False)))
 
   def __eq__(self, other):
-    if not hasattr(other, 'Serialize'):
+    if not hasattr(other, 'serialize'):
       return False
     return self.key == other.key and self.group == other.group
 
@@ -181,7 +181,7 @@ class TaskManager(object):
   def _dir_path(self):
     # /_titan/tasks/<group>/<task_manager_key>
     if not self._internal_dir_path:
-      self._internal_dir_path = utils.SafeJoin(
+      self._internal_dir_path = utils.safe_join(
           _ROOT_DIR_PATH, self.group, self.key)
     return self._internal_dir_path
 
@@ -189,7 +189,7 @@ class TaskManager(object):
   def _tasks_dir_path(self):
     # /_titan/tasks/<group>/<task_manager_key>/tasks
     if not self._internal_tasks_dir_path:
-      self._internal_tasks_dir_path = utils.SafeJoin(self._dir_path, 'tasks')
+      self._internal_tasks_dir_path = utils.safe_join(self._dir_path, 'tasks')
     return self._internal_tasks_dir_path
 
   @property
@@ -231,24 +231,24 @@ class TaskManager(object):
     return self._num_total
 
   @property
-  @RequireFinalized
+  @require_finalized
   def num_completed(self):
-    return files.Files.Count(self._tasks_dir_path)
+    return files.Files.count(self._tasks_dir_path)
 
   @property
-  @RequireFinalized
+  @require_finalized
   def num_successful(self):
     filters = [files.FileProperty('status') == STATUS_SUCCESSFUL]
-    return files.Files.Count(self._tasks_dir_path, filters=filters)
+    return files.Files.count(self._tasks_dir_path, filters=filters)
 
   @property
-  @RequireFinalized
+  @require_finalized
   def num_failed(self):
     filters = [files.FileProperty('status') == STATUS_FAILED]
-    return files.Files.Count(self._tasks_dir_path, filters=filters)
+    return files.Files.count(self._tasks_dir_path, filters=filters)
 
   @property
-  @RequireFinalized
+  @require_finalized
   def status(self):
     if self.num_completed != self.num_total:
       return STATUS_RUNNING
@@ -269,20 +269,20 @@ class TaskManager(object):
     return self._group
 
   @property
-  @RequireFinalized
+  @require_finalized
   def successful_tasks(self):
     filters = [files.FileProperty('status') == STATUS_SUCCESSFUL]
-    titan_files = files.Files.List(self._tasks_dir_path, filters=filters)
+    titan_files = files.Files.list(self._tasks_dir_path, filters=filters)
     tasks = set()
     for titan_file in titan_files.itervalues():
       tasks.add(Task(self, _internal_key=titan_file.name_clean))
     return tasks
 
   @property
-  @RequireFinalized
+  @require_finalized
   def failed_tasks(self):
     filters = [files.FileProperty('status') == STATUS_FAILED]
-    titan_files = files.Files.List(self._tasks_dir_path, filters=filters)
+    titan_files = files.Files.list(self._tasks_dir_path, filters=filters)
     tasks = set()
     for titan_file in titan_files.itervalues():
       tasks.add(Task(self, _internal_key=titan_file.name_clean))
@@ -303,29 +303,29 @@ class TaskManager(object):
     return self._description
 
   @property
-  @RequireFinalized
+  @require_finalized
   def task_keys(self):
     if self._task_keys is None:
       self._task_keys = set(self._data['task_keys'])
     return self._task_keys.copy()
 
   @property
-  @RequireFinalized
+  @require_finalized
   def tasks(self):
     """Generator yielding lazy Task objects."""
     for task_key in self.task_keys:
       yield Task(self, task_key)
 
-  def Finalize(self):
+  def finalize(self):
     """Finalizes the TaskManager after all tasks have been deferred."""
     if self._finalized:
       raise TaskManagerFinalizedError('TaskManager has already been finalized.')
 
     # Save task manager state.
     self._internal_finalized = True
-    self._file.Write(json.dumps(self.Serialize(full=False)))
+    self._file.write(json.dumps(self.serialize(full=False)))
 
-  def Serialize(self, full=False):
+  def serialize(self, full=False):
     """Returns serializable data for the task manager."""
     data = {
         'key': self.key,
@@ -357,7 +357,7 @@ class TaskManager(object):
       })
     return data
 
-  def Subscribe(self, client_id):
+  def subscribe(self, client_id):
     """Adds an existing client to the broadcast channel.
 
     Can be called with any App Engine channel client_id, including ones created
@@ -370,9 +370,9 @@ class TaskManager(object):
           and then used in a JavaScript client with goog.appengine.Channel,
           otherwise messages will not be received.
     """
-    self._broadcast_channel.Subscribe(client_id)
+    self._broadcast_channel.subscribe(client_id)
 
-  def DeferTask(self, task_key, callback, *args, **kwargs):
+  def defer_task(self, task_key, callback, *args, **kwargs):
     """Runs the given callback in a task associated to the task manager.
 
     Args:
@@ -417,20 +417,20 @@ class TaskManager(object):
     # Broadcast status of each task when it enters the queue.
     # Do this before the call to Defer, to ensure correct ordering.
     if self._broadcast_channel_key:
-      _MaybeSendStatusMessage(
+      _maybe_send_status_message(
           self._broadcast_channel, STATUS_QUEUED, task_key, self.key)
 
-    deferred.Defer(_CallbackWrapper, callback, *args, **kwargs)
+    deferred.defer(_callback_wrapper, callback, *args, **kwargs)
 
-  @RequireFinalized
-  def GetTask(self, task_key):
+  @require_finalized
+  def get_task(self, task_key):
     if not str(task_key) in self.task_keys:
       raise InvalidTaskError('Task "%s" in task manager "%s" not found.'
                              % (task_key, self.key))
     return Task(self, task_key)
 
   @classmethod
-  def New(cls, group=DEFAULT_GROUP, description=None,
+  def new(cls, group=DEFAULT_GROUP, description=None,
           broadcast_channel_key=None, queue=DEFAULT_QUEUE_NAME):
     """Create a new, unique TaskManager.
 
@@ -452,11 +452,11 @@ class TaskManager(object):
     key.update(str(time.time()))
     key = key.hexdigest()
     task_manager = cls(key=key, group=group)
-    task_manager._Initialize(description, broadcast_channel_key, queue)
+    task_manager._initialize(description, broadcast_channel_key, queue)
     return task_manager
 
   @classmethod
-  def List(cls, group=DEFAULT_GROUP, limit=None, offset=None):
+  def list(cls, group=DEFAULT_GROUP, limit=None, offset=None):
     """Returns a list of TaskManager objects.
 
     Args:
@@ -466,10 +466,10 @@ class TaskManager(object):
     Returns:
       A list of TaskManager objects in descending chronological order.
     """
-    titan_files = files.Files.List(
-        dir_path=utils.SafeJoin(_ROOT_DIR_PATH, group),
+    titan_files = files.Files.list(
+        dir_path=utils.safe_join(_ROOT_DIR_PATH, group),
         limit=limit, offset=offset, _internal=True)
-    titan_files.Load()
+    titan_files.load()
 
     # Sort in descending chronological order.
     ordered_files = sorted(titan_files.itervalues(), key=lambda f: f.created)
@@ -516,7 +516,7 @@ class Task(object):
   def _file(self):
     if self._internal_file is None:
       # /_titan/tasks/<group>/<task_manager_key>/tasks/<task_key_hash>.json
-      filename = utils.SafeJoin(
+      filename = utils.safe_join(
           _ROOT_DIR_PATH, self._task_manager.group, self._task_manager.key,
           'tasks', self._internal_key + '.json')
       self._internal_file = files.File(filename, _internal=True)
@@ -539,7 +539,7 @@ class Task(object):
   def error_message(self):
     return self._data.get('error', {}).get('message', None)
 
-  def Finalize(self, status, error_message=None):
+  def finalize(self, status, error_message=None):
     """Finalize the task after completion.
 
     This should only be called by the callback wrapper.
@@ -559,14 +559,14 @@ class Task(object):
           '"status" must be one of: %r' % valid_statuses)
 
     self._status = status
-    data = self.Serialize()
+    data = self.serialize()
     if error_message:
       data['error'] = {'message': error_message}
     meta = {}
     meta['status'] = self.status
-    self._file.Write(json.dumps(data), meta=meta)
+    self._file.write(json.dumps(data), meta=meta)
 
-  def Serialize(self):
+  def serialize(self):
     data = {
         'key': self.key,
         'status': self.status,
@@ -576,7 +576,7 @@ class Task(object):
 # NOTE: Any changes you make to this function and its caller need to be
 # backwards-compatible since the change will affect in-flight tasks.
 # This must be module-level for pickling.
-def _CallbackWrapper(callback, *args, **kwargs):
+def _callback_wrapper(callback, *args, **kwargs):
   task_data = kwargs.pop('_task_data')
   task_key = task_data['task_key']
   task_manager_key = task_data['task_manager_key']
@@ -588,7 +588,7 @@ def _CallbackWrapper(callback, *args, **kwargs):
   if broadcast_channel_key:
     broadcast_channel = channel.BroadcastChannel(key=broadcast_channel_key)
 
-  _MaybeSendStatusMessage(
+  _maybe_send_status_message(
       broadcast_channel, STATUS_RUNNING, task_key, task_manager_key)
   try:
     callback(*args, **kwargs)
@@ -598,21 +598,21 @@ def _CallbackWrapper(callback, *args, **kwargs):
     pass
   except TaskError as e:
     # Specialized error that allows tasks to store failure messages.
-    task.Finalize(STATUS_FAILED, error_message=e.message)
-    _MaybeSendStatusMessage(
+    task.finalize(STATUS_FAILED, error_message=e.message)
+    _maybe_send_status_message(
         broadcast_channel, STATUS_FAILED, task_key, task_manager_key, e.message)
     raise
   except:
-    task.Finalize(STATUS_FAILED)
-    _MaybeSendStatusMessage(
+    task.finalize(STATUS_FAILED)
+    _maybe_send_status_message(
         broadcast_channel, STATUS_FAILED, task_key, task_manager_key)
     raise
   else:
-    task.Finalize(STATUS_SUCCESSFUL)
-    _MaybeSendStatusMessage(
+    task.finalize(STATUS_SUCCESSFUL)
+    _maybe_send_status_message(
         broadcast_channel, STATUS_SUCCESSFUL, task_key, task_manager_key)
 
-def _MaybeSendStatusMessage(
+def _maybe_send_status_message(
     broadcast_channel, status, task_key, task_manager_key, error=None):
   if broadcast_channel is None:
     return
@@ -623,7 +623,7 @@ def _MaybeSendStatusMessage(
   }
   if status == STATUS_FAILED:
     message['error'] = error
-  broadcast_channel.SendMessage(json.dumps(message))
+  broadcast_channel.send_message(json.dumps(message))
 
-def _UnpickleTaskManager(key, group):
+def _unpickle_task_manager(key, group):
   return TaskManager(key=key, group=group)

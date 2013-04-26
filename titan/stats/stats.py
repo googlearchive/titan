@@ -16,6 +16,10 @@
 """Customizable numeric counters for recording time-tracked app statistics.
 
 Usage:
+  # Define a function that can be used to create fresh counters for aggregation.
+  def make_counters():
+    return [stats.Counter('page/view')]
+
   # Increment a counter for some particular stat, like a page view:
   page_view_counter = stats.Counter('page/view')
   page_view_counter.Increment()
@@ -26,16 +30,13 @@ Usage:
   # ... code block ...
   latency_counter.Stop()
 
-  # Store the counters in the local request environment.
-  stats.StoreRequestLocalCounters([latency_counter, page_view_counter])
+  # Log the counters using Titan Activities.
+  stats.log_counters([latency_counter, page_view_counter],
+                     counters_func=make_counters)
 
-  # Save the counter (this should happen at the absolute end of a request).
-  stats.SaveRequestLocalCounters()
-
-  # In a cron job run every minute:
-  all_counters = [stats.Counter('page/view')]
-  aggregator = stats.Aggregator(all_counters)
-  aggregator.ProcessWindowsWithBackoff(total_runtime_minutes=1)
+  # Process the logged Titan Activities.
+  # (this should happen at the absolute end of a request).
+  activities.process_activity_loggers()
 
 Internal design and terminology:
   - "Window" or "aggregation window" used below is a unix timestamp rounded to
@@ -47,31 +48,25 @@ Internal design and terminology:
 
   - The counters work in two steps:
     1. Application code creates, increments, and saves counters during a
-       request. When saving counters, a task is added to a pull task queue.
-    2. A cron job runs the Aggregator to collect, aggregate, and store counter
-       data. Even though cron jobs can only be started at minute-level
-       intervals, the cron job runs continuously for the entire minute,
-       collecting data from aggregation windows which have already passed
-       and pausing dynamically if all old windows have been collected.
+       request. Request counters are aggregated and sent into a pipeline using
+       the Titan Activities logging.
+    2. The activities pipeline runs to collect, aggregate, and store any pending
+       counter data.
 """
 
-import copy
 import datetime
 import json
 import logging
 import os
 import time
-from google.appengine.api import taskqueue
+from titan import activities
 from titan import files
 from titan.common import utils
 
 __all__ = [
     # Constants.
     'DEFAULT_WINDOW_SIZE',
-    'TASKQUEUE_NAME',
-    'TASKQUEUE_LEASE_SECONDS',
-    'TASKQUEUE_LEASE_MAX_TASKS',
-    'TASKQUEUE_LEASE_BUFFER_SECONDS',
+    'STATS_ETA_DELTA',
     'BASE_DIR',
     'DATA_FILENAME',
     # Classes.
@@ -80,28 +75,18 @@ __all__ = [
     'AverageCounter',
     'AverageCounter',
     'AverageTimingCounter',
-    'Aggregator',
     'CountersService',
+    'StatsActivity',
+    'StatsActivityLogger',
     # Functions.
-    'StoreRequestLocalCounters',
-    'GetRequestLocalCounters',
-    'SaveRequestLocalCounters',
-    'SaveCounters',
+    'log_counters',
 ]
 
 # The bucket size for an aggregation window, in number of seconds.
 DEFAULT_WINDOW_SIZE = 60
+STATS_ETA_DELTA = 60
 
-TASKQUEUE_NAME = 'titan-stats'
-TASKQUEUE_LEASE_SECONDS = 2 * DEFAULT_WINDOW_SIZE  # 2 minutes leasing buffer.
-TASKQUEUE_LEASE_MAX_TASKS = 1000
-
-# The number of seconds before an added task is allowed to be leased.
-# This prevents the aggregator from prematurely consuming the tasks when
-# the window hasn't yet passed.
-TASKQUEUE_LEASE_BUFFER_SECONDS = DEFAULT_WINDOW_SIZE
-
-BASE_DIR = '/_titan/stats/counters'
+BASE_DIR = '/_titan/activities/stats'
 DATA_FILENAME = 'data-%ss.json' % DEFAULT_WINDOW_SIZE
 
 class AbstractBaseCounter(object):
@@ -171,9 +156,15 @@ class AverageCounter(Counter):
     self.Aggregate((value, 1))  # (value, weight)
 
   def Aggregate(self, value):
+    """Combine another average counter's values into this counter."""
     # Cumulative moving average:
     # (n*weight(n) + m*weight(m)) / (weight(n) + weight(m))
     value, weight = value
+
+    # Ignore empty weight aggregation since it is an empty counter.
+    if weight == 0:
+      return
+
     # Numerator:
     self._value *= self._weight
     self._value += value * weight
@@ -214,218 +205,6 @@ class AverageTimingCounter(AverageCounter):
     value, weight = super(AverageTimingCounter, self).Finalize()
     return (int(value), weight)
 
-def StoreRequestLocalCounters(counters):
-  """Store given counters in a request/thread-local environment var."""
-  counters = counters if hasattr(counters, '__iter__') else [counters]
-  if not 'counters' in os.environ:
-    # os.environ is replaced by the runtime environment with a request-local
-    # object, allowing non-string types to be stored globally in the environment
-    # and automatically cleaned up at the end of each request.
-    os.environ['counters'] = []
-  os.environ['counters'] += counters
-
-def GetRequestLocalCounters():
-  """Get all environment counters."""
-  return os.environ.get('counters', [])
-
-def SaveRequestLocalCounters():
-  """Save all environment counters for future aggregation."""
-  return SaveCounters(GetRequestLocalCounters())
-
-def SaveCounters(counters, timestamp=None, eta=None):
-  """Save counter data to a aggregation window.
-
-  Args:
-    counters: An iterable of counters, potentially with duplicate names.
-    timestamp: A unix timestamp. Defaults to the current time if not given.
-    eta: A unix timestamp. When the created tasks should be able to be leased.
-        Defaults to the counter's window time + TASKQUEUE_LEASE_BUFFER_SECONDS.
-  Raises:
-    ValueError: if passed an empty list of counters.
-  Returns:
-    A dictionary mapping counter keys to finalized data.
-  """
-  counters = counters if hasattr(counters, '__iter__') else [counters]
-  if not counters:
-    raise ValueError('Counters are required. Got: %r' % counters)
-
-  # Aggregate data from counters of the same name.
-  final_counters = []
-  names_to_counters = {}
-  for counter in counters:
-    if counter.name not in names_to_counters:
-      names_to_counters[counter.name] = counter
-      final_counters.append(counter)
-    else:
-      if counter.timestamp is not None:
-        # Counter has a manual timestamp applied; treat this as it's own unique
-        # counter and don't aggregate data.
-        final_counters.append(counter)
-        continue
-      # Counter name already seen; combine data into the previous counter.
-      names_to_counters[counter.name].Aggregate(counter.Finalize())
-
-  default_window = _GetWindow(time.time() if timestamp is None else timestamp)
-  window_counter_data = {}
-  for counter in final_counters:
-    # Each counter can potentially belong to a different window, because
-    # each timestamp can be overwritten:
-    window = default_window if counter.timestamp is None else counter.timestamp
-    window = int(window)
-    if window not in window_counter_data:
-      window_counter_data[window] = {'window': window, 'counters': {}}
-    window_counter_data[window]['counters'][counter.name] = counter.Finalize()
-
-  # For each aggregation window, put data into the pull queue.
-  for window in sorted(window_counter_data):
-    counter_data = json.dumps(window_counter_data[window])
-    # Important: unlock this window's tasks for lease at the same time,
-    # after the window itself has passed.
-    if eta is None:
-      current_task_eta = datetime.datetime.utcfromtimestamp(
-          window + TASKQUEUE_LEASE_BUFFER_SECONDS)
-    else:
-      current_task_eta = datetime.datetime.utcfromtimestamp(eta)
-    try:
-      task = taskqueue.Task(
-          method='PULL',
-          payload=counter_data,
-          tag=str(window),
-          eta=current_task_eta)
-      task.add(queue_name=TASKQUEUE_NAME)
-    except taskqueue.Error:
-      # Task queue errors from SaveCounters should not kill a request.
-      logging.exception('Unable to add stats task to queue.')
-  return window_counter_data
-
-class Aggregator(object):
-  """A service class, used in a cron job to consume and save counters."""
-
-  def __init__(self, counters):
-    self._original_counters = copy.deepcopy(counters)
-    self._ResetCounters()
-
-  def _ResetCounters(self):
-    self.counters = copy.deepcopy(self._original_counters)
-    self._names_to_counters = {}
-    for counter in self.counters:
-      self._names_to_counters[counter.name] = counter
-
-  def ProcessNextWindow(self):
-    """Lease tasks and permanently save a window's-worth of counter data tasks.
-
-    Returns:
-      A dictionary containing "window" and "counters", where window is an
-      integer and counters is a dictionary mapping counter names to aggregate
-      data. Returns an empty dictionary if no tasks were available to consume.
-    """
-    self._ResetCounters()
-    queue = taskqueue.Queue(TASKQUEUE_NAME)
-
-    # Grab the first task to get its window.
-    tasks = queue.lease_tasks(lease_seconds=TASKQUEUE_LEASE_SECONDS,
-                              max_tasks=1)
-    if not tasks:
-      return {}
-    # Lease tasks by window tag.
-    have_all_tasks = False
-    while not have_all_tasks:
-      tasks_in_window = queue.lease_tasks_by_tag(
-          lease_seconds=TASKQUEUE_LEASE_SECONDS,
-          max_tasks=TASKQUEUE_LEASE_MAX_TASKS,
-          tag=tasks[0].tag)
-      tasks.extend(tasks_in_window)
-      if len(tasks_in_window) < TASKQUEUE_LEASE_MAX_TASKS:
-        have_all_tasks = True
-
-    current_window = json.loads(tasks[0].payload)['window']
-    data_to_aggregate = []
-    for task in tasks:
-      counter_data = json.loads(task.payload)
-      data_to_aggregate.append(counter_data)
-
-    # Aggregate the counter data into each counter object.
-    available_counter_names = set()
-    for counter_data in data_to_aggregate:
-      for counter_name, counter_value in counter_data['counters'].iteritems():
-        try:
-          self._names_to_counters[counter_name].Aggregate(counter_value)
-        except KeyError:
-          logging.error('Counter named "%s" is not configured! Discarding '
-                        'counter task data... fix this by adding the counter '
-                        'to the objects given to the Aggregator service.',
-                        counter_name)
-        available_counter_names.add(counter_name)
-
-    # Store each counter's finalized data into aggregate_data.
-    aggregate_data = {
-        'counters': {},
-        'window': current_window,
-    }
-    if not available_counter_names:
-      return {}
-    for counter in self.counters:
-      if counter.name not in available_counter_names:
-        # Don't store anything for counters with no data in this window.
-        continue
-      aggregate_data['counters'][counter.name] = counter.Finalize()
-
-    # Save data, then delete tasks whose data we have consumed.
-    self._SaveAggregateData(aggregate_data)
-
-    # Delete tasks in maximum-sized chunks.
-    for tasks_to_delete in utils.ChunkGenerator(tasks):
-      queue.delete_tasks(tasks_to_delete)
-
-    return aggregate_data
-
-  def ProcessWindowsWithBackoff(self, total_runtime_minutes):
-    """Long-running function to process multiple windows.
-
-    Args:
-      total_runtime_minutes: How long to process data for.
-    Returns:
-      A list of results from ProcessNextWindow().
-    """
-    results = utils.RunWithBackoff(
-        func=self.ProcessNextWindow,
-        runtime=total_runtime_minutes * 60,
-        max_backoff=DEFAULT_WINDOW_SIZE)
-    return results
-
-  def _SaveAggregateData(self, aggregate_data):
-    """Permanently store aggregate data to Titan Files."""
-    window = aggregate_data['window']
-    window_datetime = datetime.datetime.utcfromtimestamp(window)
-    for counter_name, counter_value in aggregate_data['counters'].iteritems():
-      path = _MakeLogPath(window_datetime, counter_name)
-      titan_file = files.File(path, _internal=True)
-      content = []
-      if titan_file.exists:
-        content = json.loads(titan_file.content)
-
-      # O(n) replicate and remove duplicate window data, so new data overwrites
-      # already present window data (might happen with failed tasks).
-      # TODO(user): Make this faster or more efficient?
-      new_content = []
-      for old_window, old_value in content:
-        if old_window != window:
-          new_content.append((old_window, old_value))
-      content = new_content
-
-      # Add new data point.
-      content.append((window, counter_value))
-
-      date = datetime.datetime.utcfromtimestamp(window)
-      # Strip hours/minutes/seconds from date since the datastore can only
-      # store datetime objects, but we only need the date itself.
-      date = datetime.datetime(date.year, date.month, date.day)
-      meta = {
-          'stats_counter_name': counter_name,
-          'stats_date': date,
-      }
-      titan_file.Write(content=json.dumps(content), meta=meta)
-
 class CountersService(object):
   """A service class to retrieve permanently stored counter stats."""
 
@@ -460,37 +239,252 @@ class CountersService(object):
         end_date.year, end_date.month, end_date.day)
 
     # Get all files within the range.
-    titan_files = files.OrderedFiles([])
+    titan_files = files.Files([])
     for counter_name in counter_names:
       filters = [
           files.FileProperty('stats_counter_name') == counter_name,
           files.FileProperty('stats_date') >= start_date,
           files.FileProperty('stats_date') <= end_date,
       ]
-      new_titan_files = files.OrderedFiles.List(BASE_DIR, recursive=True,
-                                                filters=filters, _internal=True)
+      new_titan_files = files.Files.list(BASE_DIR, recursive=True,
+                                         filters=filters, _internal=True)
       titan_files.update(new_titan_files)
 
     final_counter_data = {}
     for titan_file in titan_files.itervalues():
       # Since JSON only represents lists, convert each inner-list back
-      # to a two-tuple.
-      counter_data = json.loads(titan_file.content)
-      counter_data = [tuple(d) for d in counter_data]
-
+      # to a two-tuple with the proper types.
+      raw_data = json.loads(titan_file.content)
+      counter_data = []
+      for data in raw_data:
+        counter_data.append(tuple(data))
       _, counter_name = _ParseLogPath(titan_file.path)
       if not counter_name in final_counter_data:
         final_counter_data[counter_name] = []
       final_counter_data[counter_name].extend(counter_data)
+
+    # Keep the counter data sorted by window.
+    for counter_data in final_counter_data.itervalues():
+      counter_data.sort(key=lambda tup: tup[0])
     return final_counter_data
 
-def _GetWindow(timestamp=None, window_size=DEFAULT_WINDOW_SIZE):
+class StatsActivity(object):
+  """A stat activity."""
+
+  def __init__(self, counters):
+    super(StatsActivity, self).__init__()
+    self.counters = counters
+
+class StatsActivityLogger(activities.BaseProcessorActivityLogger):
+  """An activity for logging Stat counters."""
+
+  def __init__(self, activity, counters_func, **kwargs):
+    super(StatsActivityLogger, self).__init__(activity, **kwargs)
+
+    self.counters_func = counters_func
+
+  @property
+  def processors(self):
+    """Add the aggregator to the set of processors."""
+    processors = super(StatsActivityLogger, self).processors
+    if _RequestProcessor not in processors:
+      processors[_RequestProcessor] = _RequestProcessor(self.counters_func)
+    return processors
+
+  def process(self, processors):
+    """Add item to the processors."""
+    super(StatsActivityLogger, self).process(processors)
+    processors[_RequestProcessor].process(self.activity)
+
+class _BatchProcessor(activities.BaseProcessor):
+  """Batch request aggregator for Stat counters."""
+
+  def __init__(self, counters_func):
+    super(_BatchProcessor, self).__init__(
+        'stats-batch', eta_delta=datetime.timedelta(seconds=STATS_ETA_DELTA))
+    self.counters_func = counters_func
+    self.window_counters = {}
+    self.window_counters_available = {}
+
+  def finalize(self):
+    """Store the aggregated stats data."""
+    final_aggregate_data = []
+
+    for window, counters in self.window_counters.iteritems():
+      aggregate_data = {
+          'counters': {},
+          'window': window,
+      }
+      for counter in counters.itervalues():
+        if counter.name not in self.window_counters_available[window]:
+          # Don't store anything for counters with no data in this window.
+          continue
+        aggregate_data['counters'][counter.name] = counter
+      # Only add to the final aggregates if there were valid counters.
+      if aggregate_data['counters']:
+        final_aggregate_data.append(aggregate_data)
+
+    # Save the aggregated counters.
+    if final_aggregate_data:
+      self._save_aggregate_data(final_aggregate_data)
+
+  def process(self, window_counter_data):
+    """Aggregate the request stat counters."""
+    for data in window_counter_data.itervalues():
+      # Make sure that the counters are created for the window.
+      window = data['window']
+      self._init_counters(window)
+
+      # Aggregate the counter data into each counter object.
+      for counter_name, counter_value in data['counters'].iteritems():
+        try:
+          self.window_counters[window][counter_name].Aggregate(counter_value)
+          self.window_counters_available[window].add(counter_name)
+        except KeyError:
+          logging.error('Counter named "%s" is not configured! Discarding '
+                        'counter task data... fix this by adding the counter '
+                        'to the objects created in the `counters_func`.',
+                        counter_name)
+
+  def _init_counters(self, window):
+    self.window_counters[window] = {}
+    self.window_counters_available[window] = set()
+    counters = self.counters_func()
+    for counter in counters:
+      if counter.name not in self.window_counters:
+        self.window_counters[window][counter.name] = counter
+
+  def _save_aggregate_data(self, final_aggregate_data):
+    """Permanently store aggregate data to Titan Files."""
+
+    # Combine all data before writing files to minimize same file writes.
+    window_files = {}
+    for aggregate_data in final_aggregate_data:
+      window = aggregate_data['window']
+      window_datetime = datetime.datetime.utcfromtimestamp(window)
+      for counter_name, counter in aggregate_data['counters'].iteritems():
+        path = _MakeLogPath(window_datetime, counter_name)
+        if path not in window_files:
+          titan_file = files.File(path, _internal=True)
+          content = []
+          if titan_file.exists:
+            content = json.loads(titan_file.content)
+          window_files[path] = {
+              'file': titan_file,
+              'path': path,
+              'content': content,
+              'counter_name': counter_name,
+              'window_datetime': window_datetime,
+          }
+
+        # Add the counter data if it doesn't exist or is different.
+        old_content = window_files[path]['content']
+        window_files[path]['content'] = []
+        window_exists = False
+        for old_window, old_value in old_content:
+          # If we didn't find the window add it as a new counter.
+          if old_window > window and not window_exists:
+            window_exists = True
+            window_files[path]['content'].append((window, counter.Finalize()))
+          # If the data is the same ignore, otherwise add old data to new.
+          if old_window == window:
+            window_exists = True
+            if old_value != counter.Finalize():
+              counter.Aggregate(old_value)
+              old_value = counter.Finalize()
+          window_files[path]['content'].append((old_window, old_value))
+        if not window_exists:
+          window_files[path]['content'].append((window, counter.Finalize()))
+
+        # Keep the data sorted for update efficiency.
+        window_files[path]['content'].sort(key=lambda tup: tup[0])
+
+    # Write the changed window files.
+    for file_item in window_files.itervalues():
+      # Strip hours/minutes/seconds from date since the datastore can only
+      # store datetime objects, but we only need the date itself.
+      window_datetime = file_item['window_datetime']
+      date = datetime.datetime(
+          window_datetime.year, window_datetime.month, window_datetime.day)
+      meta = {
+          'stats_counter_name': file_item['counter_name'],
+          'stats_date': date,
+      }
+      file_item['file'].write(content=json.dumps(file_item['content']),
+                              meta=meta)
+
+class _RequestProcessor(activities.BaseProcessor):
+  """End of request aggregator for Stat counters."""
+
+  def __init__(self, counters_func):
+    super(_RequestProcessor, self).__init__('stats')
+
+    self.counters_func = counters_func
+    self.final_counters = []
+    self.names_to_counters = {}
+    self.window_counter_data = {}
+    self.default_window = _GetWindow(time.time())
+
+  @property
+  def batch_processor(self):
+    """Return a clean processor for processing batch aggregations."""
+    return _BatchProcessor(self.counters_func)
+
+  def process(self, activity):
+    """Aggregate the request counters."""
+    counters = activity.counters
+    if not counters:  # Ignore empty counter activities.
+      return
+
+    # Aggregate data from counters of the same name.
+    for counter in counters:
+      if counter.name not in self.names_to_counters:
+        self.names_to_counters[counter.name] = counter
+        self.final_counters.append(counter)
+      else:
+        if counter.timestamp is not None:
+          # Counter has a manual timestamp applied; treat this as it's own
+          # unique counter and don't aggregate data.
+          self.final_counters.append(counter)
+          continue
+        # Counter name already seen; combine data into the previous counter.
+        self.names_to_counters[counter.name].Aggregate(counter.Finalize())
+
+    # Break the counters up into windows of time.
+    for counter in self.final_counters:
+      # Each counter can potentially belong to a different window, because
+      # each timestamp can be overwritten:
+      if counter.timestamp is None:
+        window = self.default_window
+      else:
+        window = counter.timestamp
+      if window not in self.window_counter_data:
+        self.window_counter_data[window] = {'window': window, 'counters': {}}
+      self.window_counter_data[window]['counters'][counter.name] = (
+          counter.Finalize())
+
+  def serialize(self):
+    return self.window_counter_data
+
+def log_counters(counters, counters_func):
+  """Logs an stat counter."""
+  activity = StatsActivity(counters=counters)
+  activity_logger = StatsActivityLogger(
+      activity, counters_func=counters_func)
+  activity_logger.store()
+  # If inside of a task then process now instead of waiting.
+  if 'HTTP_X_APPENGINE_TASKNAME' in os.environ:
+    activities.process_activity_loggers()
+  return activity
+
+def _GetWindow(timestamp, window_size=DEFAULT_WINDOW_SIZE):
   """Get the aggregation window for the given unix time and window size."""
   return int(window_size * round(float(timestamp) / window_size))
 
 def _MakeLogPath(date, counter_name):
-  # Make a path like: /_titan/stats/counters/2015/05/15/page/view/data-10s.json
-  path = utils.SafeJoin(
+  # Make a path like:
+  # /_titan/activities/stats/counters/2015/05/15/page/view/data-10s.json
+  path = utils.safe_join(
       BASE_DIR, str(date.year), str(date.month), str(date.day),
       counter_name, DATA_FILENAME)
   return path

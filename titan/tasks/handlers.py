@@ -38,10 +38,10 @@ class TaskManagerHandler(handlers.BaseHandler):
     task_manager = tasks.TaskManager(key=key, group=group)
     if not task_manager.exists:
       self.abort(404)
-    self.WriteJsonResponse(task_manager.Serialize(full=True))
+    self.write_json_response(task_manager.serialize(full=True))
 
 class TaskManagerSubscribeHandler(handlers.BaseHandler):
-  """Handlers for TaskManager.Subscribe."""
+  """Handlers for TaskManager.subscribe."""
 
   def post(self):
     key = self.request.get('key')
@@ -52,7 +52,7 @@ class TaskManagerSubscribeHandler(handlers.BaseHandler):
     task_manager = tasks.TaskManager(key=key, group=group)
     if not task_manager.exists:
       self.abort(404)
-    task_manager.Subscribe(client_id)
+    task_manager.subscribe(client_id)
 
 ROUTES = (
     ('/_titan/tasks/taskmanager', TaskManagerHandler),

@@ -16,13 +16,13 @@
 from google.appengine.ext import deferred
 from titan.users import users
 
-def Defer(*args, **kwargs):
+def defer(*args, **kwargs):
   """Launches a deferred task on behalf of the user initiating the request.
 
   If a user is currently logged in, an X-Titan-User header is passed to the
   deferred task, which is recognized by the Titan users module.
   """
-  titan_user = users.GetCurrentUser()
+  titan_user = users.get_current_user()
   if titan_user:
     headers = kwargs.pop('_headers', {})
     headers['X-Titan-User'] = titan_user.email

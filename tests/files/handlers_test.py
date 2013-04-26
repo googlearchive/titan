@@ -38,7 +38,7 @@ class HandlersTest(testing.BaseTestCase):
 
   def testFileHandlerGet(self):
     # Verify GET requests return a JSON-serialized representation of the file.
-    actual_file = files.File('/foo/bar').Write('foobar')
+    actual_file = files.File('/foo/bar').write('foobar')
     to_timestamp = lambda x: time.mktime(x.timetuple()) + 1e-6 * x.microsecond
     expected_data = {
         u'name': u'bar',
@@ -128,8 +128,8 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(400, response.status_int)
 
   def testFilesHandlerPaths(self):
-    first_file = files.File('/foo/bar').Write('foobar')
-    second_file = files.File('/abc/baz').Write('abcbaz')
+    first_file = files.File('/foo/bar').write('foobar')
+    second_file = files.File('/abc/baz').write('abcbaz')
 
     paths = [
         ('path', '/abc/baz'),
@@ -155,12 +155,12 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(400, response.status_int)
 
   def testFilesHandlerDir(self):
-    files.File('/abc/def/ghi').Write('abc')
-    files.File('/abc/456/10/22/34').Write('abc123')
-    files.File('/abc/123').Write('abcdef')
+    files.File('/abc/def/ghi').write('abc')
+    files.File('/abc/456/10/22/34').write('abc123')
+    files.File('/abc/123').write('abcdef')
 
     response = self.app.get('/_titan/files', {'dir_path': '/abc/def/'})
-    expected_titan_files = files.Files.List(dir_path='/abc/def/')
+    expected_titan_files = files.Files.list(dir_path='/abc/def/')
 
     self.assertEqual(200, response.status_int)
     expected_data = json.loads(self._DumpJson(expected_titan_files))
@@ -168,7 +168,7 @@ class HandlersTest(testing.BaseTestCase):
 
     response = self.app.get('/_titan/files', {'dir_path': '/abc',
                                               'recursive': 'true'})
-    expected_titan_files = files.Files.List(dir_path='/abc/', recursive=True)
+    expected_titan_files = files.Files.list(dir_path='/abc/', recursive=True)
 
     self.assertEqual(200, response.status_int)
     expected_data = json.loads(self._DumpJson(expected_titan_files))
@@ -177,7 +177,7 @@ class HandlersTest(testing.BaseTestCase):
     response = self.app.get('/_titan/files', {'dir_path': '/abc/', 'depth': '2',
                                               'recursive': 'True'})
 
-    expected_titan_files = files.Files.List(dir_path='/abc/', depth=2,
+    expected_titan_files = files.Files.list(dir_path='/abc/', depth=2,
                                             recursive=True)
 
     self.assertEqual(200, response.status_int)
@@ -199,7 +199,7 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(expected_paths, json.loads(response.body))
 
   def testFileReadHandler(self):
-    files.File('/foo/bar').Write('foobar')
+    files.File('/foo/bar').write('foobar')
     response = self.app.get('/_titan/file/read', {'path': '/foo/bar'})
     self.assertEqual(200, response.status_int)
     self.assertEqual('foobar', response.body)
@@ -207,7 +207,7 @@ class HandlersTest(testing.BaseTestCase):
                      response.headers['Content-Type'])
 
     # Verify blob handling.
-    files.File('/foo/bar').Write(LARGE_FILE_CONTENT,
+    files.File('/foo/bar').write(LARGE_FILE_CONTENT,
                                  mime_type='custom/mimetype')
     response = self.app.get('/_titan/file/read', {'path': '/foo/bar'})
     self.assertEqual(200, response.status_int)
@@ -234,7 +234,7 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(400, response.status_int)
 
   def testFileHandlerDelete(self):
-    files.File('/foo/bar').Write('foobar')
+    files.File('/foo/bar').write('foobar')
     response = self.app.delete('/_titan/file?path=/foo/bar')
     self.assertEqual(200, response.status_int)
     self.assertFalse(files.File('/foo/bar').exists)

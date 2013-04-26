@@ -22,7 +22,7 @@ import webapp2
 from titan.common import handlers
 
 jinja_environment = jinja2.Environment(
-    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)))
+    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)), autoescape=True)
 
 class FilesBrowseHandler(handlers.BaseHandler):
   """Handler for file browsing."""

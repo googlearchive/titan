@@ -23,38 +23,53 @@ class ColorsTest(basetest.TestCase):
   def testFormat(self):
     msg = '<red>WARNING:</red> hello world'
     expected = '\033[0;31mWARNING:\033[m hello world'
-    actual = colors.Format(msg)
+    actual = colors.format(msg)
     self.assertEqual(expected, actual)
 
     msg = '<red>WARNING:</red> %s'
     expected = '\033[0;31mWARNING:\033[m hello'
-    actual = colors.Format(msg, 'hello')
+    actual = colors.format(msg, 'hello')
     self.assertEqual(expected, actual)
 
     msg = '<red>WARNING:<blue></red> foo</blue>'
     expected = '\033[0;31mWARNING:<blue>\033[m foo</blue>'
-    actual = colors.Format(msg)
+    actual = colors.format(msg)
     self.assertEqual(expected, actual)
 
     msg = '<red>WARNING:</red> foo <blue>bar</blue>'
     expected = '\033[0;31mWARNING:\033[m foo \033[0;34mbar\033[m'
-    actual = colors.Format(msg)
+    actual = colors.format(msg)
+    self.assertEqual(expected, actual)
+
+    msg = '<red>WARNING:</red> foo <yellow>bar</yellow>'
+    expected = '\033[0;31mWARNING:\033[m foo \033[1;33mbar\033[m'
+    actual = colors.format(msg)
+    self.assertEqual(expected, actual)
+
+    msg = '<red>WARNING:</red> foo <red>bar</red>'
+    expected = '\033[0;31mWARNING:\033[m foo \033[0;31mbar\033[m'
+    actual = colors.format(msg)
     self.assertEqual(expected, actual)
 
   def testFormatColor(self):
     msg = 'foo'
     expected = '\033[0;31mfoo\033[m'
-    actual = colors.FormatColor(colors.RED, msg)
+    actual = colors.format_color(colors.RED, msg)
     self.assertEqual(expected, actual)
 
     msg = 'hello, %s!'
     expected = '\033[0;30mhello, world!\033[m'
-    actual = colors.FormatColor(colors.BLACK, msg, 'world')
+    actual = colors.format_color(colors.BLACK, msg, 'world')
     self.assertEqual(expected, actual)
 
     msg = 'hello, %(name)s!'
     expected = '\033[0;34mhello, foo!\033[m'
-    actual = colors.FormatColor(colors.BLUE, msg, name='foo')
+    actual = colors.format_color(colors.BLUE, msg, name='foo')
+    self.assertEqual(expected, actual)
+
+    msg = 'foo'
+    expected = '\033[1;33mfoo\033[m'
+    actual = colors.format_color(colors.YELLOW, msg)
     self.assertEqual(expected, actual)
 
 if __name__ == '__main__':

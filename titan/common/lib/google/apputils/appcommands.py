@@ -162,14 +162,14 @@ def ShortHelpAndExit(message=None):
 
 def GetCommandList():
   """Return list of registered commands."""
-  # pylint: disable-msg=W0602
+  # pylint: disable=global-variable-not-assigned
   global _cmd_list
   return _cmd_list
 
 
 def GetCommandAliasList():
   """Return list of registered command aliases."""
-  # pylint: disable-msg=W0602
+  # pylint: disable=global-variable-not-assigned
   global _cmd_alias_list
   return _cmd_alias_list
 
@@ -417,7 +417,7 @@ def _AddCmdInstance(command_name, cmd, command_aliases=None):
                       '_'.
   """
   # Update global command list.
-  # pylint: disable-msg=W0602
+  # pylint: disable=global-variable-not-assigned
   global _cmd_list
   global _cmd_alias_list
   if not issubclass(cmd.__class__, Cmd):
@@ -670,7 +670,7 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
     if len(cmd_names) == 1:
       # Need to register flags for command prior to be able to use them.
       # We do not register them globally so that they do not reappear.
-      # pylint: disable-msg=W0212
+      # pylint: disable=protected-access
       cmd_flags = command._command_flags
       if cmd_flags.RegisteredFlags():
         stdfile.write('%sFlags for %s:\n' % (prefix, name))
@@ -703,7 +703,7 @@ def ParseFlagsWithUsage(argv):
     remaining command line arguments after parsing flags
   """
   # Update the global commands.
-  # pylint: disable-msg=W0603
+  # pylint: disable=global-statement
   global _cmd_argv
   try:
     _cmd_argv = FLAGS(argv)
@@ -724,7 +724,7 @@ def GetCommand(command_required):
     specified but that command does not exist.
   """
   # Update the global commands.
-  # pylint: disable-msg=W0603
+  # pylint: disable=global-statement
   global _cmd_argv
   _cmd_argv = ParseFlagsWithUsage(_cmd_argv)
   if len(_cmd_argv) < 2:
@@ -744,7 +744,7 @@ def SetDefaultCommand(default_command):
   Args:
     default_command: str, the name of the command to execute by default.
   """
-  # pylint: disable-msg=W0603,C6409
+  # pylint: disable=global-statement,g-bad-name
   global _cmd_default
   _cmd_default = default_command
 
@@ -773,6 +773,8 @@ def _CommandsStart(unused_argv):
     command = GetCommand(command_required=True)
   else:
     command = GetCommandByName(_cmd_default)
+    if command is None:
+      ShortHelpAndExit("FATAL Command '%s' unknown" % _cmd_default)
   sys.exit(command.CommandRun(GetCommandArgv()))
 
 

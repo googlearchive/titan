@@ -14,18 +14,18 @@ class BroadcastChannelTest(testing.BaseTestCase):
 
     # This shouldn't error without any clients connected, but it shouldn't
     # queue up the message either.
-    broadcast_channel.SendMessage('Hello world!')
+    broadcast_channel.send_message('Hello world!')
 
     tokens = []
     self.assertFalse(broadcast_channel.exists)
-    tokens.append(channel.CreateChannel('foo'))
-    tokens.append(channel.CreateChannel('bar'))
-    tokens.append(channel.CreateChannel('example@example.com'))
+    tokens.append(channel.create_channel('foo'))
+    tokens.append(channel.create_channel('bar'))
+    tokens.append(channel.create_channel('example@example.com'))
     self.assertTrue(all(tokens), 'Bad tokens: %r' % tokens)
 
-    broadcast_channel.Subscribe('foo')
-    broadcast_channel.Subscribe('bar')
-    broadcast_channel.Subscribe('example@example.com')
+    broadcast_channel.subscribe('foo')
+    broadcast_channel.subscribe('bar')
+    broadcast_channel.subscribe('example@example.com')
     self.assertTrue(broadcast_channel.exists)
 
     # Must connect each client to the channel before broadcast.
@@ -33,7 +33,7 @@ class BroadcastChannelTest(testing.BaseTestCase):
     for token in tokens:
       self.channel_stub.connect_channel(token)
 
-    broadcast_channel.SendMessage('Hello world!')
+    broadcast_channel.send_message('Hello world!')
     for token in tokens:
       message = self.channel_stub.pop_first_message(token)
       message_data = {

@@ -12,6 +12,7 @@ libraries:
   version: latest
 
 includes:
+- titan/files/handlers.yaml
 - titan/channel/handlers.yaml
 
 handlers:
