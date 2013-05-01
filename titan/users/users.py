@@ -215,6 +215,14 @@ def create_logout_url(dest_url):
 def _get_current_oauth_user(oauth_scopes):
   try:
     user = oauth.get_current_user(_format_oauth_scopes(oauth_scopes))
+    if user.email() == 'example@example.com':
+      # The oauth stub annoyingly automatically logs in as example@example.com,
+      # which makes it difficult to test non-logged-in state on devappserver.
+      # Force example@example.com to return None on devappserver.
+      # Per RFC2606 (http://tools.ietf.org/html/rfc2606), example.com is a
+      # reserved domain name and so no real user would ever have this email
+      # address.
+      return None
     return user
   except oauth.NotAllowedError:
     # Raised if the requested URL does not permit OAuth authentication.

@@ -23,7 +23,7 @@
       {% set counterloop = loop %}
       {% for timestamp, value in counter_data %}
         {% set last_window = last_window or timestamp %}
-        {% if last_window + window_size < timestamp %}
+        {% if zero_between and last_window + window_size < timestamp %}
           data.addRow();
           rowIndex++;
           colIndex = {{counterloop.index0}} * 3 + 1;

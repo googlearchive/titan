@@ -74,6 +74,7 @@ __all__ = [
     'Counter',
     'AverageCounter',
     'AverageCounter',
+    'StaticCounter',
     'AverageTimingCounter',
     'CountersService',
     'StatsActivity',
@@ -86,11 +87,14 @@ __all__ = [
 DEFAULT_WINDOW_SIZE = 60
 STATS_ETA_DELTA = 60
 
-BASE_DIR = '/_titan/activities/stats'
+BASE_DIR = '/_titan/stats/counters'
 DATA_FILENAME = 'data-%ss.json' % DEFAULT_WINDOW_SIZE
 
 class AbstractBaseCounter(object):
   """Base class for all counters."""
+
+  # Aggregate existing counter data (if different) instead of overwriting.
+  overwrite = False
 
   def __init__(self, name):
     self.name = name
@@ -204,6 +208,16 @@ class AverageTimingCounter(AverageCounter):
     assert self._start is None, 'Counter finalized without stopping.'
     value, weight = super(AverageTimingCounter, self).Finalize()
     return (int(value), weight)
+
+class StaticCounter(Counter):
+  """Static version of the counter that replaces instead of aggregates."""
+
+  # Ignore existing counters in file and overwrite.
+  overwrite = True
+
+  def Aggregate(self, value):
+    """Replaces the current value completely rather than offsetting."""
+    self._value = value
 
 class CountersService(object):
   """A service class to retrieve permanently stored counter stats."""
@@ -390,7 +404,8 @@ class _BatchProcessor(activities.BaseProcessor):
           if old_window == window:
             window_exists = True
             if old_value != counter.Finalize():
-              counter.Aggregate(old_value)
+              if not counter.overwrite:
+                counter.Aggregate(old_value)
               old_value = counter.Finalize()
           window_files[path]['content'].append((old_window, old_value))
         if not window_exists:

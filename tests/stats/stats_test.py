@@ -37,8 +37,7 @@ class StatsTestCase(testing.BaseTestCase):
       return [stats.Counter('page/view'), stats.Counter('widget/render')]
 
     # Push local stats to a task.
-    processors = self._log_counters([page_counter], counters_func)
-    processor = self._get_processor_from_processors(processors)
+    processors, processor = self._log_counters([page_counter], counters_func)
     expected = {
         0: {
             'counters': {
@@ -103,6 +102,21 @@ class StatsTestCase(testing.BaseTestCase):
     counter.Aggregate((0, 0))
     self.assertEqual((0, 0), counter.Finalize())
 
+  def testStaticCounter(self):
+    # Offset within a request.
+    counter = stats.StaticCounter('widget/render/views')
+    counter.Offset(50)
+    self.assertEqual(50, counter.Finalize())
+    counter.Offset(100)
+    self.assertEqual(150, counter.Finalize())
+
+    # Aggregation between requests.
+    counter = stats.StaticCounter('widget/render/views')
+    counter.Aggregate(100)
+    self.assertEqual(100, counter.Finalize())
+    counter.Aggregate(200)
+    self.assertEqual(200, counter.Finalize())
+
   def testAverageTimingCounter(self):
     counter = stats.AverageTimingCounter('widget/render/latency')
     counter.Start()
@@ -123,9 +137,8 @@ class StatsTestCase(testing.BaseTestCase):
     # Log an initial set into the 3600 window.
     page_counter.Offset(10)
     widget_counter.Offset(20)
-    processors = self._log_counters([page_counter, widget_counter],
-                                    counters_func, timestamp=3600)
-    processor = self._get_processor_from_processors(processors)
+    processors, processor = self._log_counters(
+        [page_counter, widget_counter], counters_func, timestamp=3600)
     # Save another set of data, an hour later:
     page_counter.Increment()
     widget_counter.Increment()
@@ -167,9 +180,7 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertEqual(expected, processor.serialize())
 
     # Save the data as if from a batch processor.
-    batch_processor = processor.batch_processor
-    batch_processor.process(processor.serialize())
-    batch_processor.finalize()
+    self._finalize_processor(processor)
 
     # Get the data from the CountersService.
     counters_service = stats.CountersService()
@@ -183,6 +194,63 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertEqual(expected, counter_data)
 
   @mock.patch('titan.stats.stats._GetWindow')
+  def testAggregatorForStaticCounters(self, internal_window):
+    # Setup some data.
+    def counters_func():
+      return [stats.StaticCounter('page/view')]
+    counters_service = stats.CountersService()
+    start_date = datetime.datetime.utcfromtimestamp(0)
+    internal_window.return_value = 0
+
+    # Initial counter with an offset.
+    page_counter = stats.StaticCounter('page/view')
+    page_counter.Offset(10)
+    _, processor = self._log_counters([page_counter], counters_func)
+    expected = {
+        0: {
+            'window': 0,
+            'counters': {
+                'page/view': 10,
+            }
+        },
+    }
+    self.assertEqual(expected, processor.serialize())
+
+    # Save the data as if from a batch processor.
+    self._finalize_processor(processor)
+
+    # Get the data from the CountersService.
+    counter_data = counters_service.GetCounterData(
+        ['page/view'], start_date=start_date)
+    expected = {'page/view': [(0, 10)]}
+    self.assertEqual(expected, counter_data)
+
+    # New counter, same timeframe.
+    page_counter = stats.StaticCounter('page/view')
+    page_counter.Offset(20)
+    _, processor = self._log_counters([page_counter], counters_func)
+    expected = {
+        0: {
+            'window': 0,
+            'counters': {
+                'page/view': 20,
+            }
+        },
+    }
+    self.assertEqual(expected, processor.serialize())
+
+    # Save the data as if from a batch processor.
+    self._finalize_processor(processor)
+
+    # Get the data from the CountersService.
+    counter_data = counters_service.GetCounterData(
+        ['page/view'], start_date=start_date)
+
+    # The new value should not have aggregated the previous counter data.
+    expected = {'page/view': [(0, 20)]}
+    self.assertEqual(expected, counter_data)
+
+  @mock.patch('titan.stats.stats._GetWindow')
   def testAggregatorCounterUnusedCounterInWindow(self, internal_window):
     # Setup some data.
     def counters_func():
@@ -193,9 +261,7 @@ class StatsTestCase(testing.BaseTestCase):
 
     # Log an initial set into the 3600 window.
     page_counter.Offset(10)
-    processors = self._log_counters([page_counter],
-                                    counters_func)
-    processor = self._get_processor_from_processors(processors)
+    processors, processor = self._log_counters([page_counter], counters_func)
 
     # Save different counter in a different window:
     widget_counter.Increment()
@@ -268,8 +334,7 @@ class StatsTestCase(testing.BaseTestCase):
     widget_counter2.Increment()
     latency_counter1.Offset(50)
     latency_counter2.Offset(100)
-    processors = self._log_counters(counters, counters_func)
-    processor = self._get_processor_from_processors(processors)
+    _, processor = self._log_counters(counters, counters_func)
     expected = {
         0: {
             'window': 0,
@@ -299,8 +364,7 @@ class StatsTestCase(testing.BaseTestCase):
     oldest_counter.timestamp = 0
 
     counters = [normal_counter, old_counter, oldest_counter]
-    processors = self._log_counters(counters, counters_func)
-    processor = self._get_processor_from_processors(processors)
+    _, processor = self._log_counters(counters, counters_func)
 
     expected = {
         0: {
@@ -334,10 +398,16 @@ class StatsTestCase(testing.BaseTestCase):
         activity, counters_func=counters_func)
     processors = processors or activity_logger.processors
     activity_logger.process(processors)
-    return processors
+    return (processors, self._get_processor_from_processors(processors))
 
   def _get_processor_from_processors(self, processors):
     return [p for p in processors.values()][0]
+
+  def _finalize_processor(self, processor):
+    # Save the data as if from a batch processor.
+    batch_processor = processor.batch_processor
+    batch_processor.process(processor.serialize())
+    batch_processor.finalize()
 
 if __name__ == '__main__':
   basetest.main()

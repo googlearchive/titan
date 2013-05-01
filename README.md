@@ -1,8 +1,8 @@
-# Titan Files
+# Titan for App Engine
 
-Titan Files is a filesystem abstraction for AppEngine apps, providing a
-file-like API which uses the AppEngine datastore and blobstore underneath.
+*Titan for App Engine* is a suite of powerful tools that helps make building Python apps on App Engine even easier.
 
-# Documentation
+Titan started as a simple filesystem abstraction, but has grown into a fully-featured library that extends the native App Engine APIs and provides reusable modules for many common patterns. Check it out!
 
-See http://code.google.com/p/titan-files
+**Documentation:** http://googlecloudplatform.github.io/titan
+

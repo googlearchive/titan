@@ -66,6 +66,9 @@ class GraphHandler(webapp2.RequestHandler):
     Returns:
       Rendered HTML template with graph of counter data.
     """
+    zero_between = bool(self.request.get('zero_between', False))
+    window_size = int(self.request.get('window_size',
+                                       stats.DEFAULT_WINDOW_SIZE))
     params = _ParseRequestParams(self.request)
     counters_service = stats.CountersService()
     aggregate_data = counters_service.GetCounterData(
@@ -76,7 +79,8 @@ class GraphHandler(webapp2.RequestHandler):
     path = os.path.join(TEMPLATES_PATH, 'graph.html')
     template = jinja2.Template(open(path).read())
     self.response.out.write(template.render(
-        aggregate_data=aggregate_data, window_size=stats.DEFAULT_WINDOW_SIZE))
+        aggregate_data=aggregate_data, window_size=window_size,
+        zero_between=zero_between))
 
 def _ParseRequestParams(request):
   counter_names = request.get_all('counter_name')
