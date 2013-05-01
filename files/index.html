@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta content="chrome=1" http-equiv="X-UA-Compatible">
+    <meta content="Titan for App Engine : App Engine, extended." name="description">
+    <link href="/css/stylesheet.css" media="screen" rel="stylesheet">
+    <title>
+      Titan Files - Titan for App Engine
+    </title>
+    <style>
+div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
+    </style>
+  </head>
+  <body>
+    <div class="outer" id="header_wrap">
+      <header class="inner">
+        <a href="https://github.com/GoogleCloudPlatform/titan" id="forkme_banner">View on
+        GitHub</a>
+        <h1 id="project_title">
+          Titan for App Engine
+        </h1>
+        <h2 id="project_tagline">
+          App Engine, extended.
+        </h2>
+        <section id="downloads">
+          <a class="zip_download_link" href=
+          "https://github.com/GoogleCloudPlatform/titan/zipball/master">Download this project as a
+          .zip file</a> <a class="tar_download_link" href=
+          "https://github.com/GoogleCloudPlatform/titan/tarball/master">Download this project as a
+          tar.gz file</a>
+        </section>
+      </header>
+    </div>
+    <div class="outer" id="main_content_wrap">
+      <section class="inner" id="main_content">
+        <div id="breadcrumbs">
+          <a href="/">Titan</a> &gt; Titan Files
+        </div>
+        <hr>
+        <div class="c1">
+          <strong>NOTE: We're moving to <a href=
+          "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
+          things over.</strong><br>
+          - fotinakis, 2013-05-01
+        </div>
+        <h1>
+          Titan Files
+        </h1>
+        <p>
+          Titan Files is a filesystem abstraction for App Engine apps, providing a file-like API
+          which uses the App Engine datastore and blobstore underneath.
+        </p>
+        <pre>
+<code>from titan import files
+
+titan_file = files.File('/some/file.html')
+titan_file.write(content='Hello')
+titan_file.content  # 'Hello'
+titan_file.delete()
+</code>
+</pre>
+        <p>
+          More in-depth:
+        </p>
+        <pre>
+<code>from titan import files
+
+titan_file = files.File('/path/to/file.html')
+
+titan_file.write('Some content')
+titan_file.delete()
+titan_file.copy_to(destination_file=files.File('/other/file.html'))
+titan_file.move_to(destination_file=files.File('/other/file.html'))
+titan_file.serialize()
+titan_file.validate_path('/some/path')
+
+titan_file.name         # "file.html"
+titan_file.name_clean   # "file"
+titan_file.extension    # ".html"
+titan_file.path         # "/path/to/file.html"
+titan_file.paths        # ["/", "/path", "/path/to"]
+titan_file.mime_type    # "text/html"
+titan_file.created      # datetime.datetime object.
+titan_file.modified     # datetime.datetime object.
+titan_file.content      # 'Some content'
+titan_file.blob         # blobstore.BlobInfo object.
+titan_file.exists       # Boolean.
+titan_file.created_by   # titan.users.TitanUser object.
+titan_file.modified_by  # titan.users.TitanUser object.
+titan_file.size         # Integer number of bytes.
+titan_file.md5_hash     # Pre-computed md5_hash of the file contents.
+titan_file.meta         # Metadata object.
+</code>
+</pre>
+        <p>
+          ...
+        </p>
+      </section>
+    </div>
+    <div class="outer" id="footer_wrap">
+      <footer class="inner">
+        <p class="copyright">
+          Titan for App Engine is maintained by <a href=
+          "https://github.com/GoogleCloudPlatform">GoogleCloudPlatform</a>
+        </p>
+      </footer>
+    </div><script>
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+      document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+    </script> <script>
+try {
+        var pageTracker = _gat._getTracker("UA-24973566-1");
+      pageTracker._trackPageview();
+      } catch(err) {}
+    </script>
+  </body>
+</html>
