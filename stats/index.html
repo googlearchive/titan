@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Titan Stats - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,7 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; Titan Stats
         </div>
         <hr>
         <div class="c1">
@@ -43,61 +43,243 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
           things over.</strong> 2013-05-02
         </div>
+        <h1>
+          Titan Stats
+        </h1>
+        <h2>
+          Introduction
+        </h2>
         <p>
-          <em>Titan for App Engine</em> is a suite of powerful tools that helps make building
-          Python apps on App Engine even easier.
+          Titan Stats provides an easy way to record custom statistics in your application and
+          graph them over time.
         </p>
+        <figure>
+          <img alt="Example graph of core Titan API calls" src=
+          "/titan/images/stats-invocation-graph.png" title="Example graph of core Titan API calls"
+          width="100%">
+          <figcaption>
+            Example graph of core Titan API calls over time.
+          </figcaption>
+        </figure>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          It works like this:
+        </p>
+        <ul>
+          <li>Your application code creates, increments, and stores counters during a request.
+          </li>
+          <li>At the end of the request all counters are aggregated and stored temporarily to await
+          batch aggregation.
+          </li>
+          <li>Stored counters are aggregated again across all requests (about every 60 seconds) and
+          saved in titan files.
+          </li>
+        </ul>
+        <h2>
+          Installation
+        </h2>
+        <p>
+          See the simple <a href="/titan/install.html">Titan installation guide</a>.
+        </p>
+        <h2>
+          Setup
+        </h2>
+        <h3>
+          Prerequisites
+        </h3>
+        <p>
+          To use the stats you must first setup the following:
         </p>
         <ul>
           <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
+            <a href="/titan/activities/#setup">Titan Activities</a>
+          </li>
+          <li>
+            <a href="/titan/pipelines/#setup">Titan Pipelines</a>
+          </li>
+        </ul>
+        <h3>
+          File Indexes
+        </h3>
+        <p>
+          Add to your <em>index.yaml</em>:
+        </p>
+        <pre>
+<code>indexes:
+- kind: _File
+  properties:
+  - name: paths
+  - name: stats_counter_name
+  - name: stats_date
+</code>
+</pre>
+        <h3>
+          URL Handlers
+        </h3>
+        <p>
+          To generate graphs or use the HTTP API for stats add this your <em>app.yaml</em>:
+        </p>
+        <pre>
+<code>includes:
+- titan/stats/handlers.yaml
+</code>
+</pre>
+        <h2>
+          Using Counters
+        </h2>
+        <p>
+          Now, anywhere in your application, use counters to record statistics:
+        </p>
+        <pre>
+<code>from titan import stats
+
+def render_page():
+  # Increment a counter for some statistic, like a page view:
+  page_view_counter = stats.Counter('page/view')
+  page_view_counter.increment()
+
+  # And measure the average latency of any arbitrary code block:
+  latency_counter = stats.AverageTimingCounter('widget/render/latency')
+  latency_counter.start()
+  # ... code block ...
+  latency_counter.stop()
+
+  # Log the counters.
+  stats.log_counters([page_view_counter, latency_counter],
+                     counters_func=_make_counters)
+
+def _make_counters():
+  """Returns a list of new counters for aggregating data between requests."""
+  return [
+      stats.Counter('page/view'),
+      stats.AverageTimingCounter('widget/render/latency'),
+  ]
+</code>
+</pre>
+        <h2>
+          Processing Counters Timeline
+        </h2>
+        <p>
+          The stat counter logging relies on the <a href="/titan/activities/">Titan Activities</a>
+          and <a href="/titan/pipelines/">Titan Pipelines</a> to control the counter aggregation at
+          the end of the request and cross-request storage to file.
+        </p>
+        <p>
+          <strong><em>Note:</em> If the activities or the pipelines are not setup correctly the
+          counters will not be successfully stored.</strong>
+        </p>
+        <h2>
+          The Big Picture
+        </h2>
+        <p>
+          Now that you have seen examples of how to use the stat counters, here is an overview of
+          the entire flow of a counter to better understand how the counter flows through the
+          system.
+        </p>
+        <ul>
+          <li>
+            <code>stats.log_counter(...)</code>
             <ul>
-              <li>
-                <strong>Titan Versions</strong>: a lightweight version control system for
-                atomically updating files.
+              <li>Places the counter in the <code>os.environ</code> using <a href=
+              "/titan/activities/">Titan Activities</a>.
               </li>
-              <li>
-                <strong>Titan Microversions</strong>: automatic versioning of every file change.
-              </li>
-              <li>
-                <strong>Mixins</strong>: simple plugins that let you extend and customize Titan
-                Files.
+              <li>If the stat running inside of a AppEngine Task it will process the activities
+              right away since it is not a normal request.
               </li>
             </ul>
           </li>
+          <li>End of request aggregation.
+            <ul>
+              <li>At the end of the request the <code>process_activity_loggers</code> from
+                <a href="/titan/activities/">Titan Activities</a> performs the counter aggregation.
+              </li>
+              <li>
+                <a href="/titan/activities/">Titan Activities</a> sends off the aggregated counters
+                to be batch aggregated across all the requests that have occured recently.
+              </li>
+            </ul>
+          </li>
+          <li>
+            <a href="/titan/pipelines/">Titan Pipelines</a> aggregrates the recent request counters
+            and stores the batched aggregate into a file.
+          </li>
         </ul>
-        <p>
-          Also includes libraries which are built on Titan Files:
-        </p>
+        <h2>
+          Available Counter Types
+        </h2>
         <ul>
           <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
+            <strong><code>Counter</code></strong>: A counter providing simple
+            <code>increment</code> and <code>offset</code> methods.
           </li>
           <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
+            <strong><code>AverageCounter</code></strong>: A cumulative moving average counter.
           </li>
           <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
+            <strong><code>AverageTimingCounter</code></strong>: An <code>AverageCounter</code> with
+            <code>start()</code> and <code>stop()</code> convenience methods for timing code
+            blocks.
           </li>
           <li>
-            <strong>Titan Users API</strong>: A convenience wrapper around the App Engine Users
-            API.
-          </li>
-          <li>
-            <strong>Titan Tasks</strong>: Granular, realtime feedback over deferred task batches.
-          </li>
-          <li>
-            <strong>Titan Channel API</strong>: Centralized, multi-subscriber broadcast channels.
+            <strong><code>StaticCounter</code></strong>: An <code>Counter</code> that ignores
+            values that were previously recorded in the counter file.
           </li>
         </ul>
+        <p>
+          See <a href=
+          "https://github.com/GoogleCloudPlatform/titan/blob/master/titan/stats/stats.py">titan/stats/stats.py</a>
+          for all of the methods available for these counters.
+        </p>
+        <h2>
+          Counter Service
+        </h2>
+        <p>
+          You can retrieve the aggregated and finalized data by using the
+          <code>CounterService</code>:
+        </p>
+        <pre>
+<code>from titan import stats
+
+counters_service = stats.CountersService()
+aggregate_data = counters_service.GetCounterData(
+    counter_names=['page/view', 'widget/render/latency'],
+    start_date=datetime.datetime.now().date() - datetime.timedelta(days=2),
+    end_date=datetime.datetime.now().date())
+
+# GetCounterData() returns a mapping from counter names to a list of counter data points.
+# {'page/view': [(&lt;timestamp&gt;, &lt;value&gt;), (&lt;timestamp&gt;, &lt;value&gt;), ...],
+#  'widget/render/latency': [(&lt;timestamp&gt;, (&lt;value&gt;, &lt;weight&gt;)), ...]}
+&gt;&gt;&gt; aggregate_data
+&gt;&gt;&gt; {'page/view': [(1332802210, 4), (1332802220, 10)],
+     'widget/render/latency': [(1332802210, (234, 1)), (1332802220, (250, 2))]}
+</code>
+</pre>
+        <h2>
+          JSON
+        </h2>
+        <p>
+          Titan Stats provides a built-in handler for getting counter data as JSON:
+        </p>
+        <pre>
+<code>/_titan/stats/counterdata?counter_name=page/view&amp;start_date=2015-05-15&amp;end_date=2015-05-17
+
+{'page/view': [(1332802210, 4), (1332802220, 10)],
+ 'widget/render/latency': [(1332802210, (234, 1)), (1332802220, (250, 2))]}
+</code>
+</pre>
+        <h2>
+          Graphs
+        </h2>
+        <p>
+          Graphs are viewable by visiting the <code>/_titan/stats/graph</code> handler:
+        </p>
+        <pre>
+<code>/_titan/stats/graph?counter_name=page/view&amp;start_date=2015-05-15&amp;end_date=2015-05-17
+</code>
+</pre>
+        <p>
+          <em>Note:</em> Graphs will only be available if you have added the the <a href=
+          "#url-handlers">URL handlers</a> and are <strong>only viewable by admins</strong>.
+        </p>
       </section>
     </div>
     <div class="outer" id="footer_wrap">

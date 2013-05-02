@@ -127,7 +127,11 @@ a {
 
 #main_content a:hover {
   color: #0069ba;
-  text-shadow: #0090ff 0px 0px 2px;
+}
+
+.anchor {
+  color: lightgray;
+  font-size: 0.8em;
 }
 
 footer a:hover {
@@ -176,13 +180,13 @@ pre, code {
 
 pre {
   width: 100%;
-  padding: 10px;
+  padding: 10px 10px 0px 10px;
   box-shadow: 0 0 10px rgba(0,0,0,.1);
   overflow: auto;
 }
 
 code {
-  padding: 3px;
+  padding: 3px 3px 0px 3px;
   margin: 0 3px;
   box-shadow: 0 0 10px rgba(0,0,0,.1);
 }
@@ -272,7 +276,7 @@ Full-Width Styles
 
 .inner {
   position: relative;
-  max-width: 640px;
+  max-width: 900px;
   padding: 10px 10px;
   margin: 0 auto;
 }

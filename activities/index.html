@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Titan Activities - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,7 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; Titan Activities
         </div>
         <hr>
         <div class="c1">
@@ -43,61 +43,61 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
           things over.</strong> 2013-05-02
         </div>
+        <h1>
+          Titan Activities
+        </h1>
+        <h2>
+          Introduction
+        </h2>
+        <h2>
+          Installation
+        </h2>
         <p>
-          <em>Titan for App Engine</em> is a suite of powerful tools that helps make building
-          Python apps on App Engine even easier.
+          See the simple <a href="/titan/install.html">Titan installation guide</a>.
+        </p>
+        <h2>
+          Setup
+        </h2>
+        <h3>
+          End of Request Processing
+        </h3>
+        <p>
+          At the <strong>end of the request path</strong>, call the
+          <code>activities.process_activity_loggers()</code> method.
         </p>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          Here is an example
         </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
-            <ul>
-              <li>
-                <strong>Titan Versions</strong>: a lightweight version control system for
-                atomically updating files.
-              </li>
-              <li>
-                <strong>Titan Microversions</strong>: automatic versioning of every file change.
-              </li>
-              <li>
-                <strong>Mixins</strong>: simple plugins that let you extend and customize Titan
-                Files.
-              </li>
-            </ul>
-          </li>
-        </ul>
-        <p>
-          Also includes libraries which are built on Titan Files:
-        </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
-          </li>
-          <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
-          </li>
-          <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
-          </li>
-          <li>
-            <strong>Titan Users API</strong>: A convenience wrapper around the App Engine Users
-            API.
-          </li>
-          <li>
-            <strong>Titan Tasks</strong>: Granular, realtime feedback over deferred task batches.
-          </li>
-          <li>
-            <strong>Titan Channel API</strong>: Centralized, multi-subscriber broadcast channels.
-          </li>
-        </ul>
+        <pre>
+<code>from titan import activities
+from titan import stats
+
+class AppWSGIHandler(wsgi.WSGIHandler):
+
+  def get_response(self, request):
+    try:
+      main_timing_counter = stats.AverageTimingCounter('response/latency')
+      main_timing_counter.start()
+
+      # Perform request processing here...
+      # result = [response object]
+    finally:
+      # Post-request processing:
+      try:
+        main_timing_counter.stop()
+        # Do not log latency counter if this is a cron request.
+        if 'HTTP_X_APPENGINE_CRON' not in os.environ:
+          stats.logCounters([main_timing_counter])
+      except:
+        logging.exception('Unable to save main timing counter!')
+      finally:
+        try:
+          activities.process_activity_loggers()
+        except:
+          logging.exception('Unable to process stored activities!')
+    return result
+</code>
+</pre>
       </section>
     </div>
     <div class="outer" id="footer_wrap">

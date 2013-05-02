@@ -41,27 +41,248 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
         <div class="c1">
           <strong>NOTE: We're moving to <a href=
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
-          things over.</strong><br>
-          - fotinakis, 2013-05-01
+          things over.</strong> 2013-05-02
         </div>
         <h1>
           Titan Files
         </h1>
+        <h2>
+          Introduction
+        </h2>
         <p>
           Titan Files is a filesystem abstraction for App Engine apps, providing a file-like API
-          which uses the App Engine datastore and blobstore underneath.
+          for storing and retrieving data.
         </p>
         <pre>
 <code>from titan import files
 
 titan_file = files.File('/some/file.html')
-titan_file.write(content='Hello')
-titan_file.content  # 'Hello'
+titan_file.write(content='Hello world!')
+
+titan_file.content  # Returns 'Hello world!'
 titan_file.delete()
 </code>
 </pre>
+        <h3>
+          Features
+        </h3>
+        <ul>
+          <li>
+            <strong>Simple file-like API</strong>.
+          </li>
+          <li>
+            <strong>Command-line utilities</strong> for uploading/downloading files from your app.
+          </li>
+          <li>
+            <strong>Abitrary file metadata</strong> and metadata queries are supported.
+          </li>
+          <li>
+            <strong>No file size limit</strong> (large files are transparently written to
+            blobstore).
+          </li>
+          <li>
+            <strong>Aggressive caching</strong> internally (included sharded caching of files
+            &lt;32 MB).
+          </li>
+          <li>
+            <strong>Unit tests</strong> are robust.
+          </li>
+          <li>
+            <strong>Modular</strong> and reuable—does not depend on any other Titan modules to
+            work.
+          </li>
+        </ul>
         <p>
-          More in-depth:
+          Here's a 5-minute, fast-paced lightning talk from PyCon 2013 that covers Titan Files and
+          Titan Tasks: <iframe allowfullscreen="" frameborder="0" height="360" src=
+          "//www.youtube.com/embed/Ft6-r_vksDI?rel=0&amp;start=2268" width="480"></iframe>
+        </p>
+        <h2>
+          Installation
+        </h2>
+        <p>
+          See the <a href="/titan/install.html">Titan installation guide</a>.
+        </p>
+        <h2>
+          Philosophy
+        </h2>
+        <ul>
+          <li>Files just work.
+          </li>
+          <li>Most data can be schemaless.
+          </li>
+          <li>Data portability counts, big time.
+          </li>
+          <li>Cloud filesystems &gt; local filesystems.
+          </li>
+        </ul>
+        <p>
+          <strong>Files just work</strong>. Everyone understands files. They're easy to reason
+          about and use. They have meta information you always need, like creation time and who
+          last modified the data. They're standard. They're isolated. They're flexible.
+        </p>
+        <p>
+          <strong>Most data can be schemaless.</strong> Usually, you just want to store data, you
+          don't care about cramming your data into a mold just to store it. Even NoSQL models
+          require that you define a lightweight schema the types of data you're storing— <em>even
+          if the data itself is schemaless</em> or is actually a file. Why not just write a file
+          instead?
+        </p>
+        <p>
+          <strong>Data portability counts, big time.</strong> 'Nuff said.
+        </p>
+        <p>
+          <strong>Cloud filesystems &gt; local filesystems.</strong> Beyond scaling, replication,
+          unlimited file size, and interoperability, cloud filesystems give you the ability to do
+          that would almost impossible on local filesystems.
+        </p>
+        <p>
+          %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        </p>
+        <h2>
+          Quickstart
+        </h2>
+        <h3>
+          Writing files
+        </h3>
+        <p>
+          Let's make a very simple app; just a POST API where you accept a <code>key</code> and a
+          <code>message</code> to store.
+        </p>
+        <p>
+          We'll use the webapp2 framework for these docs, but you can use whatever framework you'd
+          like.
+        </p>
+        <pre>
+<code>import webapp2
+from titan import files
+
+class MessageHandler(webapp2.RequestHandler):
+  def post(self):
+    key = self.request.get('key')
+    message = self.request.get('message')
+    if not key or '/' in key:
+      self.abort(400)
+    files.File('/messages/{}'.format(key)).write(message)
+</code>
+</pre>
+        <p>
+          Easy, right? Storing data is as simple as:
+          <code>files.File('/some/path').write('hello!')</code>
+        </p>
+        <h3>
+          Reading files
+        </h3>
+        <p>
+          Now let's add a way to retrieve messages by <code>key</code>:
+        </p>
+        <pre>
+<code>  def get(self):
+    key = self.request.get('key')
+    titan_file = files.File('/messages/{}'.format(key))
+    if not titan_file.exists:
+      self.abort(404)
+    self.response.out.write(titan_file.content)
+</code>
+</pre>
+        <p>
+          Done! You can now store and read messages, and there's not a model in sight.
+        </p>
+        <h3>
+          Listing files
+        </h3>
+        <p>
+          Let's go a bit further and add a handler where you can list all the messages by
+          <code>key</code>:
+        </p>
+        <pre>
+<code>class MessageListHandler(webapp2.RequestHandler):
+
+  def get(self):
+    titan_files = files.Files.list('/messages/', recursive=False)
+    self.response.out.write('KEYS:&lt;br&gt;')
+    self.response.out.write('&lt;br&gt;'.join(titan_files.keys()))
+</code>
+</pre>
+        <p>
+          We simply use the the <code>files.Files.list</code> factory method to list files in the
+          <code>/messages/</code> directory. The <code>files.Files</code> object it returns is a
+          dictionary-like object that maps file paths to file objects.
+        </p>
+        <p>
+          But we have a problem—this handler will output the actual filenames, not the keys:
+        </p>
+        <pre>
+<code>KEYS:
+/messages/some-key
+/messages/my-message-for-you
+</code>
+</pre>
+        <p>
+          Obviously we don't want to show this to our users, so we could solve this in a few
+          different ways:
+        </p>
+        <ul>
+          <li>We could parse the filenames, like:<br>
+            <code>[k[len('/messages/'):] for k in titan_files]</code>.
+          </li>
+          <li>We could store JSON in the file instead, like:<br>
+            <code>titan_file.write(json.dumps({'key': key, 'message': message})</code>
+          </li>
+          <li>Or, we could store a <code>message_key</code> meta property on the file which can
+          then be referenced like <code>titan_file.meta.message_key</code>. We'll explore metadata
+          more in the next section.
+          </li>
+        </ul>
+        <h3>
+          Metadata and metadata queries
+        </h3>
+        <p>
+          Underneath it all, Titan Files uses an <code>ndb.Expando</code> model and files
+          themselves are just normal <a href=
+          "https://developers.google.com/appengine/docs/python/ndb/entities">App Engine Datastore
+          entities</a>. This means that we can harness all the power of the Datastore
+        </p>
+        <p>
+          First, let's modify the message POST handler to write the file with metadata.
+        </p>
+        <pre>
+<code>class MessageHandler(webapp2.RequestHandler):
+  def post(self):
+    key = self.request.get('key')
+    message = self.request.get('message')
+    metadata = {'message_key': key}
+    files.File('/messages/{}'.format(key)).write(message, meta=metadata)
+</code>
+</pre>
+        <p>
+          Now, let's modify the message list handler to use the metadata.
+        </p>
+        <pre>
+<code>class MessageListHandler(webapp2.RequestHandler):
+
+  def get(self):
+    titan_files = files.Files.list('/messages/')
+    titan_files.load()
+    message_keys = [f.meta.message_key for f in titan_files.itervalues()]
+    self.response.out.write('KEYS:&lt;br&gt;')
+    self.response.out.write('&lt;br&gt;'.join(message_keys))
+</code>
+</pre>
+        <p>
+          Now the output will be just the original message keys:
+        </p>
+        <pre>
+<code>KEYS:
+some-key
+my-message-for-you
+</code>
+</pre>
+        <h2>
+          File object
+        </h2>
+        <p>
+          The base <code>files.File</code> object has the following methods and properties:
         </p>
         <pre>
 <code>from titan import files
@@ -101,7 +322,7 @@ titan_file.meta         # Metadata object.
     <div class="outer" id="footer_wrap">
       <footer class="inner">
         <p class="copyright">
-          Titan for App Engine is maintained by <a href=
+          Copyright © Google - <a href=
           "https://github.com/GoogleCloudPlatform">GoogleCloudPlatform</a>
         </p>
       </footer>
@@ -113,6 +334,19 @@ try {
         var pageTracker = _gat._getTracker("UA-24973566-1");
       pageTracker._trackPageview();
       } catch(err) {}
+    </script> <script>
+(function(){
+      var h=this;
+function k(a){var b=typeof a;if("object"==b)if(a){if(a instanceof Array)return"array";if(a instanceof Object)return b;var c=Object.prototype.toString.call(a);if("[object Window]"==c)return"object";if("[object Array]"==c||"number"==typeof a.length&&"undefined"!=typeof a.splice&&"undefined"!=typeof a.propertyIsEnumerable&&!a.propertyIsEnumerable("splice"))return"array";if("[object Function]"==c||"undefined"!=typeof a.call&&"undefined"!=typeof a.propertyIsEnumerable&&!a.propertyIsEnumerable("call"))return"function"}else return"null";else if("function"==
+b&&"undefined"==typeof a.call)return"object";return b}function n(a){var b=k(a);return"array"==b||"object"==b&&"number"==typeof a.length}function p(a){return"string"==typeof a}function q(a){var b=typeof a;return"object"==b&&null!=a||"function"==b};function r(a){return a.replace(/^[\s\xa0]+|[\s\xa0]+$/g,"")}function s(a){if(!t.test(a))return a;-1!=a.indexOf("&")&&(a=a.replace(v,"&amp;"));-1!=a.indexOf("<")&&(a=a.replace(w,"&lt;"));-1!=a.indexOf(">")&&(a=a.replace(x,"&gt;"));-1!=a.indexOf('"')&&(a=a.replace(aa,"&quot;"));return a}var v=/&/g,w=/</g,x=/>/g,aa=/\"/g,t=/[&<>\"]/;var y=Array.prototype,ba=y.indexOf?function(a,b,c){return y.indexOf.call(a,b,c)}:function(a,b,c){c=null==c?0:0>c?Math.max(0,a.length+c):c;if(p(a))return!p(b)||1!=b.length?-1:a.indexOf(b,c);for(;c<a.length;c++)if(c in a&&a[c]===b)return c;return-1},z=y.forEach?function(a,b,c){y.forEach.call(a,b,c)}:function(a,b,c){for(var e=a.length,g=p(a)?a.split(""):a,d=0;d<e;d++)d in g&&b.call(c,g[d],d,a)};function ca(a){var b=a.length;if(0<b){for(var c=Array(b),e=0;e<b;e++)c[e]=a[e];return c}return[]}
+function da(a,b,c){return 2>=arguments.length?y.slice.call(a,b):y.slice.call(a,b,c)};var A,B,C,D;function E(){return h.navigator?h.navigator.userAgent:null}D=C=B=A=!1;var F;if(F=E()){var ea=h.navigator;A=0==F.indexOf("Opera");B=!A&&-1!=F.indexOf("MSIE");C=!A&&-1!=F.indexOf("WebKit");D=!A&&!C&&"Gecko"==ea.product}var G=A,H=B,I=D,J=C;function K(){var a=h.document;return a?a.documentMode:void 0}var L;
+a:{var M="",N;if(G&&h.opera)var O=h.opera.version,M="function"==typeof O?O():O;else if(I?N=/rv\:([^\);]+)(\)|;)/:H?N=/MSIE\s+([^\);]+)(\)|;)/:J&&(N=/WebKit\/(\S+)/),N)var P=N.exec(E()),M=P?P[1]:"";if(H){var Q=K();if(Q>parseFloat(M)){L=String(Q);break a}}L=M}var R={};
+function S(a){var b;if(!(b=R[a])){b=0;for(var c=r(String(L)).split("."),e=r(String(a)).split("."),g=Math.max(c.length,e.length),d=0;0==b&&d<g;d++){var f=c[d]||"",u=e[d]||"",fa=RegExp("(\\d*)(\\D*)","g"),ga=RegExp("(\\d*)(\\D*)","g");do{var l=fa.exec(f)||["","",""],m=ga.exec(u)||["","",""];if(0==l[0].length&&0==m[0].length)break;b=((0==l[1].length?0:parseInt(l[1],10))<(0==m[1].length?0:parseInt(m[1],10))?-1:(0==l[1].length?0:parseInt(l[1],10))>(0==m[1].length?0:parseInt(m[1],10))?1:0)||((0==l[2].length)<
+(0==m[2].length)?-1:(0==l[2].length)>(0==m[2].length)?1:0)||(l[2]<m[2]?-1:l[2]>m[2]?1:0)}while(0==b)}b=R[a]=0<=b}return b}var T=h.document,U=!T||!H?void 0:K()||("CSS1Compat"==T.compatMode?parseInt(L,10):5);var ha=!H||H&&9<=U;!I&&!H||H&&H&&9<=U||I&&S("1.9.1");var V=H&&!S("9");function ia(a,b){var c;c=a.className;c=p(c)&&c.match(/\S+/g)||[];for(var e=da(arguments,1),g=c.length+e.length,d=c,f=0;f<e.length;f++)0<=ba(d,e[f])||d.push(e[f]);a.className=c.join(" ");return c.length==g};function ja(a,b){for(var c in a)b.call(void 0,a[c],c,a)}var W="constructor hasOwnProperty isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf".split(" ");function ka(a,b){for(var c,e,g=1;g<arguments.length;g++){e=arguments[g];for(c in e)a[c]=e[c];for(var d=0;d<W.length;d++)c=W[d],Object.prototype.hasOwnProperty.call(e,c)&&(a[c]=e[c])}};function la(a,b){ja(b,function(b,e){"style"==e?a.style.cssText=b:"class"==e?a.className=b:"for"==e?a.htmlFor=b:e in X?a.setAttribute(X[e],b):0==e.lastIndexOf("aria-",0)||0==e.lastIndexOf("data-",0)?a.setAttribute(e,b):a[e]=b})}var X={cellpadding:"cellPadding",cellspacing:"cellSpacing",colspan:"colSpan",frameborder:"frameBorder",height:"height",maxlength:"maxLength",role:"role",rowspan:"rowSpan",type:"type",usemap:"useMap",valign:"vAlign",width:"width"};
+function ma(a,b,c){var e=arguments,g=document,d=e[0],f=e[1];if(!ha&&f&&(f.name||f.type)){d=["<",d];f.name&&d.push(' name="',s(f.name),'"');if(f.type){d.push(' type="',s(f.type),'"');var u={};ka(u,f);delete u.type;f=u}d.push(">");d=d.join("")}d=g.createElement(d);f&&(p(f)?d.className=f:"array"==k(f)?ia.apply(null,[d].concat(f)):la(d,f));2<e.length&&na(g,d,e);return d}
+function na(a,b,c){function e(c){c&&b.appendChild(p(c)?a.createTextNode(c):c)}for(var g=2;g<c.length;g++){var d=c[g];if(n(d)&&!(q(d)&&0<d.nodeType)){var f;a:{if(d&&"number"==typeof d.length){if(q(d)){f="function"==typeof d.item||"string"==typeof d.item;break a}if("function"==k(d)){f="function"==typeof d.item;break a}}f=!1}z(f?ca(d):d,e)}else e(d)}}var oa={SCRIPT:1,STYLE:1,HEAD:1,IFRAME:1,OBJECT:1},Y={IMG:" ",BR:"\n"};
+function Z(a,b,c){if(!(a.nodeName in oa))if(3==a.nodeType)c?b.push(String(a.nodeValue).replace(/(\r\n|\r|\n)/g,"")):b.push(a.nodeValue);else if(a.nodeName in Y)b.push(Y[a.nodeName]);else for(a=a.firstChild;a;)Z(a,b,c),a=a.nextSibling};H&&S("9");!J||S("528");I&&S("1.9b")||H&&S("8")||G&&S("9.5")||J&&S("528");I&&!S("8")||H&&S("9");function $(){}$.a=function(){$.b||($.b=new $)};$.a();var pa=window.document.querySelectorAll(["#main_content h1","#main_content h2","#main_content h3","#main_content h4"]);z(pa,function(a){var b;V&&"innerText"in a?b=a.innerText.replace(/(\r\n|\r|\n)/g,"\n"):(b=[],Z(a,b,!0),b=b.join(""));b=b.replace(/ \xAD /g," ").replace(/\xAD/g,"");b=b.replace(/\u200B/g,"");V||(b=b.replace(/ +/g," "));" "!=b&&(b=b.replace(/^\s*/,""));b=r(b).replace(/\s+/g,"-").replace(/[^a-zA-Z0-9\-\_]/g,"").toLowerCase();a.id=b;b=ma("a",{"class":"anchor",href:"#"+b},"\u00b6");a.appendChild(b)});
+      }())
     </script>
   </body>
 </html>
