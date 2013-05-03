@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Titan Pipelines - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,7 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; Titan Pipelines
         </div>
         <hr>
         <div class="c1">
@@ -43,62 +43,48 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
           things over and update docs.</strong> 2013-05-02
         </div>
+        <h1>
+          Titan Pipelines
+        </h1>
+        <h2>
+          Introduction
+        </h2>
         <p>
-          <em>Titan for App Engine</em> is a suite of powerful tools that helps make building
-          Python apps on App Engine even easier.
+          Titan Pipelines is a data-processing pipeline implementation.
         </p>
+        <h2>
+          Installation
+        </h2>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          See the <a href="/titan/install.html">Titan installation guide</a>.
         </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
-            <ul>
-              <li>
-                <strong><a href="/titan/files/versions.html">Titan Versions</a></strong>: a
-                lightweight version control system for atomically updating files.
-              </li>
-              <li>
-                <strong><a href="/titan/files/microversions.html">Titan Microversions</a></strong>:
-                automatic versioning of every file change.
-              </li>
-              <li>
-                <strong><a href="/titan/files/mixins.html">Mixins</a></strong>: simple plugins that
-                let you extend and customize Titan Files.
-              </li>
-            </ul>
-          </li>
-        </ul>
+        <h2>
+          Setup
+        </h2>
+        <h3>
+          Task Queue
+        </h3>
         <p>
-          Also includes libraries which are built on Titan Files:
+          Add the pipelines queue to your <code>queue.yaml</code>:
         </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
-          </li>
-          <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
-          </li>
-          <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
-          </li>
-          <li>
-            <strong>Titan Users API</strong>: A convenience wrapper around the App Engine Users
-            API.
-          </li>
-          <li>
-            <strong>Titan Tasks</strong>: Granular, realtime feedback over deferred task batches.
-          </li>
-          <li>
-            <strong>Titan Channel API</strong>: Centralized, multi-subscriber broadcast channels.
-          </li>
-        </ul>
+        <pre>
+<code>- name: titan-pipelines
+  rate: 100/s
+</code>
+</pre>
+        <h3>
+          Datastore Index
+        </h3>
+        <p>
+          Add the <code>WorkItem</code> to the <code>index.yaml</code>:
+        </p>
+        <pre>
+<code>- kind: WorkItem
+  properties:
+  - name: work_index
+  - name: created_on
+</code>
+</pre>
       </section>
     </div>
     <div class="outer" id="footer_wrap">

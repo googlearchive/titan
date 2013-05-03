@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Mixins - Titan Files - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,7 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; <a href="/titan/files/">Titan Files</a> &gt; Mixins
         </div>
         <hr>
         <div class="c1">
@@ -43,62 +43,101 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
           things over and update docs.</strong> 2013-05-02
         </div>
+        <h1>
+          Titan Files: Mixins
+        </h1>
         <p>
-          <em>Titan for App Engine</em> is a suite of powerful tools that helps make building
-          Python apps on App Engine even easier.
+          Titan Files mixins are subclasses used to extend or change the behavior of the files.File
+          object. The term "mixin" is used broadly here to mean a plugin to Titan Files, which
+          usually includes an actual mixin subclass.
+        </p>
+        <h2>
+          Writing a custom mixin
+        </h2>
+        <p>
+          To use mixins, you must:
+        </p>
+        <pre>
+<code># Create a subclass of files.File (this is the mixin).
+# Register the mixin using `files.register_file_mixins()` from your app's `appengine_config.py`.
+</code>
+</pre>
+        <p>
+          For example, let's make a simple mixin which validates JSON files and stops you from ever
+          saving invalid JSON in a Titan file.
         </p>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          In your project, make <code>json_validator_mixin.py</code>:
         </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
-            <ul>
-              <li>
-                <strong><a href="/titan/files/versions.html">Titan Versions</a></strong>: a
-                lightweight version control system for atomically updating files.
-              </li>
-              <li>
-                <strong><a href="/titan/files/microversions.html">Titan Microversions</a></strong>:
-                automatic versioning of every file change.
-              </li>
-              <li>
-                <strong><a href="/titan/files/mixins.html">Mixins</a></strong>: simple plugins that
-                let you extend and customize Titan Files.
-              </li>
-            </ul>
-          </li>
-        </ul>
+        <pre>
+<code>import json
+from titan import files
+from titan.common import utils
+
+class JsonValidatorMixin(files.File):
+
+  @classmethod
+  def should_apply_mixin(cls, **kwargs):
+    return kwargs['path'].endswith('.json')
+
+  @utils.compose_method_kwargs
+  def write(self, **kwargs):
+    content = kwargs['content']
+    if content is not None:
+      json.loads(content)  # This will error on invalid JSON.
+
+    # If the JSON is valid, continue through the parent classes normally.
+    return super(JsonValidatorMixin, self).write(**kwargs)
+</code>
+</pre>
         <p>
-          Also includes libraries which are built on Titan Files:
+          Now in your appengine_config.py, register the mixin:
         </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
-          </li>
-          <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
-          </li>
-          <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
-          </li>
-          <li>
-            <strong>Titan Users API</strong>: A convenience wrapper around the App Engine Users
-            API.
-          </li>
-          <li>
-            <strong>Titan Tasks</strong>: Granular, realtime feedback over deferred task batches.
-          </li>
-          <li>
-            <strong>Titan Channel API</strong>: Centralized, multi-subscriber broadcast channels.
-          </li>
-        </ul>
+        <pre>
+<code>from titan import files
+import json_validator_mixin
+
+files.register_file_mixins([json_validator_mixin.JsonValidatorMixin])
+</code>
+</pre>
+        <p>
+          Now just make the file normally:
+        </p>
+        <pre>
+<code>&gt;&gt;&gt; files.File('/foo.txt').write('some-unaffected-file')
+
+&gt;&gt;&gt; files.File('/foo.json').write('[invalid-json]')
+Traceback (most recent call last):
+...
+ValueError: No JSON object could be decoded
+
+&gt;&gt;&gt; files.File('/foo.json').write('{"valid": "json"}')
+&gt;&gt;&gt; files.File('/foo.json').content
+'{"valid": "json"}'
+</code>
+</pre>
+        <p>
+          Simple as that. You will now get an error when attempting to write a .json file with
+          invalid JSON. In this case, the mixin prevents the contents from ever being written,
+          stopping potential errors before the data is ever stored.
+        </p>
+        <h3>
+          Don't use mixins directly
+        </h3>
+        <p>
+          You should continue to create File objects normally using
+          <code>files.File('/path')</code> and not by initing the mixin classes directly.
+        </p>
+        <p>
+          <code>files.File</code> objects are made in many places outside of your control—internal
+          to the <code>File</code> class itself, internal to other mixins, internal to the HTTP
+          handlers, etc. Once you have the mixin registered, an internal file factory will
+          dynamically apply the mixin when creating any <code>files.File</code> object. This is so
+          that the mixin can consistently and correctly affect all instantiations of
+          <code>files.File</code> objects within your entire app, including places you don't
+          directly control. Use a subclass and a more-specific <code>should_apply_mixin</code>
+          method to customize when the mixin should be applied.
+        </p>
       </section>
     </div>
     <div class="outer" id="footer_wrap">

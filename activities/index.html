@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Titan Activities - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,7 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; Titan Activities
         </div>
         <hr>
         <div class="c1">
@@ -43,60 +43,117 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
           things over and update docs.</strong> 2013-05-02
         </div>
+        <h1>
+          Titan Activities
+        </h1>
+        <h2>
+          Introduction
+        </h2>
         <p>
-          <em>Titan for App Engine</em> is a suite of powerful tools that helps make building
-          Python apps on App Engine even easier.
+          Titan Activities is a system for logging user or system-level activities.
         </p>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          <em>NOTE: Titan Activities is currently in active development.</em>
+        </p>
+        <h2>
+          Installation
+        </h2>
+        <p>
+          See the <a href="/titan/install.html">Titan installation guide</a>.
+        </p>
+        <h2>
+          Setup
+        </h2>
+        <h3>
+          Task Queue
+        </h3>
+        <p>
+          Add the activities queue to your <code>queue.yaml</code>:
+        </p>
+        <pre>
+<code>- name: titan-activities
+  rate: 100/s
+</code>
+</pre>
+        <h3>
+          End of request processing
+        </h3>
+        <p>
+          Titan Activities is optimized to not make any RPCs during a request, so that only one RPC
+          needs to be made at the end of the request. To do this, create a custom WSGI wrapper and
+          call <code>activities.process_activity_loggers()</code> after the request has processed.
+        </p>
+        <p>
+          Here is an example webapp2 WSGI application that applies this middleware:
+        </p>
+        <pre>
+<code>import webapp2
+from titan import activities
+from titan import stats
+
+class RouterWithMiddleware(webapp2.Router):
+  """Router with custom middleware."""
+
+  def dispatch(self, request, response):
+    """Main routing method called by every request."""
+    try:
+      result = super(RouterWithMiddleware, self).default_dispatcher(request, response)
+    finally:
+      # Post-request processing:
+      try:
+        activities.process_activity_loggers()
+      except:
+        logging.exception('Unable to process stored activities!')
+    return result
+
+class WSGIApplicationWithMiddleware(webapp2.WSGIApplication):
+  router_class = RouterWithMiddleware
+
+application = WSGIApplicationWithMiddleware([('/.*', handlers.MainHandler)], debug=False)
+</code>
+</pre>
+        <h2>
+          Usage
+        </h2>
+        <p>
+          Here is an example of logging an activity every time page is created:
+        </p>
+        <pre>
+<code>from titan import activities
+
+def create_page():
+  # Logic for creating a new page...
+
+  # Log the activity after the page is created successfully.
+  activities.log('page.create')
+</code>
+</pre>
+        <h2>
+          Timeline
+        </h2>
+        <p>
+          Every time a an activity is logged, the following takes place:
         </p>
         <ul>
           <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
+            <code>activities.log(key)</code>
             <ul>
-              <li>
-                <strong><a href="/titan/files/versions.html">Titan Versions</a></strong>: a
-                lightweight version control system for atomically updating files.
+              <li>Stores an <code>Activity</code> temporarily in the <code>os.environ</code>.
               </li>
-              <li>
-                <strong><a href="/titan/files/microversions.html">Titan Microversions</a></strong>:
-                automatic versioning of every file change.
-              </li>
-              <li>
-                <strong><a href="/titan/files/mixins.html">Mixins</a></strong>: simple plugins that
-                let you extend and customize Titan Files.
+              <li>If the log was called inside of an AppEngine Task it will process the activity
+              right away since it is not a normal serving request.
               </li>
             </ul>
           </li>
-        </ul>
-        <p>
-          Also includes libraries which are built on Titan Files:
-        </p>
-        <ul>
-          <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
+          <li>End of request aggregation.
+            <ul>
+              <li>At the end of the request the <code>process_activity_loggers</code> from collects
+              all the activities from the request and defers them.
+              </li>
+            </ul>
           </li>
-          <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
-          </li>
-          <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
-          </li>
-          <li>
-            <strong>Titan Users API</strong>: A convenience wrapper around the App Engine Users
-            API.
-          </li>
-          <li>
-            <strong>Titan Tasks</strong>: Granular, realtime feedback over deferred task batches.
-          </li>
-          <li>
-            <strong>Titan Channel API</strong>: Centralized, multi-subscriber broadcast channels.
+          <li>The defered activities are processed and the activities are written to <a href=
+          "/titan/files/">Titan Files</a>
           </li>
         </ul>
       </section>
