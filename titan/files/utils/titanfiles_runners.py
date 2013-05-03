@@ -89,15 +89,16 @@ class BaseRunnerWithVersions(BaseRunner):
       sys.exit('Commit aborted.')
 
     start = time.time()
-    remote_vcs = self.vcs_factory.MakeRemoteVersionControlService()
-    staging_changeset = self.vcs_factory.MakeRemoteChangeset(num=changeset_num)
+    remote_vcs = self.vcs_factory.make_remote_vcs()
+    staging_changeset = self.vcs_factory.new_staging_changeset(
+        num=changeset_num)
 
     if manifest:
       # We have full knowledge of the files uploaded to a changeset, associate
       # those files to staging_changeset to ensure a strong consistency commit.
       for path in manifest:
         assert not path.startswith('/_titan/ver/')
-        remote_file = self.remote_file_factory.MakeRemoteFile(path)
+        remote_file = self.remote_file_factory.make_remote_file(path)
         staging_changeset.AssociateFile(remote_file)
       staging_changeset.finalize_associated_files()
 
@@ -157,9 +158,9 @@ class UploadRunner(BaseRunnerWithVersions):
     file_kwargs = {}
     changeset_num = None
     if changeset == 'new':
-      self.vcs_factory.ValidateClientAuth()
-      vcs = self.vcs_factory.MakeRemoteVersionControlService()
-      staging_changeset = vcs.NewStagingChangeset()
+      self.vcs_factory.validate_client_auth()
+      vcs = self.vcs_factory.make_remote_vcs()
+      staging_changeset = vcs.new_staging_changeset()
       changeset_num = staging_changeset.num
       print 'New staging changeset created: %d' % changeset_num
     elif changeset:
@@ -170,7 +171,7 @@ class UploadRunner(BaseRunnerWithVersions):
                                                        changeset_num)
 
     start = time.time()
-    self.remote_file_factory.ValidateClientAuth()
+    self.remote_file_factory.validate_client_auth()
     future_results = []
     with self.ThreadPoolExecutor() as executor:
       for filename, target_path in filename_to_paths.iteritems():
@@ -219,7 +220,7 @@ class UploadRunner(BaseRunnerWithVersions):
     """Uploads a file."""
     try:
       file_kwargs = file_kwargs or {}
-      remote_file = self.remote_file_factory.MakeRemoteFile(target_path,
+      remote_file = self.remote_file_factory.make_remote_file(target_path,
                                                             **file_kwargs)
       with open(filename) as fp:
         method_kwargs = method_kwargs or {}
@@ -262,7 +263,8 @@ class DownloadRunner(BaseRunner):
 
     path_map = []
     if file_paths:
-      remote_files = self.remote_file_factory.MakeRemoteFiles(paths=file_paths)
+      remote_files = self.remote_file_factory.make_remote_files(
+          paths=file_paths)
       for remote_file in remote_files.itervalues():
         if not remote_file.exists:
           print 'File %s does not exist' % remote_file.path
@@ -272,7 +274,7 @@ class DownloadRunner(BaseRunner):
 
     elif dir_path:
       dir_kwargs = {'recursive': recursive, 'depth': depth}
-      remote_files = self.remote_file_factory.MakeRemoteFiles(paths=[])
+      remote_files = self.remote_file_factory.make_remote_files(paths=[])
       remote_files.list(dir_path, **dir_kwargs)
 
       for remote_file in remote_files.itervalues():
@@ -293,7 +295,7 @@ class DownloadRunner(BaseRunner):
 
     # Start the download.
     start = time.time()
-    self.remote_file_factory.ValidateClientAuth()
+    self.remote_file_factory.validate_client_auth()
     future_results = []
     with self.ThreadPoolExecutor() as executor:
       for remote_file, target in path_map:
@@ -346,7 +348,7 @@ class CommitRunner(BaseRunnerWithVersions):
     Raises:
       TypeError: if both force_commit and manifest are given.
     """
-    self.remote_file_factory.ValidateClientAuth()
+    self.remote_file_factory.validate_client_auth()
     if force_commit and manifest:
       raise TypeError('Exactly one of force_commit or manifest is allowed.')
     if not manifest and not force_commit:

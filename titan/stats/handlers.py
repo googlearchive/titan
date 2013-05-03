@@ -42,16 +42,16 @@ class CounterDataHandler(webapp2.RequestHandler):
       end_date: An ISO-8601 date string.
     Returns:
       JSON response of the aggregate counter data from
-      CountersService.GetCounterData().
+      CountersService.get_counter_data().
     """
-    params = _ParseRequestParams(self.request)
+    params = _parse_request_params(self.request)
     counters_service = stats.CountersService()
-    aggregate_data = counters_service.GetCounterData(
+    aggregate_data = counters_service.get_counter_data(
         counter_names=params['counter_names'],
         start_date=params['start_date'],
         end_date=params['end_date'])
     self.response.headers['Content-Type'] = 'application/json'
-    self.response.out.write(aggregate_data)
+    self.response.out.write(json.dumps(aggregate_data))
 
 class GraphHandler(webapp2.RequestHandler):
   """Handler for graphing counter data."""
@@ -69,9 +69,9 @@ class GraphHandler(webapp2.RequestHandler):
     zero_between = bool(self.request.get('zero_between', False))
     window_size = int(self.request.get('window_size',
                                        stats.DEFAULT_WINDOW_SIZE))
-    params = _ParseRequestParams(self.request)
+    params = _parse_request_params(self.request)
     counters_service = stats.CountersService()
-    aggregate_data = counters_service.GetCounterData(
+    aggregate_data = counters_service.get_counter_data(
         counter_names=params['counter_names'],
         start_date=params['start_date'],
         end_date=params['end_date'])
@@ -82,7 +82,7 @@ class GraphHandler(webapp2.RequestHandler):
         aggregate_data=aggregate_data, window_size=window_size,
         zero_between=zero_between))
 
-def _ParseRequestParams(request):
+def _parse_request_params(request):
   counter_names = request.get_all('counter_name')
   start_date = request.get('start_date')
   end_date = request.get('end_date')

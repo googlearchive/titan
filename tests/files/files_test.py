@@ -662,6 +662,32 @@ class FilesTestCase(testing.BaseTestCase):
     self.assertNotEqual(root_level_different_order,
                         files.OrderedFiles.list('/'))
 
+    # Test files.OrderedFiles.list() with order= kwarg.
+    self.Login('bob@example.com')
+    files.File('/a/middle').write('')
+    self.Login('charlie@example.com')
+    files.File('/a/last').write('')
+    self.Login('alice@example.com')
+    files.File('/a/first').write('')
+    order = [files.FileProperty('created_by')]
+    results = files.OrderedFiles.list('/a', order=order)
+    expected = files.OrderedFiles([
+        '/a/first',
+        '/a/middle',
+        '/a/last',
+    ])
+    self.assertEqual(expected, results)
+
+    # Test reverse order.
+    order = [-files.FileProperty('created_by')]
+    results = files.OrderedFiles.list('/a', order=order)
+    expected = files.OrderedFiles([
+        '/a/last',
+        '/a/middle',
+        '/a/first',
+    ])
+    self.assertEqual(expected, results)
+
     # Error handling.
     self.assertRaises(
         AttributeError, new_root_level.__setitem__, '/qux', files.File('/qux'))

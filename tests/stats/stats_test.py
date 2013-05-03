@@ -24,13 +24,13 @@ from titan.stats import stats
 
 class StatsTestCase(testing.BaseTestCase):
 
-  @mock.patch('titan.stats.stats._GetWindow')
+  @mock.patch('titan.stats.stats._get_window')
   def testCounterBuffer(self, internal_window):
     internal_window.return_value = 0
     page_counter = stats.Counter('page/view')
     widget_counter = stats.Counter('widget/render')
-    page_counter.Increment()
-    page_counter.Increment()
+    page_counter.increment()
+    page_counter.increment()
 
     # Buffered until save.
     def counters_func():
@@ -48,8 +48,8 @@ class StatsTestCase(testing.BaseTestCase):
     }
     self.assertEqual(expected, processor.serialize())
 
-    widget_counter.Offset(15)
-    widget_counter.Offset(-5)
+    widget_counter.offset(15)
+    widget_counter.offset(-5)
     self._log_counters([page_counter, widget_counter], counters_func,
                        processors=processors)
     expected = {
@@ -63,9 +63,9 @@ class StatsTestCase(testing.BaseTestCase):
     }
     self.assertEqual(expected, processor.serialize())
 
-    # Finalize() should be idempotent.
-    self.assertEqual(10, widget_counter.Finalize())
-    self.assertEqual(10, widget_counter.Finalize())
+    # finalize() should be idempotent.
+    self.assertEqual(10, widget_counter.finalize())
+    self.assertEqual(10, widget_counter.finalize())
 
   def testErrors(self):
     # Error handling:
@@ -76,56 +76,56 @@ class StatsTestCase(testing.BaseTestCase):
   def testAverageCounter(self):
     # Aggregation within a request.
     counter = stats.AverageCounter('widget/render/latency')
-    counter.Offset(50)
-    self.assertEqual((50.0, 1), counter.Finalize())
-    counter.Offset(100)
-    self.assertEqual((75.0, 2), counter.Finalize())
-    counter.Offset(150)
-    self.assertEqual((100.0, 3), counter.Finalize())
-    counter.Offset(111)
-    self.assertEqual((102.75, 4), counter.Finalize())
+    counter.offset(50)
+    self.assertEqual((50.0, 1), counter.finalize())
+    counter.offset(100)
+    self.assertEqual((75.0, 2), counter.finalize())
+    counter.offset(150)
+    self.assertEqual((100.0, 3), counter.finalize())
+    counter.offset(111)
+    self.assertEqual((102.75, 4), counter.finalize())
 
     # Aggregation between requests.
     counter = stats.AverageCounter('widget/render/latency')
-    counter.Aggregate((100.0, 3))
-    self.assertEqual((100.0, 3), counter.Finalize())
-    counter.Aggregate((200.0, 3))
-    self.assertEqual((150.0, 6), counter.Finalize())
-    counter.Aggregate((111, 1))
+    counter.aggregate((100.0, 3))
+    self.assertEqual((100.0, 3), counter.finalize())
+    counter.aggregate((200.0, 3))
+    self.assertEqual((150.0, 6), counter.finalize())
+    counter.aggregate((111, 1))
     # ((100 * 3) + (200 * 3) + 111) / 7 = 144.4285714
-    value, weight = counter.Finalize()
+    value, weight = counter.finalize()
     self.assertAlmostEqual(144.4285714, value)
     self.assertEqual(7, weight)
 
     # Aggregation between requests (with empty counter values).
     counter = stats.AverageCounter('widget/render/latency')
-    counter.Aggregate((0, 0))
-    self.assertEqual((0, 0), counter.Finalize())
+    counter.aggregate((0, 0))
+    self.assertEqual((0, 0), counter.finalize())
 
   def testStaticCounter(self):
-    # Offset within a request.
+    # offset within a request.
     counter = stats.StaticCounter('widget/render/views')
-    counter.Offset(50)
-    self.assertEqual(50, counter.Finalize())
-    counter.Offset(100)
-    self.assertEqual(150, counter.Finalize())
+    counter.offset(50)
+    self.assertEqual(50, counter.finalize())
+    counter.offset(100)
+    self.assertEqual(150, counter.finalize())
 
     # Aggregation between requests.
     counter = stats.StaticCounter('widget/render/views')
-    counter.Aggregate(100)
-    self.assertEqual(100, counter.Finalize())
-    counter.Aggregate(200)
-    self.assertEqual(200, counter.Finalize())
+    counter.aggregate(100)
+    self.assertEqual(100, counter.finalize())
+    counter.aggregate(200)
+    self.assertEqual(200, counter.finalize())
 
   def testAverageTimingCounter(self):
     counter = stats.AverageTimingCounter('widget/render/latency')
-    counter.Start()
-    counter.Stop()
-    value, weight = counter.Finalize()
+    counter.start()
+    counter.stop()
+    value, weight = counter.finalize()
     self.assertTrue(isinstance(value, int))
     self.assertEqual(1, weight)
 
-  @mock.patch('titan.stats.stats._GetWindow')
+  @mock.patch('titan.stats.stats._get_window')
   def testAggregatorAndCountersService(self, internal_window):
     # Setup some data.
     def counters_func():
@@ -135,18 +135,18 @@ class StatsTestCase(testing.BaseTestCase):
     internal_window.return_value = 0
 
     # Log an initial set into the 3600 window.
-    page_counter.Offset(10)
-    widget_counter.Offset(20)
+    page_counter.offset(10)
+    widget_counter.offset(20)
     processors, processor = self._log_counters(
         [page_counter, widget_counter], counters_func, timestamp=3600)
     # Save another set of data, an hour later:
-    page_counter.Increment()
-    widget_counter.Increment()
+    page_counter.increment()
+    widget_counter.increment()
     self._log_counters([page_counter, widget_counter], counters_func,
                        processors=processors, timestamp=7200)
     # Save another set of data, a day later:
-    page_counter.Increment()
-    widget_counter.Increment()
+    page_counter.increment()
+    widget_counter.increment()
     self._log_counters([page_counter, widget_counter], counters_func,
                        processors=processors, timestamp=93600)
     expected = {
@@ -189,11 +189,11 @@ class StatsTestCase(testing.BaseTestCase):
         'widget/render': [(3600, 20), (7200, 21), (93600, 22)],
     }
     start_date = datetime.datetime.utcfromtimestamp(0)
-    counter_data = counters_service.GetCounterData(
+    counter_data = counters_service.get_counter_data(
         ['page/view', 'widget/render'], start_date=start_date)
     self.assertEqual(expected, counter_data)
 
-  @mock.patch('titan.stats.stats._GetWindow')
+  @mock.patch('titan.stats.stats._get_window')
   def testAggregatorForStaticCounters(self, internal_window):
     # Setup some data.
     def counters_func():
@@ -204,7 +204,7 @@ class StatsTestCase(testing.BaseTestCase):
 
     # Initial counter with an offset.
     page_counter = stats.StaticCounter('page/view')
-    page_counter.Offset(10)
+    page_counter.offset(10)
     _, processor = self._log_counters([page_counter], counters_func)
     expected = {
         0: {
@@ -220,14 +220,14 @@ class StatsTestCase(testing.BaseTestCase):
     self._finalize_processor(processor)
 
     # Get the data from the CountersService.
-    counter_data = counters_service.GetCounterData(
+    counter_data = counters_service.get_counter_data(
         ['page/view'], start_date=start_date)
     expected = {'page/view': [(0, 10)]}
     self.assertEqual(expected, counter_data)
 
     # New counter, same timeframe.
     page_counter = stats.StaticCounter('page/view')
-    page_counter.Offset(20)
+    page_counter.offset(20)
     _, processor = self._log_counters([page_counter], counters_func)
     expected = {
         0: {
@@ -243,14 +243,14 @@ class StatsTestCase(testing.BaseTestCase):
     self._finalize_processor(processor)
 
     # Get the data from the CountersService.
-    counter_data = counters_service.GetCounterData(
+    counter_data = counters_service.get_counter_data(
         ['page/view'], start_date=start_date)
 
     # The new value should not have aggregated the previous counter data.
     expected = {'page/view': [(0, 20)]}
     self.assertEqual(expected, counter_data)
 
-  @mock.patch('titan.stats.stats._GetWindow')
+  @mock.patch('titan.stats.stats._get_window')
   def testAggregatorCounterUnusedCounterInWindow(self, internal_window):
     # Setup some data.
     def counters_func():
@@ -260,16 +260,16 @@ class StatsTestCase(testing.BaseTestCase):
     internal_window.return_value = 0
 
     # Log an initial set into the 3600 window.
-    page_counter.Offset(10)
+    page_counter.offset(10)
     processors, processor = self._log_counters([page_counter], counters_func)
 
     # Save different counter in a different window:
-    widget_counter.Increment()
+    widget_counter.increment()
     self._log_counters([widget_counter], counters_func,
                        processors=processors, timestamp=3600)
     # Save both counters in a later window:
-    page_counter.Increment()
-    widget_counter.Increment()
+    page_counter.increment()
+    widget_counter.increment()
     self._log_counters([page_counter, widget_counter], counters_func,
                        processors=processors, timestamp=7200)
     expected = {
@@ -308,11 +308,11 @@ class StatsTestCase(testing.BaseTestCase):
         'widget/render': [(3600, 1), (7200, 2)],
     }
     start_date = datetime.datetime.utcfromtimestamp(0)
-    counter_data = counters_service.GetCounterData(
+    counter_data = counters_service.get_counter_data(
         ['page/view', 'widget/render'], start_date=start_date)
     self.assertEqual(expected, counter_data)
 
-  @mock.patch('titan.stats.stats._GetWindow')
+  @mock.patch('titan.stats.stats._get_window')
   def testSaveCountersAggregation(self, internal_window):
     internal_window.return_value = 0
     widget_counter1 = stats.Counter('widget/render')
@@ -325,15 +325,15 @@ class StatsTestCase(testing.BaseTestCase):
       return [stats.Counter('widget/render'),
               stats.AverageCounter('widget/render/latency')]
 
-    # SaveCounters should aggregate counters of the same type.
+    # log_counters should aggregate counters of the same type.
     # This is to make sure that different code paths in a request can
     # independently instantiate counter objects of the same name, and then the
     # intra-request counts will be aggregated together for the task data.
-    widget_counter1.Increment()
-    widget_counter1.Increment()
-    widget_counter2.Increment()
-    latency_counter1.Offset(50)
-    latency_counter2.Offset(100)
+    widget_counter1.increment()
+    widget_counter1.increment()
+    widget_counter2.increment()
+    latency_counter1.offset(50)
+    latency_counter2.offset(100)
     _, processor = self._log_counters(counters, counters_func)
     expected = {
         0: {
@@ -346,21 +346,21 @@ class StatsTestCase(testing.BaseTestCase):
     }
     self.assertEqual(expected, processor.serialize())
 
-  @mock.patch('titan.stats.stats._GetWindow')
+  @mock.patch('titan.stats.stats._get_window')
   def testManualCounterTimestamp(self, internal_window):
     def counters_func():
       return [stats.Counter('widget/render')]
 
     normal_counter = stats.Counter('widget/render')
-    normal_counter.Offset(20)
+    normal_counter.offset(20)
     internal_window.return_value = 10000
 
     old_counter = stats.Counter('widget/render')
-    old_counter.Offset(10)
+    old_counter.offset(10)
     old_counter.timestamp = 3600.0
 
     oldest_counter = stats.Counter('widget/render')
-    oldest_counter.Offset(5)
+    oldest_counter.offset(5)
     oldest_counter.timestamp = 0
 
     counters = [normal_counter, old_counter, oldest_counter]
@@ -387,6 +387,27 @@ class StatsTestCase(testing.BaseTestCase):
         },
     }
     self.assertEqual(expected, processor.serialize())
+
+  def testMakeLogPath(self):
+    test_date = datetime.date(2013, 5, 1)
+
+    # Default date format and filename.
+    counter = stats.Counter('test/counter')
+    self.assertEqual(
+        '/_titan/stats/counters/2013/05/01/test/counter/data-60s.json',
+        stats._make_log_path(test_date, counter))
+
+    # Custom formatted date.
+    counter = stats.Counter('test/counter', date_format='%Y/%m')
+    self.assertEqual(
+        '/_titan/stats/counters/2013/05/test/counter/data-60s.json',
+        stats._make_log_path(test_date, counter))
+
+    # Custom filename.
+    counter = stats.Counter('test/counter', data_filename='my/data.json')
+    self.assertEqual(
+        '/_titan/stats/counters/2013/05/01/test/counter/my/data.json',
+        stats._make_log_path(test_date, counter))
 
   def _log_counters(self, counters, counters_func, processors=None,
                     timestamp=None):

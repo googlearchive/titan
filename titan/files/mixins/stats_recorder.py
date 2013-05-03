@@ -28,20 +28,20 @@ class StatsRecorderMixin(files.File):
     self._stats_latency_counters = {}
     super(StatsRecorderMixin, self).__init__(*args, **kwargs)
 
-  def _StartStatsRecording(self, unique_counter_name):
+  def _start_stats_recording(self, unique_counter_name):
     counter_name = unique_counter_name.name
     latency_counter_name = '%s/latency' % counter_name
     latency_counter = stats.AverageTimingCounter(latency_counter_name)
-    latency_counter.Start()
+    latency_counter.start()
 
     unique_id = hash(unique_counter_name)
     self._stats_latency_counters[unique_id] = latency_counter
     self._stats_invocation_counters[unique_id] = stats.Counter(counter_name)
 
-  def _StopStatsRecording(self, unique_counter_name):
+  def _stop_stats_recording(self, unique_counter_name):
     unique_id = hash(unique_counter_name)
-    self._stats_latency_counters[unique_id].Stop()
-    self._stats_invocation_counters[unique_id].Increment()
+    self._stats_latency_counters[unique_id].stop()
+    self._stats_invocation_counters[unique_id].increment()
 
     counters = [
         self._stats_invocation_counters[unique_id],
@@ -55,43 +55,43 @@ class StatsRecorderMixin(files.File):
       # Only record stats if not loaded.
       return super(StatsRecorderMixin, self)._file
     unique_counter_name = _UniqueCounterName('files/File/load')
-    self._StartStatsRecording(unique_counter_name)
+    self._start_stats_recording(unique_counter_name)
     try:
       return super(StatsRecorderMixin, self)._file
     finally:
-      self._StopStatsRecording(unique_counter_name)
+      self._stop_stats_recording(unique_counter_name)
 
   def write(self, *args, **kwargs):
     unique_counter_name = _UniqueCounterName('files/File/write')
-    self._StartStatsRecording(unique_counter_name)
+    self._start_stats_recording(unique_counter_name)
     try:
       return super(StatsRecorderMixin, self).write(*args, **kwargs)
     finally:
-      self._StopStatsRecording(unique_counter_name)
+      self._stop_stats_recording(unique_counter_name)
 
   def copy_to(self, *args, **kwargs):
     unique_counter_name = _UniqueCounterName('files/File/copy_to')
-    self._StartStatsRecording(unique_counter_name)
+    self._start_stats_recording(unique_counter_name)
     try:
       return super(StatsRecorderMixin, self).copy_to(*args, **kwargs)
     finally:
-      self._StopStatsRecording(unique_counter_name)
+      self._stop_stats_recording(unique_counter_name)
 
   def delete(self, *args, **kwargs):
     unique_counter_name = _UniqueCounterName('files/File/delete')
-    self._StartStatsRecording(unique_counter_name)
+    self._start_stats_recording(unique_counter_name)
     try:
       return super(StatsRecorderMixin, self).delete(*args, **kwargs)
     finally:
-      self._StopStatsRecording(unique_counter_name)
+      self._stop_stats_recording(unique_counter_name)
 
   def serialize(self, *args, **kwargs):
     unique_counter_name = _UniqueCounterName('files/File/serialize')
-    self._StartStatsRecording(unique_counter_name)
+    self._start_stats_recording(unique_counter_name)
     try:
       return super(StatsRecorderMixin, self).serialize(*args, **kwargs)
     finally:
-      self._StopStatsRecording(unique_counter_name)
+      self._stop_stats_recording(unique_counter_name)
 
 class _UniqueCounterName(object):
   """A unique counter name container.

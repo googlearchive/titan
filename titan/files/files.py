@@ -952,7 +952,7 @@ class Files(collections.Mapping):
 
   @classmethod
   def list(cls, dir_path, recursive=False, depth=None, filters=None,
-           limit=None, offset=None, **kwargs):
+           limit=None, offset=None, order=None, **kwargs):
     """Factory method to return a lazy Files mapping for the given dir.
 
     Args:
@@ -960,7 +960,9 @@ class Files(collections.Mapping):
       recursive: Whether to list files recursively.
       depth: If recursive, a positive integer to limit the recursion depth.
           1 is one folder deep, 2 is two folders deep, etc.
-      filters: An iterable of FileProperty objects.
+      filters: An iterable of FileProperty comparisons, for example:
+          [FileProperty('created_by') == 'example@example.com']
+      order: An iterable of FileProperty objects to sort the result set.
       limit: An integer limiting the number of files returned.
       offset: Number of files to offset the query by.
     Raises:
@@ -968,8 +970,9 @@ class Files(collections.Mapping):
     Returns:
       A populated Files mapping.
     """
-    files_query = _create_files_query(dir_path, recursive=recursive, depth=depth,
-                                    filters=filters)
+    files_query = _create_files_query(
+        dir_path, recursive=recursive, depth=depth, filters=filters,
+        order=order)
     # TODO(user): support cursors.
     file_keys = files_query.fetch(limit=limit, offset=offset, keys_only=True)
     titan_files = cls([key.id() for key in file_keys], **kwargs)
@@ -1159,7 +1162,8 @@ def _get_file_entities(titan_files):
     file_ents.append(titan_file._file if titan_file else None)
   return file_ents
 
-def _create_files_query(dir_path, recursive=False, depth=None, filters=None):
+def _create_files_query(dir_path, recursive=False, depth=None, filters=None,
+                        order=None):
   """Creates a ndb.Query object for listing _TitanFile entities."""
   if depth is not None and depth <= 0:
     raise ValueError('depth argument must be a positive integer.')
@@ -1186,6 +1190,8 @@ def _create_files_query(dir_path, recursive=False, depth=None, filters=None):
 
   if filters:
     files_query = files_query.filter(*filters)
+  if order:
+    files_query = files_query.order(*order)
   return files_query
 
 def _delete_blobs(blobs, file_paths):

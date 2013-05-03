@@ -22,13 +22,13 @@ Usage:
 
   # Increment a counter for some particular stat, like a page view:
   page_view_counter = stats.Counter('page/view')
-  page_view_counter.Increment()
+  page_view_counter.increment()
 
   # Or measure the average latency of any arbitrary code block:
   latency_counter = stats.AverageTimingCounter('widget/render/latency')
-  latency_counter.Start()
+  latency_counter.start()
   # ... code block ...
-  latency_counter.Stop()
+  latency_counter.stop()
 
   # Log the counters using Titan Activities.
   stats.log_counters([latency_counter, page_view_counter],
@@ -88,6 +88,7 @@ DEFAULT_WINDOW_SIZE = 60
 STATS_ETA_DELTA = 60
 
 BASE_DIR = '/_titan/stats/counters'
+DATE_FORMAT = '%Y/%m/%d'
 DATA_FILENAME = 'data-%ss.json' % DEFAULT_WINDOW_SIZE
 
 class AbstractBaseCounter(object):
@@ -96,8 +97,11 @@ class AbstractBaseCounter(object):
   # Aggregate existing counter data (if different) instead of overwriting.
   overwrite = False
 
-  def __init__(self, name):
+  def __init__(
+      self, name, date_format=DATE_FORMAT, data_filename=DATA_FILENAME):
     self.name = name
+    self.date_format = date_format
+    self.data_filename = data_filename
     # If this property is changed, the window is not calculated automatically.
     self.timestamp = None
     if ':' in self.name:
@@ -110,11 +114,11 @@ class AbstractBaseCounter(object):
   def __repr__(self):
     return '<%s %s>' % (self.__class__.__name__, self.name)
 
-  def Aggregate(self, value):
-    """Abstract method, must aggregate data together before Finalize."""
+  def aggregate(self, value):
+    """Abstract method, must aggregate data together before finalize."""
     raise NotImplementedError('Subclasses should implement abstract method.')
 
-  def Finalize(self):
+  def finalize(self):
     """Abstract method; must be idempotent and return finalized counter data."""
     raise NotImplementedError('Subclasses should implement abstract method.')
 
@@ -128,18 +132,18 @@ class Counter(AbstractBaseCounter):
   def __repr__(self):
     return '<Counter %s %s>' % (self.name, self._value)
 
-  def Increment(self):
-    """Increment the counter by one."""
+  def increment(self):
+    """increment the counter by one."""
     self._value += 1
 
-  def Offset(self, value):
+  def offset(self, value):
     """Offset the counter by some value."""
     self._value += value
 
-  def Aggregate(self, value):
-    self.Offset(value)
+  def aggregate(self, value):
+    self.offset(value)
 
-  def Finalize(self):
+  def finalize(self):
     return self._value
 
 class AverageCounter(Counter):
@@ -153,13 +157,13 @@ class AverageCounter(Counter):
     super(AverageCounter, self).__init__(*args, **kwargs)
     self._weight = 0
 
-  def Increment(self):
-    self.Aggregate((1, 1))  # (value, weight)
+  def increment(self):
+    self.aggregate((1, 1))  # (value, weight)
 
-  def Offset(self, value):
-    self.Aggregate((value, 1))  # (value, weight)
+  def offset(self, value):
+    self.aggregate((value, 1))  # (value, weight)
 
-  def Aggregate(self, value):
+  def aggregate(self, value):
     """Combine another average counter's values into this counter."""
     # Cumulative moving average:
     # (n*weight(n) + m*weight(m)) / (weight(n) + weight(m))
@@ -176,7 +180,7 @@ class AverageCounter(Counter):
     self._weight += weight
     self._value /= float(self._weight)
 
-  def Finalize(self):
+  def finalize(self):
     return (self._value, self._weight)
 
 class AverageTimingCounter(AverageCounter):
@@ -186,27 +190,27 @@ class AverageTimingCounter(AverageCounter):
 
   Usage:
     timing_counter = AverageTimingCounter('page/render/latency')
-    timing_counter.Start()
+    timing_counter.start()
     ...page render logic...
-    timing_counter.Stop()
+    timing_counter.stop()
   """
 
   def __init__(self, *args, **kwargs):
     super(AverageTimingCounter, self).__init__(*args, **kwargs)
     self._start = None
 
-  def Start(self):
+  def start(self):
     assert self._start is None, 'Counter started again without stopping.'
     self._start = time.time()
 
-  def Stop(self):
+  def stop(self):
     assert self._start is not None, 'Counter stopped without starting.'
-    self.Offset(int((time.time() - self._start) * 1000))
+    self.offset(int((time.time() - self._start) * 1000))
     self._start = None
 
-  def Finalize(self):
+  def finalize(self):
     assert self._start is None, 'Counter finalized without stopping.'
-    value, weight = super(AverageTimingCounter, self).Finalize()
+    value, weight = super(AverageTimingCounter, self).finalize()
     return (int(value), weight)
 
 class StaticCounter(Counter):
@@ -215,14 +219,14 @@ class StaticCounter(Counter):
   # Ignore existing counters in file and overwrite.
   overwrite = True
 
-  def Aggregate(self, value):
+  def aggregate(self, value):
     """Replaces the current value completely rather than offsetting."""
     self._value = value
 
 class CountersService(object):
   """A service class to retrieve permanently stored counter stats."""
 
-  def GetCounterData(self, counter_names, start_date=None, end_date=None):
+  def get_counter_data(self, counter_names, start_date=None, end_date=None):
     """Get a date range of stored counter data.
 
     Args:
@@ -253,29 +257,26 @@ class CountersService(object):
         end_date.year, end_date.month, end_date.day)
 
     # Get all files within the range.
-    titan_files = files.Files([])
+    final_counter_data = {}
     for counter_name in counter_names:
       filters = [
           files.FileProperty('stats_counter_name') == counter_name,
           files.FileProperty('stats_date') >= start_date,
           files.FileProperty('stats_date') <= end_date,
       ]
-      new_titan_files = files.Files.list(BASE_DIR, recursive=True,
-                                         filters=filters, _internal=True)
-      titan_files.update(new_titan_files)
+      titan_files = files.Files.list(BASE_DIR, recursive=True,
+                                     filters=filters, _internal=True)
 
-    final_counter_data = {}
-    for titan_file in titan_files.itervalues():
-      # Since JSON only represents lists, convert each inner-list back
-      # to a two-tuple with the proper types.
-      raw_data = json.loads(titan_file.content)
-      counter_data = []
-      for data in raw_data:
-        counter_data.append(tuple(data))
-      _, counter_name = _ParseLogPath(titan_file.path)
-      if not counter_name in final_counter_data:
-        final_counter_data[counter_name] = []
-      final_counter_data[counter_name].extend(counter_data)
+      for titan_file in titan_files.itervalues():
+        # Since JSON only represents lists, convert each inner-list back
+        # to a two-tuple with the proper types.
+        raw_data = json.loads(titan_file.content)
+        counter_data = []
+        for data in raw_data:
+          counter_data.append(tuple(data))
+        if not counter_name in final_counter_data:
+          final_counter_data[counter_name] = []
+        final_counter_data[counter_name].extend(counter_data)
 
     # Keep the counter data sorted by window.
     for counter_data in final_counter_data.itervalues():
@@ -352,7 +353,7 @@ class _BatchProcessor(activities.BaseProcessor):
       # Aggregate the counter data into each counter object.
       for counter_name, counter_value in data['counters'].iteritems():
         try:
-          self.window_counters[window][counter_name].Aggregate(counter_value)
+          self.window_counters[window][counter_name].aggregate(counter_value)
           self.window_counters_available[window].add(counter_name)
         except KeyError:
           logging.error('Counter named "%s" is not configured! Discarding '
@@ -377,7 +378,7 @@ class _BatchProcessor(activities.BaseProcessor):
       window = aggregate_data['window']
       window_datetime = datetime.datetime.utcfromtimestamp(window)
       for counter_name, counter in aggregate_data['counters'].iteritems():
-        path = _MakeLogPath(window_datetime, counter_name)
+        path = _make_log_path(window_datetime, counter)
         if path not in window_files:
           titan_file = files.File(path, _internal=True)
           content = []
@@ -399,17 +400,17 @@ class _BatchProcessor(activities.BaseProcessor):
           # If we didn't find the window add it as a new counter.
           if old_window > window and not window_exists:
             window_exists = True
-            window_files[path]['content'].append((window, counter.Finalize()))
+            window_files[path]['content'].append((window, counter.finalize()))
           # If the data is the same ignore, otherwise add old data to new.
           if old_window == window:
             window_exists = True
-            if old_value != counter.Finalize():
+            if old_value != counter.finalize():
               if not counter.overwrite:
-                counter.Aggregate(old_value)
-              old_value = counter.Finalize()
+                counter.aggregate(old_value)
+              old_value = counter.finalize()
           window_files[path]['content'].append((old_window, old_value))
         if not window_exists:
-          window_files[path]['content'].append((window, counter.Finalize()))
+          window_files[path]['content'].append((window, counter.finalize()))
 
         # Keep the data sorted for update efficiency.
         window_files[path]['content'].sort(key=lambda tup: tup[0])
@@ -438,7 +439,7 @@ class _RequestProcessor(activities.BaseProcessor):
     self.final_counters = []
     self.names_to_counters = {}
     self.window_counter_data = {}
-    self.default_window = _GetWindow(time.time())
+    self.default_window = _get_window(time.time())
 
   @property
   def batch_processor(self):
@@ -463,7 +464,7 @@ class _RequestProcessor(activities.BaseProcessor):
           self.final_counters.append(counter)
           continue
         # Counter name already seen; combine data into the previous counter.
-        self.names_to_counters[counter.name].Aggregate(counter.Finalize())
+        self.names_to_counters[counter.name].aggregate(counter.finalize())
 
     # Break the counters up into windows of time.
     for counter in self.final_counters:
@@ -476,7 +477,7 @@ class _RequestProcessor(activities.BaseProcessor):
       if window not in self.window_counter_data:
         self.window_counter_data[window] = {'window': window, 'counters': {}}
       self.window_counter_data[window]['counters'][counter.name] = (
-          counter.Finalize())
+          counter.finalize())
 
   def serialize(self):
     return self.window_counter_data
@@ -492,20 +493,13 @@ def log_counters(counters, counters_func):
     activities.process_activity_loggers()
   return activity
 
-def _GetWindow(timestamp, window_size=DEFAULT_WINDOW_SIZE):
+def _get_window(timestamp, window_size=DEFAULT_WINDOW_SIZE):
   """Get the aggregation window for the given unix time and window size."""
   return int(window_size * round(float(timestamp) / window_size))
 
-def _MakeLogPath(date, counter_name):
+def _make_log_path(date, counter):
   # Make a path like:
-  # /_titan/activities/stats/counters/2015/05/15/page/view/data-10s.json
-  path = utils.safe_join(
-      BASE_DIR, str(date.year), str(date.month), str(date.day),
-      counter_name, DATA_FILENAME)
-  return path
-
-def _ParseLogPath(path):
-  parts = path.split('/')
-  date = datetime.date(int(parts[4]), int(parts[5]), int(parts[6]))
-  counter_name = '/'.join(parts[7:-1])
-  return date, counter_name
+  # /_titan/activities/stats/counters/2015/05/15/page/view/data-60s.json
+  formatted_date = date.strftime(counter.date_format)
+  return utils.safe_join(
+      BASE_DIR, formatted_date, counter.name, counter.data_filename)
