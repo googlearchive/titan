@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Microversions - Titan Files - Titan for App Engine
+      Developer's Guide - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,8 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          <a href="/titan/">Titan</a> &gt; <a href="/titan/files/">Titan Files</a> &gt;
-          Microversions
+          <a href="/titan/">Titan</a> &gt; Developer's Guide
         </div>
         <hr>
         <div class="c1">
@@ -45,119 +44,75 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           things over and update docs.</strong> 2013-05-02
         </div>
         <h1>
-          Titan Files: Microversions
+          Titan: Developer's Guide
         </h1>
         <p>
-          Titan Microversions is a simple mixin that automatically keeps revision history of every
-          file change. This mixin relies on the Titan Versions version control service.
+          We welcome contributions! Here is some help for getting the test suite running, and feel
+          free to <a href="https://github.com/googlecloudplatform/titan/issues">open an issue</a>.
         </p>
-        <p>
-          How it works:
-        </p>
-        <ul>
-          <li>File modifications go to the root filesystem tree like normal, so they're available
-          immediately for reads.
-          </li>
-          <li>In the background, the change is added to a pull queue.
-          </li>
-          <li>A cron runs continuously every minute (with exponential backoff) to consume
-          microversions. A new changeset is created, file changes are leased from the pull queue
-          and written to the changeset, and then the changeset is comitted.
-          </li>
-        </ul>
         <h2>
           Setup
         </h2>
         <p>
-          To enable this service, your base <code>appengine_config.py</code> will need to register
-          the mixins:
+          Make sure to install the following packages:
         </p>
         <pre>
-<code>from titan import files
-from titan.files.mixins import microversions
-from titan.files.mixins import versions
-
-files.register_file_mixins([
-    microversions.MicroversioningMixin,
-    versions.FileVersioningMixin,
-])
-</code>
-</pre>
-        <p>
-          Define a custom queue in your <code>queue.yaml</code>:
-        </p>
-        <pre>
-<code>queue:
-- name: titan-microversions
-  mode: pull
-</code>
-</pre>
-        <p>
-          And add a cron job to your <code>cron.yaml</code>:
-        </p>
-        <pre>
-<code>cron:
-- description: Continuously process and save microversions.
-  url: /_titan/files/microversions/processdata
-  schedule: every 1 minutes
-</code>
-</pre>
-        <p>
-          When running the dev_appserver, your <code>index.yaml</code> will also get updated with
-          the following index:
-        </p>
-        <pre>
-<code>indexes:
-- kind: _FileVersion
-  properties:
-  - name: path
-  - name: created
-    direction: desc
+<code>$ pip install futures python-gflags mox poster unittest2 webtest
 </code>
 </pre>
         <h2>
-          Usage
+          Running the test suite
         </h2>
         <p>
-          It's easy: all file changes will automatically be versioned in the background when you
-          use the normal API.
+          Make sure the App Engine SDK is on your <code>PYTHONPATH</code>, then execute
+          <code>runtests.py</code>.
+        </p>
+        <p>
+          For example, if your SDK was in <code>~/google_appengine/</code>, then do:
         </p>
         <pre>
-<code># Just make changes normally...
-titan_file = files.File('/new/file.html')
-titan_file.write('content')
-titan_file.write('new content')
-titan_file.delete()
+<code>$ export PYTHONPATH=~/google_appengine/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/django-1.3/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/fancy_urllib/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/httplib2/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/jinja2-2.6/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/protorpc/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/webapp2-2.3/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/webob-1.1.1/:$PYTHONPATH
+$ export PYTHONPATH=~/google_appengine/lib/yaml/lib/:$PYTHONPATH
+$ ./tests/runtests.py
+Running tests...
+SUCCESS: activities/activities_test.py
+SUCCESS: activities/services_test.py
+SUCCESS: channel/channel_test.py
+SUCCESS: common/colors_test.py
+SUCCESS: common/handlers_test.py
+SUCCESS: common/sharded_cache_test.py
+SUCCESS: common/strong_counters_test.py
+SUCCESS: common/titan_rpc_test.py
+SUCCESS: common/utils_test.py
+SUCCESS: endpoints/endpoints_test.py
+SUCCESS: files/dirs_test.py
+SUCCESS: files/files_client_test.py
+SUCCESS: files/files_test.py
+SUCCESS: files/handlers_test.py
+SUCCESS: files/mixins/json_mixin_test.py
+SUCCESS: files/mixins/microversions_handlers_test.py
+SUCCESS: files/mixins/microversions_test.py
+SUCCESS: files/mixins/stats_recorder_test.py
+SUCCESS: files/mixins/versions_client_test.py
+SUCCESS: files/mixins/versions_test.py
+SUCCESS: files/mixins/versions_views_test.py
+SUCCESS: pipelines/pipelines_test.py
+SUCCESS: stats/handlers_test.py
+SUCCESS: stats/stats_test.py
+SUCCESS: tasks/deferred_test.py
+SUCCESS: tasks/handlers_test.py
+SUCCESS: tasks/tasks_test.py
+SUCCESS: users/users_test.py
+All tests were successful.
 </code>
 </pre>
-        <p>
-          After the consumer processes the changes (usually very quickly), the history will be
-          up-to-date:
-        </p>
-        <pre>
-<code>from titan.files.mixins import versions
-
-&gt;&gt;&gt; vcs = versions.VersionControlService()
-&gt;&gt;&gt; file_versions = vcs.get_file_versions('/new/file.html')
-&gt;&gt;&gt; len(file_versions)
-3
-&gt;&gt;&gt; for file_version in file_versions:
-...   print file_version.status
-...
-'deleted'
-'edited'
-'created'
-
-&gt;&gt;&gt; print file.File('/new/file.html', changeset=file_versions[1].content_changeset).content
-'new content'
-&gt;&gt;&gt; print file.File('/new/file.html', changeset=file_versions[2].content_changeset).content
-'content'
-</code>
-</pre>
-        <p>
-          See <a href="/titan/files/versions.html">Titan Versions</a> for more information on the
-          file revision API.
-        </p>
       </section>
     </div>
     <div class="outer" id="footer_wrap">

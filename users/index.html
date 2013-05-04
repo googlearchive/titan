@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Microversions - Titan Files - Titan for App Engine
+      Titan Users - Titan for App Engine
     </title>
     <style>
 div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
@@ -35,8 +35,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          <a href="/titan/">Titan</a> &gt; <a href="/titan/files/">Titan Files</a> &gt;
-          Microversions
+          <a href="/titan/">Titan</a> &gt; Titan Users
         </div>
         <hr>
         <div class="c1">
@@ -45,118 +44,83 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           things over and update docs.</strong> 2013-05-02
         </div>
         <h1>
-          Titan Files: Microversions
+          Titan Users
         </h1>
         <p>
-          Titan Microversions is a simple mixin that automatically keeps revision history of every
-          file change. This mixin relies on the Titan Versions version control service.
+          Titan Users is a convenience wrapper that unifies and extends the <a href=
+          "https://developers.google.com/appengine/docs/python/users/">App Engine Users API</a> and
+          the <a href="https://developers.google.com/appengine/docs/python/oauth/overview">OAuth
+          Users API</a>, saving you the trouble of always checking
+          <code>users.get_current_user()</code> and then <code>oauth.get_current_user()</code>.
         </p>
-        <p>
-          How it works:
-        </p>
-        <ul>
-          <li>File modifications go to the root filesystem tree like normal, so they're available
-          immediately for reads.
-          </li>
-          <li>In the background, the change is added to a pull queue.
-          </li>
-          <li>A cron runs continuously every minute (with exponential backoff) to consume
-          microversions. A new changeset is created, file changes are leased from the pull queue
-          and written to the changeset, and then the changeset is comitted.
-          </li>
-        </ul>
-        <h2>
-          Setup
-        </h2>
-        <p>
-          To enable this service, your base <code>appengine_config.py</code> will need to register
-          the mixins:
-        </p>
-        <pre>
-<code>from titan import files
-from titan.files.mixins import microversions
-from titan.files.mixins import versions
-
-files.register_file_mixins([
-    microversions.MicroversioningMixin,
-    versions.FileVersioningMixin,
-])
-</code>
-</pre>
-        <p>
-          Define a custom queue in your <code>queue.yaml</code>:
-        </p>
-        <pre>
-<code>queue:
-- name: titan-microversions
-  mode: pull
-</code>
-</pre>
-        <p>
-          And add a cron job to your <code>cron.yaml</code>:
-        </p>
-        <pre>
-<code>cron:
-- description: Continuously process and save microversions.
-  url: /_titan/files/microversions/processdata
-  schedule: every 1 minutes
-</code>
-</pre>
-        <p>
-          When running the dev_appserver, your <code>index.yaml</code> will also get updated with
-          the following index:
-        </p>
-        <pre>
-<code>indexes:
-- kind: _FileVersion
-  properties:
-  - name: path
-  - name: created
-    direction: desc
-</code>
-</pre>
         <h2>
           Usage
         </h2>
-        <p>
-          It's easy: all file changes will automatically be versioned in the background when you
-          use the normal API.
-        </p>
         <pre>
-<code># Just make changes normally...
-titan_file = files.File('/new/file.html')
-titan_file.write('content')
-titan_file.write('new content')
-titan_file.delete()
+<code>from titan import users
+
+user = users.get_current_user()  # --&gt; users.TitanUser object or None.
 </code>
 </pre>
         <p>
-          After the consumer processes the changes (usually very quickly), the history will be
-          up-to-date:
+          The <code>get_current_user()</code> function checks to see if a user is logged in via the
+          normal App Engine Users API and, if not, checks the OAuth API.
+        </p>
+        <p>
+          <code>TitanUser</code> objects have the following properties:
         </p>
         <pre>
-<code>from titan.files.mixins import versions
-
-&gt;&gt;&gt; vcs = versions.VersionControlService()
-&gt;&gt;&gt; file_versions = vcs.get_file_versions('/new/file.html')
-&gt;&gt;&gt; len(file_versions)
-3
-&gt;&gt;&gt; for file_version in file_versions:
-...   print file_version.status
-...
-'deleted'
-'edited'
-'created'
-
-&gt;&gt;&gt; print file.File('/new/file.html', changeset=file_versions[1].content_changeset).content
-'new content'
-&gt;&gt;&gt; print file.File('/new/file.html', changeset=file_versions[2].content_changeset).content
-'content'
+<code>user.email          # Email address.
+user.organization   # Organization (the Google Apps domain, or the domain of the email address).
+user.is_admin       # Boolean of if the user is an admin.
+user.user_id        # Obfuscated unique user ID, only available for users logged in via the Users API.
 </code>
 </pre>
         <p>
-          See <a href="/titan/files/versions.html">Titan Versions</a> for more information on the
-          file revision API.
+          You can also recreate the users later for passing around your app:
+        </p>
+        <pre>
+<code>user = users.TitanUser('example@example.com')
+</code>
+</pre>
+        <p>
+          By default, Titan Users uses the
+          <code>https://www.googleapis.com/auth/userinfo.email</code> OAuth scope. You can
+          customize this by calling
+          <code>get_current_user(oauth_scope='https://example.com/oauthscope')</code>.
+        </p>
+        <h2>
+          TitanUserProperty
+        </h2>
+        <p>
+          Titan Users also provides a <code>users.TitanUserProperty</code> which is similar to
+          <code>ndb.UserProperty</code>, but internally uses a string of the email address as the
+          canonical unique identifier. This avoids some <a href=
+          "https://developers.google.com/appengine/docs/python/users/userobjects#Using_User_Values_With_the_Datastore">
+          historical problems</a> with the behavior of DB and NDB's UserProperty, which sometimes
+          uses the email address and sometimes uses [email + user_id] as the model key, which
+          complicates indexing and querying.
+        </p>
+        <pre>
+<code>class MyModel(ndb.Model):
+  created_by = users.TitanUserProperty()
+</code>
+</pre>
+        <p>
+          <code>users.TitanUserProperty</code> is backwards-compatible with entities that were
+          previously stored as <code>db.UserProperty</code>, so it is safe to change the property
+          type directly.
+        </p>
+        <h2>
+          Important security note
+        </h2>
+        <p>
+          If you use <code>login: required</code> or <code>login: admin</code> in your app.yaml,
+          those handlers will be unable to pass through OAuth users (OAuth users will always be
+          served a 302 redirect to login). <strong>You must not require login in app.yaml for OAuth
+          users to work</strong>, however this is a potentially large security risk for your app.
+          Make sure you understand the consequences of doing so—and how to wrap your WSGI
+          application at the highest level to redirect unauthenticated users.
         </p>
       </section>
     </div>

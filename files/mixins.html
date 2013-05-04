@@ -39,7 +39,7 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
         </div>
         <hr>
         <div class="c1">
-          <strong>NOTE: We're moving to <a href=
+          <strong>We're moving to <a href=
           "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
           things over and update docs.</strong> 2013-05-02
         </div>
@@ -57,11 +57,13 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
         <p>
           To use mixins, you must:
         </p>
-        <pre>
-<code># Create a subclass of files.File (this is the mixin).
-# Register the mixin using `files.register_file_mixins()` from your app's `appengine_config.py`.
-</code>
-</pre>
+        <ol>
+          <li>Create a subclass of files.File (this is the mixin).
+          </li>
+          <li>Register the mixin using <code>files.register_file_mixins()</code> from your app's
+          <code>appengine_config.py</code>.
+          </li>
+        </ol>
         <p>
           For example, let's make a simple mixin which validates JSON files and stops you from ever
           saving invalid JSON in a Titan file.
