@@ -130,14 +130,11 @@ user.user_id        # Obfuscated unique user ID, only available for users logged
           © Google - <a href="https://github.com/GoogleCloudPlatform">GoogleCloudPlatform</a>
         </p>
       </footer>
-    </div><script>
-var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
-      document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
-    </script> <script>
-try {
-        var pageTracker = _gat._getTracker("UA-24973566-1");
-      pageTracker._trackPageview();
-      } catch(err) {}
+    </div><script src="//www.google.com/js/gweb/analytics/autotrack.js">
+</script> <script>
+new gweb.analytics.AutoTrack({
+      profile: 'UA-24973566-1'
+    });
     </script> <script>
 (function(){
       var h=this;

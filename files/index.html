@@ -356,6 +356,10 @@ titan_file.md5_hash     # Pre-computed md5_hash of the file contents.
 titan_file.meta         # Metadata object.
 </code>
 </pre>
+        <p>
+          <code>File</code> objects are lazily evaluated by default—this means that no RPCs are
+          made until a method or property on the object is accessed.
+        </p>
         <h2>
           Client interfaces to the HTTP API
         </h2>
@@ -505,14 +509,11 @@ remote_file.serialize()
           © Google - <a href="https://github.com/GoogleCloudPlatform">GoogleCloudPlatform</a>
         </p>
       </footer>
-    </div><script>
-var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
-      document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
-    </script> <script>
-try {
-        var pageTracker = _gat._getTracker("UA-24973566-1");
-      pageTracker._trackPageview();
-      } catch(err) {}
+    </div><script src="//www.google.com/js/gweb/analytics/autotrack.js">
+</script> <script>
+new gweb.analytics.AutoTrack({
+      profile: 'UA-24973566-1'
+    });
     </script> <script>
 (function(){
       var h=this;
