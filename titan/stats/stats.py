@@ -38,6 +38,17 @@ Usage:
   # (this should happen at the absolute end of a request).
   activities.process_activity_loggers()
 
+Usage:
+  # Use a decorator to time a method.
+  @stats.AverageTime('page/render')
+  def render_page():
+    # Perform page rendering...
+
+  # Use a decorator to count a method.
+  @stats.Count('file/upload')
+  def download_file():
+    # Perform file upload...
+
 Internal design and terminology:
   - "Window" or "aggregation window" used below is a unix timestamp rounded to
     some number of seconds. Each window can be thought of as a bucket of time
@@ -55,6 +66,7 @@ Internal design and terminology:
 """
 
 import datetime
+import functools
 import json
 import logging
 import os
@@ -71,10 +83,12 @@ __all__ = [
     'DATA_FILENAME',
     # Classes.
     'AbstractBaseCounter',
+    'AbstractStatDecorator',
+    'Count',
     'Counter',
     'AverageCounter',
-    'AverageCounter',
     'StaticCounter',
+    'AverageTime',
     'AverageTimingCounter',
     'CountersService',
     'StatsActivity',
@@ -222,6 +236,65 @@ class StaticCounter(Counter):
   def aggregate(self, value):
     """Replaces the current value completely rather than offsetting."""
     self._value = value
+
+class AbstractStatDecorator(object):
+  """Abstract base class for stat decorators."""
+
+  def __init__(self, counter_name):
+    self._counter_name = counter_name
+    self._counter = self._make_counters()[0]
+    log_counters([self._counter], counters_func=self._make_counters)
+
+  def _make_counters(self):
+    raise NotImplementedError
+
+  def __call__(self, func):
+    raise NotImplementedError
+
+class AverageTime(AbstractStatDecorator):
+  """Decorator for timing a function call.
+
+  Uses the AverageTimingCounter to start and stop before and after each call.
+
+  Usage:
+    @AverageTimer('page/render')
+    def render_page():
+      # Render the page...
+  """
+
+  def _make_counters(self):
+    return [AverageTimingCounter(self._counter_name)]
+
+  def __call__(self, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      self._counter.start()
+      result = func(*args, **kwargs)
+      self._counter.stop()
+      return result
+    return wrapper
+
+class Count(AbstractStatDecorator):
+  """Decorator for counting a function call.
+
+  Uses the Counter to increment with each function call.
+
+  Usage:
+    @Count('file/upload')
+    def upload_file():
+      # Upload a file...
+  """
+
+  def _make_counters(self):
+    return [Counter(self._counter_name)]
+
+  def __call__(self, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      # Increment before the function call in case the function errors.
+      self._counter.increment()
+      return func(*args, **kwargs)
+    return wrapper
 
 class CountersService(object):
   """A service class to retrieve permanently stored counter stats."""

@@ -55,6 +55,7 @@ class AppEngineTestCase(basetest.TestCase):
     # Fake an always strongly-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
+    self.datastore_stub = self.testbed.get_stub(testbed.DATASTORE_SERVICE_NAME)
 
     # Save the taskqueue_stub for use in RunDeferredTasks.
     self.testbed.init_taskqueue_stub(_all_queues_valid=True)

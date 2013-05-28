@@ -47,18 +47,21 @@ class HandlersTest(testing.BaseTestCase):
 
   def testChangesetCommitHandler(self):
     mock_vcs = self.mox.CreateMockAnything()
-    self.mox.StubOutWithMock(versions_views.versions, 'VersionControlService')
+    self.mox.StubOutWithMock(
+        versions_views.versions, 'VersionControlService')
 
     # 1st:
     versions_views.versions.VersionControlService().AndReturn(mock_vcs)
 
     # 2nd:
     versions_views.versions.VersionControlService().AndReturn(mock_vcs)
-    mock_vcs.commit(mox.IgnoreArg(), force=True).AndReturn('success')
+    mock_vcs.commit(
+        mox.IgnoreArg(), force=True, save_manifest=True).AndReturn('success')
 
     # 3rd:
     versions_views.versions.VersionControlService().AndReturn(mock_vcs)
-    mock_vcs.commit(mox.IgnoreArg(), force=False).AndReturn('success')
+    mock_vcs.commit(
+        mox.IgnoreArg(), force=False, save_manifest=False).AndReturn('success')
 
     self.mox.ReplayAll()
 
@@ -68,14 +71,16 @@ class HandlersTest(testing.BaseTestCase):
     self.assertEqual(400, response.status_int)
 
     # Force eventually consistent commit.
-    url = '/_titan/files/versions/changeset/commit?changeset=1&force=true'
+    url = ('/_titan/files/versions/changeset/commit'
+           '?changeset=1&force=true&save_manifest=true')
     response = self.app.post(url)
     self.assertEqual(201, response.status_int)
     self.assertEqual('success', json.loads(response.body))
 
     # Use manifest for strongly consistent commit.
     manifest = ['/foo', '/bar']
-    url = '/_titan/files/versions/changeset/commit?changeset=1'
+    url = ('/_titan/files/versions/changeset/commit'
+           '?changeset=1&save_manifest=false')
     params = {'manifest': json.dumps(manifest)}
     response = self.app.post(url, params=params)
     self.assertEqual(201, response.status_int)

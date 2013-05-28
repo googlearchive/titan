@@ -30,8 +30,9 @@ class ChangesetHandler(handlers.BaseHandler):
   def post(self):
     """POST handler."""
     try:
+      namespace = self.request.get('namespace', None)
       vcs = versions.VersionControlService()
-      changeset = vcs.new_staging_changeset()
+      changeset = vcs.new_staging_changeset(namespace=namespace)
       self.write_json_response(changeset)
       self.response.set_status(201)
     except (TypeError, ValueError):
@@ -44,8 +45,11 @@ class ChangesetCommitHandler(handlers.BaseHandler):
   def post(self):
     """POST handler."""
     try:
+      namespace = self.request.get('namespace', None)
+      save_manifest = self.request.get('save_manifest', 'true') == 'true'
       vcs = versions.VersionControlService()
-      staging_changeset = versions.Changeset(int(self.request.get('changeset')))
+      staging_changeset = versions.Changeset(
+          int(self.request.get('changeset')), namespace=namespace)
       force = bool(self.request.get('force', False))
       manifest = self.request.POST.get('manifest', None)
       if not force and not manifest or force and manifest:
@@ -60,11 +64,12 @@ class ChangesetCommitHandler(handlers.BaseHandler):
         manifest = json.loads(manifest)
         for path in manifest:
           titan_file = files.File(path, changeset=staging_changeset,
-                                  _internal=True)
-          staging_changeset.AssociateFile(titan_file)
+                                  namespace=namespace, _internal=True)
+          staging_changeset.associate_file(titan_file)
         staging_changeset.finalize_associated_files()
 
-      final_changeset = vcs.commit(staging_changeset, force=force)
+      final_changeset = vcs.commit(
+          staging_changeset, force=force, save_manifest=save_manifest)
       self.write_json_response(final_changeset)
       self.response.set_status(201)
     except (TypeError, ValueError):

@@ -49,6 +49,18 @@ def SecondsToMicroseconds(seconds):
   return seconds * _MICROSECONDS_PER_SECOND
 
 
+def MicrosecondsToSeconds(microseconds):
+  """Convert microseconds to seconds.
+
+  Args:
+    microseconds: A number representing some duration of time measured in
+      microseconds.
+  Returns:
+    A number representing the same duration of time measured in seconds.
+  """
+  return microseconds / _MICROSECONDS_PER_SECOND_F
+
+
 def _GetCurrentTimeMicros():
   """Get the current time in microseconds, in UTC.
 

@@ -18,6 +18,7 @@
 __author__ = ('elaforge@google.com (Evan LaForge)',
               'matthewb@google.com (Matthew Blecker)')
 
+import contextlib
 import errno
 import os
 import pwd
@@ -102,6 +103,34 @@ def AtomicWrite(filename, contents, mode=0666, gid=None):
     except OSError, e:
       exc = OSError('%s. Additional errors cleaning up: %s' % (exc, e))
     raise exc
+
+
+@contextlib.contextmanager
+def TemporaryFileWithContents(contents, **kw):
+  """A contextmanager that writes out a string to a file on disk.
+
+  This is useful whenever you need to call a function or command that expects a
+  file on disk with some contents that you have in memory. The context manager
+  abstracts the writing, flushing, and deletion of the temporary file. This is a
+  common idiom that boils down to a single with statement.
+
+  Note:  if you need a temporary file-like object for calling an internal
+  function, you should use a StringIO as a file-like object and not this.
+  Temporary files should be avoided unless you need a file name or contents in a
+  file on disk to be read by some other function or program.
+
+  Args:
+    contents: a string with the contents to write to the file.
+    **kw: Optional arguments passed on to tempfile.NamedTemporaryFile.
+  Yields:
+    The temporary file object, opened in 'w' mode.
+
+  """
+  temporary_file = tempfile.NamedTemporaryFile(**kw)
+  temporary_file.write(contents)
+  temporary_file.flush()
+  yield temporary_file
+  temporary_file.close()
 
 
 def MkDirs(directory, force_mode=None):

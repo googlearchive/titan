@@ -195,7 +195,7 @@ class FileActivityLogger(BaseActivityLogger):
 class ActivitiesService(object):
   """A service class to retrieve permanently stored activities."""
 
-  def get_activities(self, keys=None, user=None, start=None, end=None):
+  def get_activities(self, keys, user=None, start=None, end=None):
     """Query for a set of stored activities.
 
     Args:
@@ -213,7 +213,7 @@ class ActivitiesService(object):
           end, start))
     now = datetime.datetime.now()
     if not start:
-      start = now.replace(hour=now.hour - 1)
+      start = now - datetime.timedelta(hours=1)
     if not end:
       end = now
 
@@ -221,13 +221,13 @@ class ActivitiesService(object):
     titan_files = files.OrderedFiles([])
     for key in keys:
       filters = [
-          files.FileProperty('activity_keys') == key,
+          files.FileProperty('activity_key') == key,
           files.FileProperty('created') >= start,
           files.FileProperty('created') <= end,
       ]
       if user:
         filters.append(files.FileProperty('user') == user.email)
-      new_titan_files = files.OrderedFiles.List(BASE_DIR, recursive=True,
+      new_titan_files = files.OrderedFiles.list(BASE_DIR, recursive=True,
                                                 filters=filters, _internal=True)
       titan_files.update(new_titan_files)
 

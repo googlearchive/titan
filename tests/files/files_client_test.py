@@ -27,7 +27,7 @@ from titan.files import handlers
 class TestableRemoteFileFactory(files_client.RemoteFileFactory):
   """A RemoteFileFactory with a stubbed-out TitanClient."""
 
-  def _GetTitanClient(self, **kwargs):
+  def _get_titan_client(self, **kwargs):
     kwargs['stub_wsgi_apps'] = [handlers.application]
     return titan_rpc_stub.TitanClientStub(**kwargs)
 
@@ -75,7 +75,7 @@ class FilesClientTestCase(testing.BaseTestCase):
     self.assertEqual('bar', remote_file.content)
     self.assertEqual('bar', actual_file.content)
 
-    # Test Delete().
+    # Test delete().
     remote_file.delete()
     actual_file = files.File('/a/foo')
     self.assertRaises(files_client.BadRemoteFileError, lambda: remote_file.name)

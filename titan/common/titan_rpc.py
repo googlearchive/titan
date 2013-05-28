@@ -22,7 +22,7 @@ Sample usage:
   client = titan_rpc.TitanClient(
       host=host, auth_function=auth_function, user_agent=user_agent,
       source=source)
-  resp = client.UrlFetch('/_titan/read?path=/foo/bar.txt')
+  resp = client.fetch_url('/_titan/read?path=/foo/bar.txt')
   print resp.content
 """
 
@@ -44,7 +44,7 @@ class AuthenticationError(Error):
 class RpcError(Error):
   pass
 
-def AuthFunc():
+def auth_func():
   """Default auth func."""
   email = ''
   password = ''
@@ -66,7 +66,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     self.method = None
     self.orig_headers = self.extra_headers.copy()
 
-  def Copy(self):
+  def copy(self):
     """Copies an instance of self."""
     obj = copy.copy(self)
     # The copy.copy() method constructs a new object and copies references into
@@ -77,7 +77,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     obj.orig_headers = self.orig_headers.copy()
     return obj
 
-  def UrlFetch(self, url, method=None, payload=None, headers=None, **kwargs):
+  def fetch_url(self, url, method=None, payload=None, headers=None, **kwargs):
     """Fetches a URL path and returns a Response object.
 
     Args:
@@ -131,15 +131,10 @@ class TitanClient(appengine_rpc.HttpRpcServer):
     resp = Response(content=content, status_code=status_code)
     return resp
 
-  def _Authenticate(self):
-    # Skip ClientLogin authentication when an "Authorization" header exists.
-    if 'Authorization' not in self.extra_headers:
-      super(TitanClient, self)._Authenticate()
-
-  def ValidateClientAuth(self):
+  def validate_client_auth(self):
     """Test the stored credentials, may raise AuthenticationError."""
     try:
-      if self._HostIsDevAppServer():
+      if self._host_is_dev_app_server():
         self._DevAppServerAuthenticate()
         self.orig_headers.update(self.extra_headers)
         return
@@ -149,7 +144,7 @@ class TitanClient(appengine_rpc.HttpRpcServer):
                (e.code, e.reason, e.info or e.msg or '')).strip()
       raise AuthenticationError('Invalid username or password. (%s)' % error)
 
-  def _HostIsDevAppServer(self):
+  def _host_is_dev_app_server(self):
     """Make a single GET / request to see if the server is a dev_appserver."""
     # This exists because appserver_rpc doesn't nicely expose auth error paths.
     try:
@@ -163,7 +158,12 @@ class TitanClient(appengine_rpc.HttpRpcServer):
       return True
     return False
 
-  def _CreateRequest(self, url, data=None):
+  def _Authenticate(self):  # Must be non-PEP 8 style name.
+    # Skip ClientLogin authentication when an "Authorization" header exists.
+    if 'Authorization' not in self.extra_headers:
+      super(TitanClient, self)._Authenticate()
+
+  def _CreateRequest(self, url, data=None):    # Must be non-PEP 8 style name.
     """Overrides the base method to allow different HTTP methods to be used."""
     request = super(TitanClient, self)._CreateRequest(url, data=data)
     if self.method is not None:
@@ -187,7 +187,7 @@ class Response(object):
 class AbstractRemoteFactory(object):
   """Abstract factory for creating Remote* objects."""
 
-  def __init__(self, host, auth_function=AuthFunc, user_agent=USER_AGENT,
+  def __init__(self, host, auth_function=auth_func, user_agent=USER_AGENT,
                source=SOURCE, secure=True, **kwargs):
     self.host = host
     self.auth_function = auth_function
@@ -200,7 +200,7 @@ class AbstractRemoteFactory(object):
   @property
   def titan_client(self):
     if not self._titan_client:
-      self._titan_client = self._GetTitanClient(
+      self._titan_client = self._get_titan_client(
           host=self.host,
           auth_function=self.auth_function,
           user_agent=self.user_agent,
@@ -209,8 +209,8 @@ class AbstractRemoteFactory(object):
           **self.kwargs)
     return self._titan_client
 
-  def _GetTitanClient(self, **kwargs):
+  def _get_titan_client(self, **kwargs):
     return TitanClient(**kwargs)
 
-  def ValidateClientAuth(self):
-    self.titan_client.ValidateClientAuth()
+  def validate_client_auth(self):
+    self.titan_client.validate_client_auth()

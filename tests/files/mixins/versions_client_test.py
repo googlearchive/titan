@@ -33,7 +33,7 @@ class VersionedFile(versions.FileVersioningMixin, files.File):
 class TestableRemoteVcsFactory(versions_client.RemoteVcsFactory):
   """A RemoteVcsFactory with a stubbed-out TitanClient."""
 
-  def _GetTitanClient(self, **kwargs):
+  def _get_titan_client(self, **kwargs):
     kwargs['stub_wsgi_apps'] = [
         versions_views.application,
         handlers.application
@@ -88,7 +88,7 @@ class VersionsClientTestCase(testing.BaseTestCase):
     remote_file = self.remote_file_factory.make_remote_file(
         '/a/foo', changeset=remote_changeset.num)
     remote_file.write('bar!')
-    # Don't call AssociateFile or finalize_associated_files.
+    # Don't call associate_file or finalize_associated_files.
     remote_vcs.commit(remote_changeset, force=True)
     actual_file = files.File('/a/foo')
     self.assertEqual('bar!', actual_file.content)

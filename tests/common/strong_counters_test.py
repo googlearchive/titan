@@ -16,6 +16,7 @@
 """Tests for strong_counters.py."""
 
 from google.appengine.datastore import datastore_stub_util
+from google.appengine.ext import ndb
 from google.appengine.ext import testbed
 from titan.common.lib.google.apputils import basetest
 from titan.common import strong_counters
@@ -26,7 +27,7 @@ class StrongCountersTest(common_basetest.AppEngineTestCase):
   def InitTestbed(self):
     self.testbed = testbed.Testbed()
     self.testbed.activate()
-    policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
+    policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=0)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
     self.testbed.init_user_stub()
 
@@ -42,6 +43,17 @@ class StrongCountersTest(common_basetest.AppEngineTestCase):
     strong_counters.Increment('counter2')
     self.assertEqual(1, strong_counters.GetCount('counter2'))
     self.assertEqual(101, strong_counters.GetCount('counter1'))
+
+    # Verify nested_transaction behavior.
+    count = ndb.transaction(
+        lambda: strong_counters.Increment('counter1', nested_transaction=True))
+    self.assertEqual(102, count)
+
+    # Verify separation between counter namespaces.
+    strong_counters.Increment('counter1', namespace='aaa')
+    self.assertEqual(1, strong_counters.GetCount('counter1', namespace='aaa'))
+    self.assertEqual(102, strong_counters.GetCount('counter1'))
+    self.assertEqual(0, strong_counters.GetCount('counter2', namespace='aaa'))
 
 if __name__ == '__main__':
   basetest.main()

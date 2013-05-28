@@ -21,6 +21,8 @@ from mox import stubout
 from google.appengine.ext import testbed
 from tests.common.lib import basetest as common_basetest
 from tests.common.lib import endpointstest
+from titan import files
+from titan.common import utils
 from titan.files import dirs
 
 class MockableTestCase(common_basetest.AppEngineTestCase):

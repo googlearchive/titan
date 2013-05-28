@@ -25,7 +25,7 @@ class TitanRpcTest(basetest.TestCase):
     self.mox = mox.Mox()
     host = 'www.example.com'
     self.client = titan_rpc.TitanClient(
-        host=host, auth_function=titan_rpc.AuthFunc,
+        host=host, auth_function=titan_rpc.auth_func,
         user_agent='TitanClient/1.0', source='-')
 
   def tearDown(self):
@@ -34,7 +34,7 @@ class TitanRpcTest(basetest.TestCase):
 
   def testCopy(self):
     # Verify that attributes aren't shared across copied instances.
-    new_client = self.client.Copy()
+    new_client = self.client.copy()
     self.client.extra_headers['X-Foo'] = 'Bar'
     new_client.extra_headers['X-Foo'] = 'Qux'
     self.assertNotEqual(self.client.extra_headers, new_client.extra_headers)
@@ -51,11 +51,11 @@ class TitanRpcTest(basetest.TestCase):
                      content_type=mox.IgnoreArg()).AndRaise(error)
     self.mox.ReplayAll()
 
-    resp = self.client.UrlFetch('/api/foo')
+    resp = self.client.fetch_url('/api/foo')
     self.assertEqual(200, resp.status_code)
     self.assertEqual('foobar', resp.content)
 
-    resp = self.client.UrlFetch('/api/bar')
+    resp = self.client.fetch_url('/api/bar')
     self.assertEqual(404, resp.status_code)
 
     self.mox.VerifyAll()

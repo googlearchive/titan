@@ -219,6 +219,10 @@ class CommitCommand(BaseCommand):
         'changeset', None,
         'The changeset number to commit.',
         flag_values=flag_values)
+    flags.DEFINE_bool(
+        'save_manifest', True,
+        'Whether or not to save a filesystem manifest.',
+        flag_values=flag_values)
 
   def Run(self, argv):
     """Command runner."""
@@ -239,6 +243,7 @@ class CommitCommand(BaseCommand):
     commit_runner.Run(
         changeset=FLAGS.changeset,
         force_commit=FLAGS.force_commit,
+        save_manifest=FLAGS.save_manifest,
     )
 
 def main(unused_argv):

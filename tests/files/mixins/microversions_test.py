@@ -65,8 +65,7 @@ class MicroversionsTest(testing.BaseTestCase):
     files.File('/foo', _no_mixins=True).delete()
     self.assertFalse(files.File('/foo').exists)
 
-    # write(), and Delete() should all modify root tree files
-    # and defer a versioning task which commits a single-file changeset.
+    # write(), and delete() should modify root tree files and add pull tasks.
     files.File('/foo').write('foo')
     self.assertEqual(1, len(self.taskqueue_stub.get_filtered_tasks()))
     self.assertEqual('foo', files.File('/foo', _no_mixins=True).content)
@@ -91,8 +90,7 @@ class MicroversionsTest(testing.BaseTestCase):
     file_versions = self.vcs.get_file_versions('/foo')
 
     # In reverse-chronological order:
-    titan_file = files.File(
-        '/foo', changeset=file_versions[0].content_changeset)
+    titan_file = files.File('/foo', changeset=file_versions[0].changeset)
     self.assertEqual(LARGE_FILE_CONTENT, titan_file.content)
     self.assertEqual('titanuser@example.com', str(titan_file.created_by))
     self.assertEqual('titanuser@example.com', str(titan_file.modified_by))
@@ -102,17 +100,15 @@ class MicroversionsTest(testing.BaseTestCase):
     self.assertEqual('titanuser@example.com', str(titan_file._file.created_by))
     self.assertEqual('titanuser@example.com', str(titan_file._file.modified_by))
 
-    titan_file = files.File(
-        '/foo', changeset=file_versions[1].content_changeset)
-    self.assertEqual('', titan_file.content)
+    titan_file = files.File('/foo', changeset=file_versions[1].changeset)
+    self.assertFalse(titan_file.exists)
 
-    titan_file = files.File(
-        '/foo', changeset=file_versions[2].content_changeset)
+    titan_file = files.File('/foo', changeset=file_versions[2].changeset)
     self.assertEqual('foo', titan_file.content)
 
-    self.assertEqual(versions.FILE_CREATED, file_versions[0].status)
-    self.assertEqual(versions.FILE_DELETED, file_versions[1].status)
-    self.assertEqual(versions.FILE_CREATED, file_versions[2].status)
+    self.assertEqual(versions.FileStatus.created, file_versions[0].status)
+    self.assertEqual(versions.FileStatus.deleted, file_versions[1].status)
+    self.assertEqual(versions.FileStatus.created, file_versions[2].status)
 
     # Verify that this doesn't error, the behavior should be the same as above.
     files.File('/foo').write(EXPLODING_FILE_CONTENT)
@@ -126,7 +122,7 @@ class MicroversionsTest(testing.BaseTestCase):
     self.login()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
-    titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
+    titan_file = files.File('/foo', changeset=final_changeset)
     self.assertEqual('foo', titan_file.content)
 
     # The final changeset's created_by should be None, because it's created
@@ -139,7 +135,7 @@ class MicroversionsTest(testing.BaseTestCase):
     results = microversions.process_data()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(4, final_changeset.num)
-    titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
+    titan_file = files.File('/foo', changeset=final_changeset)
     self.assertEqual('new foo', titan_file.content)
     self.assertEqual('blue', titan_file.meta.color)
 
@@ -149,17 +145,17 @@ class MicroversionsTest(testing.BaseTestCase):
     results = microversions.process_data()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(6, final_changeset.num)
-    titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
-    self.assertEqual('', titan_file.content)
+    titan_file = files.File('/foo', changeset=final_changeset)
+    self.assertFalse(titan_file.exists)
 
     # Check file versions.
     file_versions = self.vcs.get_file_versions('/foo')
     self.assertEqual(6, file_versions[0].changeset.num)
     self.assertEqual(4, file_versions[1].changeset.num)
     self.assertEqual(2, file_versions[2].changeset.num)
-    self.assertEqual(versions.FILE_DELETED, file_versions[0].status)
-    self.assertEqual(versions.FILE_EDITED, file_versions[1].status)
-    self.assertEqual(versions.FILE_CREATED, file_versions[2].status)
+    self.assertEqual(versions.FileStatus.deleted, file_versions[0].status)
+    self.assertEqual(versions.FileStatus.edited, file_versions[1].status)
+    self.assertEqual(versions.FileStatus.created, file_versions[2].status)
 
   def testStronglyConsistentCommits(self):
     # Microversions uses FinalizeAssociatedPaths so the Commit() path should use
@@ -174,7 +170,7 @@ class MicroversionsTest(testing.BaseTestCase):
     results = microversions.process_data_with_backoff(timeout_seconds=5)
     final_changeset = results[0][0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
-    titan_file = files.File('/foo', changeset=final_changeset.linked_changeset)
+    titan_file = files.File('/foo', changeset=final_changeset)
     self.assertEqual('foo', titan_file.content)
 
   def testKeepOldBlobs(self):
@@ -202,13 +198,15 @@ class MicroversionsTest(testing.BaseTestCase):
     file_versions = self.vcs.get_file_versions('/foo')
 
     # Deleted file (blob should be None).
-    changeset = file_versions[0].changeset.linked_changeset
-    titan_file = files.File('/foo', changeset=changeset)
+    changeset = file_versions[0].changeset
+    titan_file = files.File(
+        '/foo', changeset=changeset, _allow_deleted_files=True)
     self.assertIsNone(titan_file.blob)
 
     # Created file (blob key and blob content should still exist).
-    changeset = file_versions[-1].changeset.linked_changeset
-    titan_file = files.File('/foo', changeset=changeset)
+    changeset = file_versions[-1].changeset
+    titan_file = files.File(
+        '/foo', changeset=changeset, _allow_deleted_files=True)
     self.assertTrue(titan_file.blob)
     self.assertEqual('Blobstore!', titan_file.content)
 

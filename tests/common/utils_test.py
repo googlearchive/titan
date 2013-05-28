@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Copyright 2012 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +26,42 @@ from titan.common.lib.google.apputils import basetest
 from titan.common import utils
 
 class UtilsTestCase(testing.BaseTestCase):
+
+  def testValidateNamespace(self):
+    self.assertIsNone(utils.validate_namespace('a'))
+    self.assertIsNone(utils.validate_namespace('a-a'))
+    self.assertIsNone(utils.validate_namespace('a123'))
+    self.assertIsNone(utils.validate_namespace('123'))
+    self.assertIsNone(utils.validate_namespace('1.2'))
+    self.assertIsNone(utils.validate_namespace('a' * 249))
+    self.assertIsNone(utils.validate_namespace(None))
+    invalid_namespaces = [
+        '',
+        'a ',
+        'AAA',
+        'aAa',
+        '/',
+        '.',
+        '/a',
+        'a/a',
+        'a/',
+        '-a',
+        'a-',
+        'a-.',
+        '-a-',
+        u'∆',
+        'a\na',
+        'a' * 250,
+        ['a'],
+    ]
+    for namespace in invalid_namespaces:
+      try:
+        utils.validate_namespace(namespace)
+      except ValueError:
+        pass
+      else:
+        self.fail(
+            'Invalid namespace should have failed: {!r}'.format(namespace))
 
   def testSplitPath(self):
     # No containing paths of '/'.

@@ -15,7 +15,8 @@
 
 """Wrapper around versions which auto-commits all file changes.
 
-http://code.google.com/p/titan-files/wiki/Microversions
+Documentation:
+  http://googlecloudplatform.github.io/titan/files/microversions.html
 """
 
 import cPickle as pickle
@@ -172,7 +173,7 @@ def process_data(max_tasks=DEFAULT_MAX_TASKS, allow_transient_errors=False):
       # Allow this changeset to be orphaned.
       continue
     changeset.finalize_associated_files()
-    vcs.commit(changeset)
+    vcs.commit(changeset, save_manifest=False)
 
   if successful_tasks:
     queue.delete_tasks(successful_tasks)
@@ -180,8 +181,10 @@ def process_data(max_tasks=DEFAULT_MAX_TASKS, allow_transient_errors=False):
   # Exponential backoff will be triggered if this returns a null value.
   return results
 
-def process_data_with_backoff(timeout_seconds=DEFAULT_PROCESSING_TIMEOUT_SECONDS,
-                           max_tasks=DEFAULT_MAX_TASKS):
+def process_data_with_backoff(
+    timeout_seconds=DEFAULT_PROCESSING_TIMEOUT_SECONDS,
+    max_tasks=DEFAULT_MAX_TASKS):
+  """Like process_data, but with exponential backoff."""
   results = utils.run_with_backoff(
       func=process_data,
       runtime=timeout_seconds,
@@ -198,50 +201,11 @@ def _write_microversion(changeset, file_kwargs, method_kwargs, email, action):
   # Set the _internal flag for all microversion operations.
   file_kwargs['_internal'] = True
   file_kwargs['changeset'] = changeset
+  method_kwargs['_delete_old_blob'] = False
   if email:
-    file_kwargs['_created_by_override'] = users.TitanUser(email)
-    file_kwargs['_modified_by_override'] = users.TitanUser(email)
+    method_kwargs['created_by'] = users.TitanUser(email)
+    method_kwargs['modified_by'] = users.TitanUser(email)
   if action == _Actions.WRITE:
-    method_kwargs['_delete_old_blob'] = False
     files.File(**file_kwargs).write(**method_kwargs)
   elif action == _Actions.DELETE:
-    # Mark this file as deleted in the version control system.
-    method_kwargs['delete'] = True
-    method_kwargs['_delete_old_blob'] = False
-    files.File(**file_kwargs).write(**method_kwargs)
-
-# DEPRECATED. Must remain until all in-flight microversions are processed.
-def _commit_microversion(file_kwargs, method_kwargs, user, action):
-  """Task to enqueue for microversioning a file action.
-
-  Args:
-    file_kwargs: A dictionary of file keyword args, including 'path'.
-    method_kwargs: A dictionary (or None) of method keyword args.
-    user: A users.TitanUser object.
-    action: The action to perform from the _Actions enum.
-  Returns:
-    The final changeset.
-  """
-  vcs = versions.VersionControlService()
-  changeset = vcs.new_staging_changeset(created_by=user)
-
-  # Setting the 'changeset' argument here is noticed by the factory and so
-  # microversioning will not be mixed in, but versioning will.
-  file_kwargs['changeset'] = changeset
-  file_kwargs['_created_by_override'] = user
-  file_kwargs['_modified_by_override'] = user
-
-  if action == _Actions.WRITE:
-    method_kwargs['_delete_old_blob'] = False
-    files.File(**file_kwargs).write(**method_kwargs)
-  elif action == _Actions.DELETE:
-    # Mark this file as deleted in the version control system.
-    method_kwargs['delete'] = True
-    method_kwargs['_delete_old_blob'] = False
-    files.File(**file_kwargs).write(**method_kwargs)
-
-  # Indicate that this specific changeset object has been used for all file
-  # operations and can be trusted for strong consistency guarantees.
-  changeset.finalize_associated_files()
-
-  return vcs.commit(changeset)
+    files.File(**file_kwargs).delete(**method_kwargs)

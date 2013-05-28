@@ -16,33 +16,48 @@
 """Named, strongly-consistent counters for App Engine apps.
 
 WARNING: These counters are slow. A single named counter can only support ~1
-write per second per named counter in the high replication datastore, and only
-about 5 writes per second per counter in the master/slave datastore. When there
-is too much write contention, a TransactionFailedError may be raised.
+write per second, per named counter, per namespace in the high replication
+datastore. When there is too much write contention, a TransactionFailedError
+may be raised.
 
-Memcache is not used to in order to support strong consistency (as a memcache
-increment operation is not guaranteed to succeed).
+Memcache is not used to guarantee strong consistency.
 """
 
-from google.appengine.ext import db
+from google.appengine.ext import ndb
 
-class StrongCounter(db.Model):
-  count = db.IntegerProperty(required=True, default=0)
+class StrongCounter(ndb.Model):
 
-def GetCount(name):
+  _use_cache = False
+  _use_memcache = False
+
+  count = ndb.IntegerProperty(default=0)
+
+def GetCount(name, namespace=None):
   """Retrieve the current value for the given strong counter."""
-  counter = StrongCounter.get_or_insert(key_name=name)
+  counter = StrongCounter.get_or_insert(name, namespace=namespace)
   return counter.count
 
-def Increment(name):
-  """Increment the value for the given strong counter and return it."""
+def Increment(name, namespace=None, nested_transaction=False):
+  """Increment the value for the given strong counter and return it.
+
+  Args:
+    name: String name of the counter.
+    namespace: Namespace used for the underlying datastore namespace.
+    nested_transaction: Whether or not this function is being called already
+        from inside a transaction. Until NDB supports nested transactions,
+        this simply does the read + increment without a transaction.
+  Returns:
+    The new counter integer.
+  """
 
   def Transaction():
-    counter = StrongCounter.get_by_key_name(name)
+    counter = StrongCounter.get_by_id(name, namespace=namespace)
     if not counter:
-      counter = StrongCounter(key_name=name)
+      counter = StrongCounter(id=name, namespace=namespace)
     counter.count += 1
     counter.put()
     return counter.count
 
-  return db.run_in_transaction(Transaction)
+  if nested_transaction:
+    return Transaction()
+  return ndb.transaction(Transaction)

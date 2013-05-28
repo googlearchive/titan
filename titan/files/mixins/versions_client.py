@@ -51,19 +51,21 @@ class RemoteVersionControlService(object):
 
   def new_staging_changeset(self):
     """Imitation of versions.VersionControlService.NewStagingChangeset()."""
-    response = self._titan_client.UrlFetch(VERSIONS_CHANGESET_API,
-                                           method='POST')
+    response = self._titan_client.fetch_url(VERSIONS_CHANGESET_API,
+                                            method='POST')
     if not response.status_code in (200, 201):
       raise titan_rpc.RpcError(response.content)
     return RemoteChangeset(json.loads(response.content)['num'],
                            _titan_client=self._titan_client)
 
-  def commit(self, staging_changeset, force=False):
+  def commit(self, staging_changeset, force=False, save_manifest=True):
     """Imitation of versions.VersionControlService.Commit()."""
     api_path = '%s?changeset=%d' % (VERSIONS_CHANGESET_COMMIT_API,
                                     staging_changeset.num)
     if force:
       api_path += '&force=true'
+    if not save_manifest:
+      api_path += '&save_manifest=false'
     payload = ''
     headers = {}
     if not force:
@@ -71,8 +73,8 @@ class RemoteVersionControlService(object):
       remote_files = staging_changeset.get_files()
       manifest = remote_files.keys()
       payload = urllib.urlencode({'manifest': json.dumps(manifest)})
-    response = self._titan_client.UrlFetch(api_path, method='POST',
-                                           payload=payload, headers=headers)
+    response = self._titan_client.fetch_url(api_path, method='POST',
+                                            payload=payload, headers=headers)
     if not 200 <= response.status_code <= 201:
       raise titan_rpc.RpcError(response.content)
     return RemoteChangeset(json.loads(response.content)['num'],
@@ -95,12 +97,12 @@ class RemoteChangeset(object):
     return self._num
 
   def associate_file(self, titan_file):
-    """Imitation of versions.Changeset.AssociateFile()."""
+    """Imitation of versions.Changeset.associate_file()."""
     self._associated_files.append(titan_file)
     self._finalized_files = False
 
   def disassociate_file(self, titan_file):
-    """Imitation of versions.Changeset.DisassociateFile()."""
+    """Imitation of versions.Changeset.disassociate_file()."""
     self._associated_files.remove(titan_file)
     self._finalized_files = False
 

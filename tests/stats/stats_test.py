@@ -19,7 +19,9 @@ from tests.common import testing
 
 import datetime
 import mock
+import os
 from titan.common.lib.google.apputils import basetest
+from titan import activities
 from titan.stats import stats
 
 class StatsTestCase(testing.BaseTestCase):
@@ -37,7 +39,7 @@ class StatsTestCase(testing.BaseTestCase):
       return [stats.Counter('page/view'), stats.Counter('widget/render')]
 
     # Push local stats to a task.
-    processors, processor = self._log_counters([page_counter], counters_func)
+    processors, processor = _log_counters([page_counter], counters_func)
     expected = {
         0: {
             'counters': {
@@ -50,8 +52,8 @@ class StatsTestCase(testing.BaseTestCase):
 
     widget_counter.offset(15)
     widget_counter.offset(-5)
-    self._log_counters([page_counter, widget_counter], counters_func,
-                       processors=processors)
+    _log_counters([page_counter, widget_counter], counters_func,
+                  processors=processors)
     expected = {
         0: {
             'counters': {
@@ -117,12 +119,14 @@ class StatsTestCase(testing.BaseTestCase):
     counter.aggregate(200)
     self.assertEqual(200, counter.finalize())
 
-  def testAverageTimingCounter(self):
+  @mock.patch('time.time')
+  def testAverageTimingCounter(self, internal_time):
     counter = stats.AverageTimingCounter('widget/render/latency')
+    internal_time.side_effect = [10, 220]
     counter.start()
     counter.stop()
     value, weight = counter.finalize()
-    self.assertTrue(isinstance(value, int))
+    self.assertEqual(210000, value)
     self.assertEqual(1, weight)
 
   @mock.patch('titan.stats.stats._get_window')
@@ -137,18 +141,18 @@ class StatsTestCase(testing.BaseTestCase):
     # Log an initial set into the 3600 window.
     page_counter.offset(10)
     widget_counter.offset(20)
-    processors, processor = self._log_counters(
+    processors, processor = _log_counters(
         [page_counter, widget_counter], counters_func, timestamp=3600)
     # Save another set of data, an hour later:
     page_counter.increment()
     widget_counter.increment()
-    self._log_counters([page_counter, widget_counter], counters_func,
-                       processors=processors, timestamp=7200)
+    _log_counters([page_counter, widget_counter], counters_func,
+                  processors=processors, timestamp=7200)
     # Save another set of data, a day later:
     page_counter.increment()
     widget_counter.increment()
-    self._log_counters([page_counter, widget_counter], counters_func,
-                       processors=processors, timestamp=93600)
+    _log_counters([page_counter, widget_counter], counters_func,
+                  processors=processors, timestamp=93600)
     expected = {
         3600: {
             'window': 3600,
@@ -175,12 +179,12 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertEqual(expected, processor.serialize())
 
     # Save again, to make sure that duplicate data is collapsed when saved.
-    self._log_counters([page_counter, widget_counter], counters_func,
-                       processors=processors, timestamp=93600)
+    _log_counters([page_counter, widget_counter], counters_func,
+                  processors=processors, timestamp=93600)
     self.assertEqual(expected, processor.serialize())
 
     # Save the data as if from a batch processor.
-    self._finalize_processor(processor)
+    _finalize_processor(processor)
 
     # Get the data from the CountersService.
     counters_service = stats.CountersService()
@@ -205,7 +209,7 @@ class StatsTestCase(testing.BaseTestCase):
     # Initial counter with an offset.
     page_counter = stats.StaticCounter('page/view')
     page_counter.offset(10)
-    _, processor = self._log_counters([page_counter], counters_func)
+    _, processor = _log_counters([page_counter], counters_func)
     expected = {
         0: {
             'window': 0,
@@ -217,7 +221,7 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertEqual(expected, processor.serialize())
 
     # Save the data as if from a batch processor.
-    self._finalize_processor(processor)
+    _finalize_processor(processor)
 
     # Get the data from the CountersService.
     counter_data = counters_service.get_counter_data(
@@ -228,7 +232,7 @@ class StatsTestCase(testing.BaseTestCase):
     # New counter, same timeframe.
     page_counter = stats.StaticCounter('page/view')
     page_counter.offset(20)
-    _, processor = self._log_counters([page_counter], counters_func)
+    _, processor = _log_counters([page_counter], counters_func)
     expected = {
         0: {
             'window': 0,
@@ -240,7 +244,7 @@ class StatsTestCase(testing.BaseTestCase):
     self.assertEqual(expected, processor.serialize())
 
     # Save the data as if from a batch processor.
-    self._finalize_processor(processor)
+    _finalize_processor(processor)
 
     # Get the data from the CountersService.
     counter_data = counters_service.get_counter_data(
@@ -261,17 +265,17 @@ class StatsTestCase(testing.BaseTestCase):
 
     # Log an initial set into the 3600 window.
     page_counter.offset(10)
-    processors, processor = self._log_counters([page_counter], counters_func)
+    processors, processor = _log_counters([page_counter], counters_func)
 
     # Save different counter in a different window:
     widget_counter.increment()
-    self._log_counters([widget_counter], counters_func,
-                       processors=processors, timestamp=3600)
+    _log_counters([widget_counter], counters_func,
+                  processors=processors, timestamp=3600)
     # Save both counters in a later window:
     page_counter.increment()
     widget_counter.increment()
-    self._log_counters([page_counter, widget_counter], counters_func,
-                       processors=processors, timestamp=7200)
+    _log_counters([page_counter, widget_counter], counters_func,
+                  processors=processors, timestamp=7200)
     expected = {
         0: {
             'window': 0,
@@ -334,7 +338,7 @@ class StatsTestCase(testing.BaseTestCase):
     widget_counter2.increment()
     latency_counter1.offset(50)
     latency_counter2.offset(100)
-    _, processor = self._log_counters(counters, counters_func)
+    _, processor = _log_counters(counters, counters_func)
     expected = {
         0: {
             'window': 0,
@@ -364,7 +368,7 @@ class StatsTestCase(testing.BaseTestCase):
     oldest_counter.timestamp = 0
 
     counters = [normal_counter, old_counter, oldest_counter]
-    _, processor = self._log_counters(counters, counters_func)
+    _, processor = _log_counters(counters, counters_func)
 
     expected = {
         0: {
@@ -409,26 +413,104 @@ class StatsTestCase(testing.BaseTestCase):
         '/_titan/stats/counters/2013/05/01/test/counter/my/data.json',
         stats._make_log_path(test_date, counter))
 
-  def _log_counters(self, counters, counters_func, processors=None,
-                    timestamp=None):
-    if timestamp is not None:
-      for counter in counters:
-        counter.timestamp = timestamp
-    activity = stats.StatsActivity(counters=counters)
-    activity_logger = stats.StatsActivityLogger(
-        activity, counters_func=counters_func)
-    processors = processors or activity_logger.processors
-    activity_logger.process(processors)
-    return (processors, self._get_processor_from_processors(processors))
+class StatsDecoratorTestCase(testing.BaseTestCase):
 
-  def _get_processor_from_processors(self, processors):
-    return [p for p in processors.values()][0]
+  @mock.patch('time.time')
+  def testAverageTime(self, internal_time):
+    """Ensures that the AverageTime decorator runs as expected."""
 
-  def _finalize_processor(self, processor):
-    # Save the data as if from a batch processor.
-    batch_processor = processor.batch_processor
-    batch_processor.process(processor.serialize())
-    batch_processor.finalize()
+    @stats.AverageTime('page/render')
+    def render_page(num, text_format='{}'):
+      return text_format.format(1 + num)
+
+    # Processor should be there after the function definition.
+    loggers = _get_loggers_from_environ()
+    self.assertEqual(1, len(loggers))
+    logger = loggers[0]
+
+    # Get the counter being used for the decorator.
+    counter = logger.activity.counters[0]
+
+    # Call once.
+    internal_time.side_effect = [10, 60]
+    result = render_page(1, text_format='something {}')
+    self.assertEqual('something 2', result)  # Method still works.
+
+    # Confirm counter ran.
+    self.assertEqual((50000.0, 1), counter.finalize())
+
+    # Call again.
+    internal_time.side_effect = [32, 132]
+    result = render_page(3, text_format='else {}')
+    self.assertEqual('else 4', result)  # Method still works.
+
+    # Confirm the counter ran and averaged.
+    self.assertEqual((75000.0, 2), counter.finalize())
+
+    # Still only one logger, even though called multiple times.
+    loggers = _get_loggers_from_environ()
+    self.assertEqual(1, len(loggers))
+
+  def testCount(self):
+    """Ensures that the Count decorator runs as expected."""
+
+    @stats.Count('page/render')
+    def render_page(num, text_format='{}'):
+      return text_format.format(1 + num)
+
+    # Processor should be there after the function definition.
+    loggers = _get_loggers_from_environ()
+    self.assertEqual(1, len(loggers))
+    logger = loggers[0]
+
+    # Get the counter being used for the decorator.
+    counter = logger.activity.counters[0]
+
+    # Call once.
+    result = render_page(1, text_format='something {}')
+    self.assertEqual('something 2', result)  # Method still works.
+
+    # Confirm counter ran.
+    self.assertEqual(1, counter.finalize())
+
+    # Call again.
+    result = render_page(3, text_format='else {}')
+    self.assertEqual('else 4', result)  # Method still works.
+
+    # Confirm the counter ran.
+    self.assertEqual(2, counter.finalize())
+
+    # Still only one logger, even though called multiple times.
+    loggers = _get_loggers_from_environ()
+    self.assertEqual(1, len(loggers))
+
+def _finalize_processor(processor):
+  # Save the data as if from a batch processor.
+  batch_processor = processor.batch_processor
+  batch_processor.process(processor.serialize())
+  batch_processor.finalize()
+
+def _get_loggers_from_environ():
+  return os.environ[activities.ACTIVITIES_ENVIRON_KEY]
+
+def _get_processor_from_environ():
+  processors = _get_loggers_from_environ().processors
+  return _get_processor_from_processors(processors)
+
+def _get_processor_from_processors(processors):
+  return [p for p in processors.values()][0]
+
+def _log_counters(counters, counters_func, processors=None,
+                  timestamp=None):
+  if timestamp is not None:
+    for counter in counters:
+      counter.timestamp = timestamp
+  activity = stats.StatsActivity(counters=counters)
+  activity_logger = stats.StatsActivityLogger(
+      activity, counters_func=counters_func)
+  processors = processors or activity_logger.processors
+  activity_logger.process(processors)
+  return (processors, _get_processor_from_processors(processors))
 
 if __name__ == '__main__':
   basetest.main()

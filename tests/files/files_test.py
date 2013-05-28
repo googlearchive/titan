@@ -84,13 +84,19 @@ class FileTestCase(testing.BaseTestCase):
     self.assertEqual('blue', titan_file.meta.color)
     self.assertEqual(False, titan_file.meta.flag)
 
-    # Delete().
+    # delete().
     self.assertTrue(titan_file.exists)
     titan_file.delete()
     self.assertFalse(titan_file.exists)
     titan_file.write(content='Test', meta=meta)
     titan_file.delete()
     self.assertFalse(titan_file.exists)
+
+    # __hash__().
+    self.assertEqual(hash(files.File('/foo')), hash(files.File('/foo')))
+    self.assertNotEqual(hash(files.File('/foo')), hash(files.File('/bar')))
+    self.assertNotEqual(
+        hash(files.File('/foo')), hash(files.File('/foo', namespace='aaa')))
 
     # serialize().
     titan_file = files.File('/foo/bar/baz').write('', meta=meta)
@@ -239,6 +245,22 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(ValueError, files.File('/a').write, '', created='foo')
     self.assertRaises(ValueError, files.File('/a').write, '', modified='foo')
 
+    # Allow overwriting created_by and modified_by without touching content.
+    files.File('/foo/bar.html').write(content='Test')
+    user = users.TitanUser('bob@example.com')  # Not the current logged in user.
+    actual_file = files.File('/foo/bar.html').write(
+        created_by=user, modified_by=user)
+    self.assertEqual(user, actual_file.created_by)
+    self.assertEqual(user, actual_file.modified_by)
+    # Verify the same behavior for the file creation codepath.
+    files.File('/foo/bar.html').delete().write(
+        'Test', created_by=user, modified_by=user)
+    self.assertEqual(user, actual_file.created_by)
+    self.assertEqual(user, actual_file.modified_by)
+    # Error handling.
+    self.assertRaises(ValueError, files.File('/a').write, '', created_by='foo')
+    self.assertRaises(ValueError, files.File('/a').write, '', modified_by='foo')
+
     # Cleanup.
     expected_file = original_expected_file
     files.File('/foo/bar.html').delete()
@@ -319,12 +341,40 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(TypeError, titan_file.write, content='Test',
                       blob=self.blob_key)
 
-    # Attempt to set invalid dynamic property.
-    meta = {'path': False}
-    self.assertRaises(AttributeError, titan_file.write, content='', meta=meta)
-    meta = {'mime_type': 'fail'}
-    self.assertRaises(files.InvalidMetaError,
-                      titan_file.write, content='', meta=meta)
+    # There are some reserved words that cannot be used in meta properties.
+    invalid_meta_keys = [
+        # Titan reserved:
+        'name',
+        'path',
+        'dir_path',
+        'paths',
+        'depth',
+        'mime_type',
+        'encoding',
+        'created',
+        'modified',
+        'content',
+        'blob',
+        'blobs',
+        'created_by',
+        'modified_by',
+        'md5_hash',
+        # NDB reserved:
+        'key',
+        'app',
+        'id',
+        'parent',
+        'namespace',
+        'projection',
+    ]
+    for key in invalid_meta_keys:
+      try:
+        titan_file.write(content='', meta={key: ''})
+      except files.InvalidMetaError:
+        pass
+      else:
+        self.fail(
+            'Invalid meta key should have failed: {!r}'.format(key))
 
   def testDelete(self):
     # Synchronous delete.
@@ -423,6 +473,172 @@ class FileTestCase(testing.BaseTestCase):
 
     self.assertRaises(AssertionError, files.File('/foo.html').move_to, '/test')
 
+class NamespaceTestCase(testing.BaseTestCase):
+
+  def write_namespace_testdata(self):
+    files.File('/foo').write('foo')
+    files.File('/b/bar').write('bar')
+    # 'aaa' namespace, overlapping filenames with the default namespace.
+    files.File('/foo', namespace='aaa').write('aaa-foo')
+    files.File('/b/bar', namespace='aaa').write('aaa-bar')
+    # 'bbb' namespace, no overlapping filenames.
+    files.File('/b/qux', namespace='bbb').write('bbb-qux')
+
+  def testNamespaces(self):
+    self.write_namespace_testdata()
+
+    # Verify the state of the filesystem in the default namespace.
+    self.assertEqual('foo', files.File('/foo').content)
+    self.assertEqual('bar', files.File('/b/bar').content)
+    self.assertFalse(files.File('/b/qux').exists)
+
+    titan_files = files.Files.list('/', recursive=True)
+    self.assertEqual({'/foo', '/b/bar'}, set(titan_files))
+
+    titan_files = files.Files(paths=['/foo', '/b/bar', '/b/qux']).load()
+    self.assertEqual({'/foo', '/b/bar'}, set(titan_files))
+
+    # Verify the state of the filesystem in the 'aaa' namespace.
+    self.assertEqual('aaa-foo', files.File('/foo', namespace='aaa').content)
+    self.assertEqual('aaa-bar', files.File('/b/bar', namespace='aaa').content)
+    self.assertFalse(files.File('/b/qux', namespace='aaa').exists)
+
+    titan_files = files.Files.list('/', recursive=True, namespace='aaa')
+    self.assertEqual({'/foo', '/b/bar'}, set(titan_files))
+    self.assertEqual('aaa-foo', titan_files['/foo'].content)
+    self.assertEqual('aaa-bar', titan_files['/b/bar'].content)
+
+    titan_files = files.Files(
+        paths=['/foo', '/b/bar', '/b/qux'], namespace='aaa').load()
+    self.assertEqual({'/foo', '/b/bar'}, set(titan_files))
+    self.assertEqual('aaa-foo', titan_files['/foo'].content)
+    self.assertEqual('aaa-bar', titan_files['/b/bar'].content)
+
+    # Verify the state of the filesystem in the 'bbb' namespace.
+    self.assertEqual('bbb-qux', files.File('/b/qux', namespace='bbb').content)
+    self.assertFalse(files.File('/foo', namespace='bbb').exists)
+    self.assertFalse(files.File('/b/bar', namespace='bbb').exists)
+
+    titan_files = files.Files.list('/', recursive=True, namespace='bbb')
+    self.assertEqual({'/b/qux'}, set(titan_files))
+    self.assertEqual('bbb-qux', titan_files['/b/qux'].content)
+
+    titan_files = files.Files(
+        paths=['/foo', '/b/bar', '/b/qux'], namespace='bbb').load()
+    self.assertEqual({'/b/qux'}, set(titan_files))
+    self.assertEqual('bbb-qux', titan_files['/b/qux'].content)
+
+    # Namespace is not affected by file existence.
+    self.assertIsNone(files.File('/foo').namespace)
+    self.assertIsNone(files.File('/fake').namespace)
+    self.assertEqual('aaa', files.File('/foo', namespace='aaa').namespace)
+    self.assertEqual('zzz', files.File('/fake', namespace='zzz').namespace)
+
+    # Cannot mix namespaces in files.Files.
+    titan_files = files.Files()
+    with self.assertRaises(files.NamespaceMismatchError):
+      other_files = files.Files(paths=['/foo'], namespace='aaa')
+      titan_files.update(other_files)
+
+    # Files are not the same if their namespace is different.
+    self.assertNotEqual(files.File('/foo'), files.File('/foo', namespace='aaa'))
+    self.assertNotEqual(
+        files.File('/foo', namespace='aaa'),
+        files.File('/foo', namespace='zzz'))
+
+    # Error handling (more extensive namespace validate tests in utils_test.py).
+    self.assertRaises(ValueError, files.File, '/a', namespace='/')
+    self.assertRaises(ValueError, files.File, '/a', namespace=u'∆')
+
+  def testCopyInNamespace(self):
+    self.write_namespace_testdata()
+
+    # Default namespace --> 'aaa' namespace.
+    files.File('/foo').copy_to(files.File('/foo-copy', namespace='aaa'))
+    self.assertEqual('foo', files.File('/foo-copy', namespace='aaa').content)
+    self.assertFalse(files.File('/foo-copy').exists)
+
+    # 'aaa' namespace --> default namespace.
+    self.assertFalse(files.File('/foo-copy').exists)
+    files.File('/foo', namespace='aaa').copy_to(files.File('/foo-copy'))
+    self.assertEqual('aaa-foo', files.File('/foo-copy').content)
+
+    # 'aaa' namespace --> 'bbb' namespace.
+    self.assertFalse(files.File('/foo-copy', namespace='bbb').exists)
+    files.File('/foo', namespace='aaa').copy_to(
+        files.File('/foo-copy', namespace='bbb'))
+    self.assertEqual(
+        'aaa-foo', files.File('/foo-copy', namespace='bbb').content)
+
+  def testMoveInNamespace(self):
+    self.write_namespace_testdata()
+
+    # Default namespace --> 'aaa' namespace.
+    files.File('/foo').move_to(files.File('/foo-moved', namespace='aaa'))
+    self.assertEqual('foo', files.File('/foo-moved', namespace='aaa').content)
+    self.assertFalse(files.File('/foo-moved').exists)
+    self.assertFalse(files.File('/foo').exists)
+
+    # 'aaa' namespace --> default namespace.
+    self.assertFalse(files.File('/foo-moved').exists)
+    files.File('/foo', namespace='aaa').move_to(files.File('/foo-moved'))
+    self.assertEqual('aaa-foo', files.File('/foo-moved').content)
+
+    # 'aaa' namespace --> 'bbb' namespace.
+    self.assertFalse(files.File('/b/bar-moved', namespace='bbb').exists)
+    files.File('/b/bar', namespace='aaa').move_to(
+        files.File('/b/bar-moved', namespace='bbb'))
+    self.assertEqual(
+        'aaa-bar', files.File('/b/bar-moved', namespace='bbb').content)
+
+  def testMultiCopyInNamespace(self):
+    # Default namespace --> 'aaa' namespace.
+    self.write_namespace_testdata()
+    titan_files = files.Files.list('/', recursive=True).load()
+    titan_files.copy_to('/', namespace='aaa')
+
+    titan_files = files.Files.list('/', recursive=True, namespace='aaa').load()
+    self.assertEqual({'/foo', '/b/bar'}, set(titan_files))
+    self.assertEqual('foo', titan_files['/foo'].content)
+    self.assertEqual('bar', titan_files['/b/bar'].content)
+
+    # 'aaa' namespace --> 'bbb' namespace.
+    self.write_namespace_testdata()
+    titan_files = files.Files.list('/', namespace='aaa', recursive=True).load()
+    titan_files.copy_to('/', namespace='bbb')
+
+    titan_files = files.Files.list('/', recursive=True, namespace='bbb').load()
+    self.assertEqual({'/foo', '/b/bar', '/b/qux'}, set(titan_files))
+    self.assertEqual('aaa-foo', titan_files['/foo'].content)
+    self.assertEqual('aaa-bar', titan_files['/b/bar'].content)
+    self.assertEqual('bbb-qux', titan_files['/b/qux'].content)
+
+  def testMultiMoveInNamespace(self):
+    # Default namespace --> 'aaa' namespace.
+    self.write_namespace_testdata()
+    titan_files = files.Files.list('/', recursive=True).load()
+    titan_files.move_to('/', namespace='aaa')
+
+    titan_files = files.Files.list('/', recursive=True, namespace='aaa').load()
+    self.assertEqual({'/foo', '/b/bar'}, set(titan_files))
+    self.assertEqual('foo', titan_files['/foo'].content)
+    self.assertEqual('bar', titan_files['/b/bar'].content)
+    titan_files = files.Files.list('/', recursive=True).load()
+    self.assertEqual(set(), set(titan_files))
+
+    # 'aaa' namespace --> 'bbb' namespace.
+    self.write_namespace_testdata()
+    titan_files = files.Files.list('/', namespace='aaa', recursive=True).load()
+    titan_files.move_to('/', namespace='bbb')
+
+    titan_files = files.Files.list('/', recursive=True, namespace='bbb').load()
+    self.assertEqual({'/foo', '/b/bar', '/b/qux'}, set(titan_files))
+    self.assertEqual('aaa-foo', titan_files['/foo'].content)
+    self.assertEqual('aaa-bar', titan_files['/b/bar'].content)
+    self.assertEqual('bbb-qux', titan_files['/b/qux'].content)
+
+class MixinsTestCase(testing.BaseTestCase):
+
   def testRegisterFileFactory(self):
 
     class FooFile(files.File):
@@ -431,7 +647,7 @@ class FileTestCase(testing.BaseTestCase):
     class BarFile(files.File):
       pass
 
-    def TitanFileFactory(path):
+    def TitanFileFactory(path, **unused_kwargs):
       if path.startswith('/foo/files/'):
         return FooFile
       elif path.startswith('/bar/files/'):

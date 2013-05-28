@@ -37,11 +37,11 @@ class TitanClientStub(titan_rpc.TitanClient):
     self._wsgi_apps = kwargs.pop('stub_wsgi_apps')
     super(TitanClientStub, self).__init__(*args, **kwargs)
 
-  def ValidateClientAuth(self):
+  def validate_client_auth(self):
     # Disable authentication.
     pass
 
-  def _GetOpener(self):
+  def _GetOpener(self):  # Must be non-PEP 8 style name.
     opener = super(TitanClientStub, self)._GetOpener()
     opener.add_handler(HijackAllRequestsHandler(self._wsgi_apps))
     return opener
@@ -54,7 +54,7 @@ class HijackAllRequestsHandler(urllib2.BaseHandler):
     # so don't use super() here.
     self._wsgi_apps = wsgi_applications
 
-  def _GetTestAppFromUrlPath(self, url_path):
+  def _get_test_app_from_url_path(self, url_path):
     test_request = webapp2.Request.blank(url_path)
     for wsgi_app in self._wsgi_apps:
       if wsgi_app.router.match(test_request):
@@ -82,7 +82,7 @@ class HijackAllRequestsHandler(urllib2.BaseHandler):
     url_path = req.get_selector()
     headers = req.headers
     payload = req.get_data() if req.has_data() else None
-    test_app = self._GetTestAppFromUrlPath(url_path)
+    test_app = self._get_test_app_from_url_path(url_path)
 
     # 1. urllib2 request/response --> webtest request/response.
     if method == 'GET':

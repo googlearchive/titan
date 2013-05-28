@@ -79,8 +79,8 @@ class BaseRunner(runners.BaseRunner):
 
 class BaseRunnerWithVersions(BaseRunner):
 
-  def _CommitChangesetOrExit(self, changeset_num, force_commit=False,
-                             manifest=None):
+  def _commit_changeset_or_exit(self, changeset_num, force_commit=False,
+                                manifest=None, save_manifest=True):
     """If confirmed, commits the given changeset."""
     assert not force_commit and manifest
     # Confirm action.
@@ -90,8 +90,7 @@ class BaseRunnerWithVersions(BaseRunner):
 
     start = time.time()
     remote_vcs = self.vcs_factory.make_remote_vcs()
-    staging_changeset = self.vcs_factory.new_staging_changeset(
-        num=changeset_num)
+    staging_changeset = self.vcs_factory.make_remote_changeset(changeset_num)
 
     if manifest:
       # We have full knowledge of the files uploaded to a changeset, associate
@@ -99,11 +98,11 @@ class BaseRunnerWithVersions(BaseRunner):
       for path in manifest:
         assert not path.startswith('/_titan/ver/')
         remote_file = self.remote_file_factory.make_remote_file(path)
-        staging_changeset.AssociateFile(remote_file)
+        staging_changeset.associate_file(remote_file)
       staging_changeset.finalize_associated_files()
 
-    final_remote_changeset = remote_vcs.Commit(
-        staging_changeset, force=force_commit)
+    final_remote_changeset = remote_vcs.commit(
+        staging_changeset, force=force_commit, save_manifest=save_manifest)
     elapsed_time = time.time() - start
     print 'Finished commit in %s.' % utils.humanize_duration(elapsed_time)
     return final_remote_changeset
@@ -138,7 +137,7 @@ class UploadRunner(BaseRunnerWithVersions):
       absolute_filename = os.path.abspath(filename)
       if not absolute_filename.startswith(root_dir):
         self.print_error('Path "%s" not contained within "%s".'
-                        % (absolute_filename, root_dir))
+                         % (absolute_filename, root_dir))
         sys.exit()
       remote_path = absolute_filename[len(root_dir) + 1:]
       remote_path = utils.safe_join(target_path, remote_path)
@@ -176,7 +175,7 @@ class UploadRunner(BaseRunnerWithVersions):
     with self.ThreadPoolExecutor() as executor:
       for filename, target_path in filename_to_paths.iteritems():
         future = executor.submit(
-            self._UploadFile, filename, target_path, file_kwargs=file_kwargs)
+            self._upload_file, filename, target_path, file_kwargs=file_kwargs)
         future_results.append(future)
 
     failed = False
@@ -188,7 +187,7 @@ class UploadRunner(BaseRunnerWithVersions):
         total_bytes += remote_file.size
       except UploadFileError as e:
         self.print_error('Error uploading %s. Error was: %s %s'
-                        % (e.target_path, e.__class__.__name__, str(e)))
+                         % (e.target_path, e.__class__.__name__, str(e)))
         failed = True
 
     if failed:
@@ -199,9 +198,9 @@ class UploadRunner(BaseRunnerWithVersions):
     if commit:
       if changeset != 'new' and not confirm_manifest:
         self.print_error('Must use --changeset=new with --commit, or pass '
-                        '--confirm_manifest.')
+                         '--confirm_manifest.')
         return
-      self._CommitChangesetOrExit(changeset_num, manifest=manifest)
+      self._commit_changeset_or_exit(changeset_num, manifest=manifest)
 
     elapsed_time = time.time() - start
     print 'Uploaded %d files in %s.' % (
@@ -215,13 +214,13 @@ class UploadRunner(BaseRunnerWithVersions):
     result['paths'] = filename_to_paths.values()
     return result
 
-  def _UploadFile(self, filename, target_path,
-                  file_kwargs=None, method_kwargs=None):
+  def _upload_file(self, filename, target_path,
+                   file_kwargs=None, method_kwargs=None):
     """Uploads a file."""
     try:
       file_kwargs = file_kwargs or {}
       remote_file = self.remote_file_factory.make_remote_file(target_path,
-                                                            **file_kwargs)
+                                                              **file_kwargs)
       with open(filename) as fp:
         method_kwargs = method_kwargs or {}
         if os.path.getsize(filename) > DIRECT_TO_BLOBSTORE_SIZE:
@@ -255,7 +254,7 @@ class DownloadRunner(BaseRunner):
     """
     if not file_paths and not dir_path:
       self.print_error('No files to download. Use --file_path or '
-                      '--dir_path.')
+                       '--dir_path.')
       return
 
     if target_dir is None:
@@ -310,8 +309,9 @@ class DownloadRunner(BaseRunner):
     for future in futures.as_completed(future_results):
       try:
         downloaded_file = future.result()
-        self.print_message('Downloaded %s to %s' %
-                   (downloaded_file['path'], downloaded_file['target']))
+        self.print_message(
+            'Downloaded %s to %s' %
+            (downloaded_file['path'], downloaded_file['target']))
       except DownloadFileError as e:
         self.print_error('Error downloading %s. Error was: %s %s' %
                         (e.target_path, e.__class__.__name__, str(e)))
@@ -322,7 +322,7 @@ class DownloadRunner(BaseRunner):
       return
     elapsed_time = time.time() - start
     print 'Downloaded %d files in %s.' % (len(path_map),
-                                          humanize.Duration(elapsed_time))
+                                          utils.humanize_duration(elapsed_time))
 
   def _DownloadFile(self, remote_file, target):
     """Downloads a file."""
@@ -337,7 +337,8 @@ class DownloadRunner(BaseRunner):
 
 class CommitRunner(BaseRunnerWithVersions):
 
-  def Run(self, changeset, force_commit=False, manifest=None):
+  def Run(self, changeset, force_commit=False, manifest=None,
+          save_manifest=True):
     """Commit runner.
 
     Args:
@@ -345,6 +346,9 @@ class CommitRunner(BaseRunnerWithVersions):
       force_commit: Confirmation for passing consistency error message.
       manifest: An optional list of remote paths in the changeset to guarantee
           a strongly consistent commit.
+      save_manifest: Whether or not to save a manifest of the entire
+          filesystem state upon commit. This requires that the associated
+          base_changeset was also committed with a snapshot.
     Raises:
       TypeError: if both force_commit and manifest are given.
     """
@@ -365,5 +369,6 @@ class CommitRunner(BaseRunnerWithVersions):
       return
 
     changeset_num = int(changeset)
-    self._CommitChangesetOrExit(
-        changeset_num, force_commit=force_commit, manifest=manifest)
+    self._commit_changeset_or_exit(
+        changeset_num, force_commit=force_commit, manifest=manifest,
+        save_manifest=save_manifest)

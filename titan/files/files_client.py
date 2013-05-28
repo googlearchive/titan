@@ -45,12 +45,12 @@ class RemoteFileFactory(titan_rpc.AbstractRemoteFactory):
 
   def make_remote_file(self, *args, **kwargs):
     """Should be used to create all RemoteFile objects."""
-    kwargs['_titan_client'] = self.titan_client.Copy()
+    kwargs['_titan_client'] = self.titan_client.copy()
     return RemoteFile(*args, **kwargs)
 
   def make_remote_files(self, *args, **kwargs):
     """Should be used to create all RemoteFiles objects."""
-    kwargs['_titan_client'] = self.titan_client.Copy()
+    kwargs['_titan_client'] = self.titan_client.copy()
     return RemoteFiles(*args, **kwargs)
 
 class RemoteFile(object):
@@ -72,7 +72,7 @@ class RemoteFile(object):
       if self._file_kwargs:
         params['file_params'] = json.dumps(self._file_kwargs)
       url = '%s?%s' % (FILE_API_PATH_BASE, urllib.urlencode(params))
-      response = self._titan_client.UrlFetch(url)
+      response = self._titan_client.fetch_url(url)
       self._verify_response(response)
       self._file_data = json.loads(response.content)
     return self._file_data
@@ -113,7 +113,7 @@ class RemoteFile(object):
   def content(self):
     url = '%s%s?%s' % (FILE_API_PATH_BASE, FILE_READ_API,
                        urllib.urlencode({'path': self.path}))
-    response = self._titan_client.UrlFetch(url)
+    response = self._titan_client.fetch_url(url)
     self._verify_response(response)
     # TODO(user): encoding?
     return response.content
@@ -191,7 +191,7 @@ class RemoteFile(object):
       if fp:
         # If given a file pointer, create a multipart encoded request.
         path = FILE_API_PATH_BASE + FILE_NEWBLOB_API
-        write_blob_url = self._titan_client.UrlFetch(path).content
+        write_blob_url = self._titan_client.fetch_url(path).content
         params.append(('file', fp))
         content_generator, headers = encode.multipart_encode(params)
         # Make custom opener to support multipart POST requests.
@@ -213,8 +213,8 @@ class RemoteFile(object):
       path_param = {'path': self.path}
       url = '%s?%s' % (FILE_API_PATH_BASE, urllib.urlencode(path_param))
       payload = urllib.urlencode(params)
-      response = self._titan_client.UrlFetch(url, method='POST',
-                                             payload=payload)
+      response = self._titan_client.fetch_url(url, method='POST',
+                                              payload=payload)
       self._verify_response(response)
     except urllib2.HTTPError, e:
       if e.code == 404:
@@ -227,8 +227,8 @@ class RemoteFile(object):
       params = {'path': self.path}
       url = '%s?%s' % (FILE_API_PATH_BASE, urllib.urlencode(params))
       payload = urllib.urlencode(params)
-      response = self._titan_client.UrlFetch(url, method='DELETE',
-                                             payload=payload)
+      response = self._titan_client.fetch_url(url, method='DELETE',
+                                              payload=payload)
       self._verify_response(response)
     except urllib2.HTTPError, e:
       if e.code == 404:
@@ -323,7 +323,7 @@ class RemoteFiles(collections.Mapping):
 
     url = '%s?%s' % (FILES_API_PATH_BASE, urllib.urlencode(params))
 
-    response = self._titan_client.UrlFetch(url)
+    response = self._titan_client.fetch_url(url)
     self._verify_response(response)
     data = json.loads(response.content)
 
