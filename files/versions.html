@@ -8,9 +8,6 @@
     <title>
       Versions - Titan Files - Titan for App Engine
     </title>
-    <style>
-div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
-    </style>
   </head>
   <body>
     <div class="outer" id="header_wrap">
@@ -38,11 +35,6 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           <a href="/titan/">Titan</a> &gt; <a href="/titan/files/">Titan Files</a> &gt; Versions
         </div>
         <hr>
-        <div class="c1">
-          <strong>We're moving to <a href=
-          "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
-          things over and update docs.</strong> 2013-05-02
-        </div>
         <h1>
           Titan Files: Versions
         </h1>
@@ -77,53 +69,108 @@ files.register_file_mixins([versions.FileVersioningMixin])
   - name: path
   - name: created
     direction: desc
+
+- kind: _Changeset
+  ancestor: yes
+  properties:
+  - name: status
+  - name: num
+    direction: desc
 </code>
 </pre>
         <h2>
-          Usage
+          Quickstart
         </h2>
         <p>
           You can programmatically create new changesets, put files in them, commit them, and get
           the revision history of files and changesets.
         </p>
+        <p>
+          First, we create the main service object:
+        </p>
         <pre>
 <code>from titan.files.mixins import versions
 
 vcs = versions.VersionControlService()
-
-# Create a new changeset.
-changeset = vcs.new_staging_changeset()
-
-# Add/edit/delete files within the changeset.
+</code>
+</pre>
+        <p>
+          Then, create a new changeset:
+        </p>
+        <pre>
+<code>changeset = vcs.new_staging_changeset()
+</code>
+</pre>
+        <p>
+          Now let's add some files to that changeset:
+        </p>
+        <pre>
+<code># Add/edit/delete files within the changeset.
 files.File('/new/file.html', changeset=changeset).write('hello world')
 files.File('/other/new/file.html', changeset=changeset).write('hello world')
 
 # Mark a file for deletion upon commit.
-files.File('/deleted/file.html', changeset=changeset).write(delete=True)
+files.File('/deleted/file.html', changeset=changeset).delete()
 
-# Revert a file, removing it from the changeset.
-files.File('/other/new/file.html', changeset=changeset).delete()
-
-# Indicate that this specific changeset object has been used for all file
-# operations and can be trusted for strong consistency guarantees.
-changeset.finalize_associated_files()
-vcs.commit(changeset)
-
-# Upon commit, a new "final" changeset is created.
+# Revert this file change, removing it from the changeset.
+changeset.revert_file(files.File('/other/new/file.html', changeset=changeset))
+</code>
+</pre>
+        <p>
+          Then, let's commit all the above file changes atomically:
+        </p>
+        <pre>
+<code>changeset.finalize_associated_files()
+final_changeset = vcs.commit(changeset)
+</code>
+</pre>
+        <p>
+          Notice a little special behavior here—since we used the same exact changeset
+          <em>instance</em> for all operations, we call
+          <code>changeset.finalize_associated_files()</code> to indicate the list of files in the
+          changeset so that <code>commit()</code> can guarantee strong consistency.
+        </p>
+        <p>
+          If the same <code>Changeset</code> object was not used for all changes—like if files were
+          added to the changeset by independent handlers such as parallel uploads from a command
+          line utility—we would need to pass the <code>manifest</code> arg to manually specify the
+          list of affected files. Alternatively, we can pass <code>force=True</code> to use an
+          eventually-consistent query to find the list of files in the changeset. These behaviors
+          are necessary because, internally, File objects are not in the same entity group for
+          performance and scalability reasons, so we cannot deterministically know what files are
+          currently in the changeset without a hint from the client.
+        </p>
+        <p>
+          Let's look at the <code>changeset</code> object:
+        </p>
+        <pre>
+<code># Upon commit, the original changeset is moved to a new changeset number
+# and the old changeset number is deleted.
 &gt;&gt;&gt; changeset
 &lt;Changeset 1&gt;
-&gt;&gt;&gt; changeset.linked_changeset
+&gt;&gt;&gt; changeset.status
+'deleted-by-submit'
+&gt;&gt;&gt; final_changeset
 &lt;Changeset 2&gt;
+&gt;&gt;&gt; final_changeset.status
+'submitted'
 &gt;&gt;&gt; vcs.get_last_submitted_changeset()
 &lt;Changeset 2&gt;
-
-# Let's do it again, for more history:
-&gt;&gt;&gt; changeset = vcs.new_staging_changeset()
+</code>
+</pre>
+        <p>
+          Let's do it again, for more history for this walkthrough:
+        </p>
+        <pre>
+<code>&gt;&gt;&gt; changeset = vcs.new_staging_changeset()
 &gt;&gt;&gt; files.File('/new/file.html', changeset=changeset).write('hello new world!')
 &gt;&gt;&gt; changeset.finalize_associated_files()
 &gt;&gt;&gt; vcs.commit(changeset)
 </code>
 </pre>
+        <h3>
+          Get revision history
+        </h3>
         <p>
           With versions enabled, <code>File</code> objects will automatically reference the latest
           committed files (unless you're explicitly passing the <code>changeset</code> arg, like
@@ -136,18 +183,45 @@ vcs.commit(changeset)
 Revision history
 
 # Get revision history for a path, from newest to oldest.
-&gt;&gt;&gt; file_versions = vcs.GetFileVersions('/new/file.html')
+&gt;&gt;&gt; file_versions = vcs.get_file_versions('/new/file.html')
 &gt;&gt;&gt; file_versions[0].status
 'edited'
 &gt;&gt;&gt; file_versions[1].status
 'created'
 
 # Get file at a specific revision.
-&gt;&gt;&gt; titan_file = files.File('/new/file.html', changeset=file_versions[1].content_changeset)
+&gt;&gt;&gt; titan_file = files.File('/new/file.html', changeset=file_versions[1].changeset)
 &gt;&gt;&gt; titan_file.content
 'hello world'
 </code>
 </pre>
+        <h2>
+          Manifested views (NEW!)
+        </h2>
+        <p>
+          A powerful feature of Titan Versions is the ability to instantly view the filesystem at
+          any historical point.
+        </p>
+        <p>
+          You simply init a file at a particular changeset:
+        </p>
+        <pre>
+<code>print files.File('/new/file.html', changeset=4).content
+
+# Equivalently:
+print files.File('/new/file.html', changeset=versions.Changeset(4)).content
+</code>
+</pre>
+        <p>
+          If the file was changed in changeset 4, it will be read from that changeset. If it wasn't
+          affected in that changeset, the content will be transparently read from the last
+          changeset that affected that file, but still look like it exists in changeset 4. This is
+          perhaps comparable to <code>git show HEAD~3:index.html</code> which will instantly output
+          <code>index.html</code> from 3 commits ago. In a similar way that git does this for
+          source code, Titan Versions does this efficiently for files in App Engine by using a
+          pre-computed filesystem manifest and pointers, rather than actually searching for the
+          last affecting changeset.
+        </p>
         <h2>
           Caveats
         </h2>

@@ -8,9 +8,6 @@
     <title>
       Titan Pipelines - Titan for App Engine
     </title>
-    <style>
-div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
-    </style>
   </head>
   <body>
     <div class="outer" id="header_wrap">
@@ -38,11 +35,6 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           <a href="/titan/">Titan</a> &gt; Titan Pipelines
         </div>
         <hr>
-        <div class="c1">
-          <strong>We're moving to <a href=
-          "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
-          things over and update docs.</strong> 2013-05-02
-        </div>
         <h1>
           Titan Pipelines
         </h1>
@@ -50,7 +42,10 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           Introduction
         </h2>
         <p>
-          Titan Pipelines is a data-processing pipeline implementation.
+          Titan Pipelines is a data-processing pipeline implementation that uses AppEngine <a href=
+          "https://developers.google.com/appengine/docs/python/taskqueue/">tasks</a> and <a href=
+          "https://developers.google.com/appengine/docs/python/datastore/">datastore</a> to batch
+          process information across multiple requests.
         </p>
         <h2>
           Installation

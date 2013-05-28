@@ -8,9 +8,6 @@
     <title>
       Installation - Titan for App Engine
     </title>
-    <style>
-div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
-    </style>
   </head>
   <body>
     <div class="outer" id="header_wrap">
@@ -38,13 +35,54 @@ div.c1 {padding: 10px; border: 1px solid #f6f9ff; background: #f6f9ff;}
           <a href="/titan/">Titan</a> &gt; Installation
         </div>
         <hr>
-        <div class="c1">
-          <strong>We're moving to <a href=
-          "https://github.com/GoogleCloudPlatform/titan">GitHub</a>! Pardon our dust as we move
-          things over and update docs.</strong> 2013-05-02
-        </div>
+        <h1>
+          Titan Installation Guide
+        </h1>
         <p>
-          Coming soon. Promise.
+          Download the master tarball or zip:
+        </p>
+        <ul>
+          <li>
+            <strong>tar:</strong> <a href=
+            "">https://github.com/GoogleCloudPlatform/titan/tarball/master</a>
+          </li>
+          <li>
+            <strong>zip:</strong> <a href=
+            "">https://github.com/GoogleCloudPlatform/titan/zipball/master</a>
+          </li>
+        </ul>
+        <p>
+          Extract it and move the <code>titan</code> folder <strong>into the root</strong> of your
+          App Engine project dir. Something like:
+        </p>
+        <pre>
+<code>./titan/
+./...your other project directories.../
+./app.yaml
+./main.py
+</code>
+</pre>
+        <p>
+          <strong>Done!</strong>
+        </p>
+        <h2>
+          Alternatives...
+        </h2>
+        <p>
+          If your development environment is only Linux and/or Mac, you could potentially use
+          <a href="http://git-scm.com/book/en/Git-Tools-Submodules">git submodules</a> and a
+          symbolic link to the <code>titan</code> dir to make pulling updates easier (but remember
+          that git symlinks <a href=
+          "http://stackoverflow.com/questions/5917249/git-symlinks-in-windows">don't work well</a>
+          with Windows).
+        </p>
+        <p>
+          You might be able to use a tool like <a href=
+          "http://source.android.com/source/developing.html">Repo</a>, <a href=
+          "http://gitslave.sourceforge.net">Gitslave</a>, or <a href=
+          "https://github.com/apenwarr/git-subtree/">Git Subtree</a> to make pulling updates
+          easier. If you get something like this to work, <a href=
+          "https://github.com/GoogleCloudPlatform/titan/issues/new">let us know</a>!
         </p>
       </section>
     </div>
