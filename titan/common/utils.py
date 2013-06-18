@@ -29,11 +29,11 @@ except ImportError:
 import math
 import mimetypes
 import os
-import re
 import string
 import time
 try:
   from google.appengine.api import files as blobstore_files
+  from google.appengine.api import namespace_manager
 except ImportError:
   # Allow this module to be imported by scripts which don't depend on functions
   # which use the App Engine libraries.
@@ -42,20 +42,6 @@ except ImportError:
 DEFAULT_CHUNK_SIZE = 1000
 
 BLOBSTORE_APPEND_CHUNK_SIZE = 1 << 19  # 500 KiB
-
-# Namespaces should be hostname-compatible, for convenience.
-NAMESPACE_REGEX = re.compile(
-    # Specificity matters here; go from most specific to least specific.
-    r'^(?:'  # Non-capturing group.
-    # At least 3 alphanumeric characters, with optional dashes inbetween.
-    r'[a-z0-9]+[-a-z0-9]*[a-z0-9]+'
-    # Allow a single dot.
-    r'|[a-z0-9]+[.][a-z0-9]+'
-    # Alphanumeric characters.
-    r'|[a-z0-9]+'
-    r')$'
-)
-_NAMESPACE_MAX_LENGTH = 250
 
 def get_common_dir_path(paths):
   """Given an iterable of file paths, returns the top common prefix."""
@@ -106,12 +92,10 @@ def _validate_common_path(path):
     raise ValueError('Path cannot be longer than 500 characters: %s' % path)
 
 def validate_namespace(namespace):
-  if namespace is None:
-    return
-  if (isinstance(namespace, basestring) and NAMESPACE_REGEX.match(namespace)
-      and len(namespace) < _NAMESPACE_MAX_LENGTH):
-    return
-  raise ValueError('Invalid namespace: {}'.format(repr(namespace)))
+  if namespace is not None:
+    if not namespace:
+      raise ValueError('Invalid namespace: {!r}'.format(namespace))
+    namespace_manager.validate_namespace(namespace, exception=ValueError)
 
 def guess_mime_type(path):
   return mimetypes.guess_type(path)[0] or 'application/octet-stream'

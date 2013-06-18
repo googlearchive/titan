@@ -37,6 +37,7 @@ __all__ = [
     'API_EXPLORER_CLIENT_ID',
     # Functions.
     'api',
+    'get_current_user',
     'method',
     # Classes.
     'Service',
@@ -52,6 +53,9 @@ __all__ = [
 
 # Constant aliases.
 API_EXPLORER_CLIENT_ID = endpoints.API_EXPLORER_CLIENT_ID
+
+# Function aliases.
+get_current_user = endpoints.get_current_user
 
 # Decorator aliases.
 api = endpoints.api

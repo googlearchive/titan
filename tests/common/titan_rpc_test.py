@@ -25,7 +25,7 @@ class TitanRpcTest(basetest.TestCase):
     self.mox = mox.Mox()
     host = 'www.example.com'
     self.client = titan_rpc.TitanClient(
-        host=host, auth_function=titan_rpc.auth_func,
+        host=host, auth_function=titan_rpc.create_auth_func(),
         user_agent='TitanClient/1.0', source='-')
 
   def tearDown(self):

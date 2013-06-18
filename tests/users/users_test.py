@@ -20,8 +20,9 @@ from tests.common import testing
 import os
 
 from google.appengine.ext import ndb
+from google.appengine.ext.endpoints import users_id_token
 from titan.common.lib.google.apputils import basetest
-from titan import users
+from titan.users import users
 
 class UsersTest(testing.BaseTestCase):
 
@@ -78,6 +79,14 @@ class UsersTest(testing.BaseTestCase):
     titan_user = users.get_current_user()
     self.assertEqual('oauthadmin@example.com', titan_user.email)
     self.assertTrue(titan_user.is_admin)
+
+  def testGetCurrentUserEndpoints(self):
+    self.Logout()
+    os.environ[users_id_token._ENV_AUTH_EMAIL] = 'test@example.com'
+    os.environ[users_id_token._ENV_AUTH_DOMAIN] = ''
+    user = users.get_current_user()
+    self.assertEqual(user.email, 'test@example.com')
+    self.assertIsNone(users._get_current_oauth_user(users.OAUTH_SCOPES))
 
   def testGetCurrentUserDeferredTask(self):
     self.Logout()

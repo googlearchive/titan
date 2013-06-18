@@ -20,8 +20,10 @@ from tests.common import testing
 import datetime
 import mock
 import os
+import webtest
 from titan.common.lib.google.apputils import basetest
 from titan import activities
+from titan import wsgi
 from titan.stats import stats
 
 class StatsTestCase(testing.BaseTestCase):
@@ -483,6 +485,29 @@ class StatsDecoratorTestCase(testing.BaseTestCase):
     # Still only one logger, even though called multiple times.
     loggers = _get_loggers_from_environ()
     self.assertEqual(1, len(loggers))
+
+class StatsMiddlewareTest(testing.BaseTestCase):
+
+  def testStatsMiddleware(self):
+    routes = (
+        ('/simple', GoodHandler),
+    )
+
+    application = stats.LatencyMiddleware(
+        wsgi.WSGIApplication(routes))
+    self.app = webtest.TestApp(application)
+
+    # Verify simple tuple routes are passed through and handled by webapp2.
+    self.app.get('/simple')
+
+    loggers = os.environ[activities.ACTIVITIES_ENVIRON_KEY]
+    for logger in loggers:
+      self.assertEqual('response/latency', logger.activity.counters[0].name)
+
+class GoodHandler(wsgi.RequestHandler):
+
+  def get(self):
+    pass
 
 def _finalize_processor(processor):
   # Save the data as if from a batch processor.

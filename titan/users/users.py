@@ -40,6 +40,12 @@ from google.appengine.api import users as users_lib
 from google.appengine.ext import ndb
 from google.appengine.ext.ndb import model
 from google.appengine.ext.ndb import utils as ndb_utils
+try:
+  from titan import endpoints
+except ImportError:
+  # Allow environmental differences for clients of Titan Users, especially
+  # testing environments that may not have lower-level protorpc dependencies.
+  endpoints = None
 
 __all__ = [
     # Constants.
@@ -72,7 +78,7 @@ class TitanUser(object):
                _is_oauth_user=False):
     self._email = email.lower()
     self._organization = organization
-    self._user = _user
+    self._user = _user  # This may be a singleton, don't modify its state.
     self._is_admin = _is_admin
     self._is_oauth_user = _is_oauth_user
 
@@ -184,12 +190,37 @@ def get_current_user(oauth_scopes=OAUTH_SCOPES):
   Returns:
     An initialized TitanUser or None if no user is logged in.
   """
+  # NOTE: Order is important here.
+
+  # If the request was made in a deferred task, check the X-Titan-User header.
+  if 'HTTP_X_APPENGINE_TASKNAME' in os.environ:
+    email = os.environ.get('HTTP_X_TITAN_USER')
+    if email:
+      return TitanUser(email)
+    # Avoid more RPCs, no other user can possibly exist in a task.
+    return
+
   user = users_lib.get_current_user()
   if user:
     is_admin = users_lib.is_current_user_admin()
     organization = os.environ.get('USER_ORGANIZATION')
     return TitanUser(user.email(), organization=organization, _user=user,
                      _is_admin=is_admin)
+
+  if endpoints:
+    # Memoize the call to endpoints.get_current_user() because it is noisy.
+    if 'TITAN_ENDPOINTS_USER' in os.environ:
+      user = os.environ['TITAN_ENDPOINTS_USER']
+    else:
+      user = endpoints.get_current_user()
+      os.environ['TITAN_ENDPOINTS_USER'] = user
+
+    if user:
+      # TODO(user): is_admin may not work correctly as we're not sure if the
+      # os variable is set properly.
+      organization = os.environ.get('USER_ORGANIZATION')
+      return TitanUser(user.email(), organization=organization, _user=user,
+                       _is_oauth_user=True)
 
   # If an OAuth scope is provided, request the current OAuth user, if any.
   if oauth_scopes:
@@ -199,12 +230,6 @@ def get_current_user(oauth_scopes=OAUTH_SCOPES):
       organization = os.environ.get('USER_ORGANIZATION')
       return TitanUser(user.email(), organization=organization, _user=user,
                        _is_admin=is_admin, _is_oauth_user=True)
-
-  # If the request was made in a deferred task, check the X-Titan-User header.
-  if 'HTTP_X_APPENGINE_TASKNAME' in os.environ:
-    email = os.environ.get('HTTP_X_TITAN_USER')
-    if email:
-      return TitanUser(email)
 
 def create_login_url(dest_url=None):
   return users_lib.create_login_url(dest_url)
@@ -229,7 +254,8 @@ def _get_current_oauth_user(oauth_scopes):
     # Avoid logging noise.
     pass
   except oauth.InvalidOAuthParametersError as e:
-    logging.error(e.__class__.__name__)
+    if os.environ.get('SERVER_SOFTWARE', '').startswith('Google App Engine'):
+      logging.error(e.__class__.__name__)
   except oauth.OAuthRequestError:
     # Raised on any invalid OAuth request.
     logging.exception('Error with OAuth request.')

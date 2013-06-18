@@ -15,8 +15,8 @@
 
     var rowIndex = -1;
     var colIndex;
-    {% for counter_name, counter_data in aggregate_data.iteritems() %}
-      data.addColumn('number', '{{counter_name}}');
+    {% for counter_name, counter_data in aggregate_data|dictsort %}
+      data.addColumn('number', '{{counter_name|trim}}');
       data.addColumn('string', 'title{{loop.index0}}');
       data.addColumn('string', 'text{{loop.index0}}');
       {% set last_window = None %}

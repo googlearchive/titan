@@ -273,20 +273,22 @@ class BeforeAfterTestCaseMeta(type):
     # looking in only the leaf class' set of __tests_to_run, and using discard()
     # instead of remove() to make the operation idempotent.
 
+    # The closure here makes sure that each new test() function remembers its
+    # own values of cls_test and test_name.  Without this, they'd all point to
+    # the values from the last iteration of the loop, causing some arbitrary
+    # test method to run multiple times and the others never. :(
+    def test_closure(cls_test, test_name):
+      def test(self, *args, **kargs):
+        leaf = self.__class__
+        leaf.__tests_to_run.discard(test_name)
+        return cls_test(self, *args, **kargs)
+      return test
+
     for test_name in test_names:
       cls_test = getattr(cls, test_name)
 
-      # The default parameters here make sure that each new test() function
-      # remembers its own values of cls_test and test_name.  Without these
-      # default parameters, they'd all point to the values from the last
-      # iteration of the loop, causing some arbitrary test method to run
-      # multiple times and the others never. :(
-      def test(self, cls_test=cls_test, test_name=test_name):
-        leaf = self.__class__
-        leaf.__tests_to_run.discard(test_name)
-        return cls_test(self)
-
-      BeforeAfterTestCaseMeta.SetMethod(cls, test_name, test)
+      BeforeAfterTestCaseMeta.SetMethod(
+          cls, test_name, test_closure(cls_test, test_name))
 
   @staticmethod
   def SetBeforeAfterTestCaseAttr():
@@ -444,9 +446,9 @@ class TestCase(unittest.TestCase):
     if first == second:
       return
     if msg:
-      raise self.failureException(msg)
-
-    failure_message = ['\n']
+      failure_message = [msg, ':\n']
+    else:
+      failure_message = ['\n']
     for line in difflib.ndiff(first.splitlines(True), second.splitlines(True)):
       failure_message.append(line)
       if not line.endswith('\n'):

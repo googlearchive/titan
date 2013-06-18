@@ -33,22 +33,15 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertIsNone(utils.validate_namespace('a123'))
     self.assertIsNone(utils.validate_namespace('123'))
     self.assertIsNone(utils.validate_namespace('1.2'))
-    self.assertIsNone(utils.validate_namespace('a' * 249))
+    self.assertIsNone(utils.validate_namespace('a' * 99))
     self.assertIsNone(utils.validate_namespace(None))
     invalid_namespaces = [
         '',
         'a ',
-        'AAA',
-        'aAa',
         '/',
-        '.',
         '/a',
         'a/a',
         'a/',
-        '-a',
-        'a-',
-        'a-.',
-        '-a-',
         u'∆',
         'a\na',
         'a' * 250,
@@ -180,10 +173,19 @@ class UtilsTestCase(testing.BaseTestCase):
     self.assertEqual('1-True-False', child.Method(bar=True, foo=1))
 
   def testCustomJsonEncoder(self):
+    # Test serializing datetimes.
     original = {'test': datetime.datetime(2013, 04, 02, 10, 11, 12, 123)}
     self.assertEqual(
         '{"test": 1364922672.000123}',
         json.dumps(original, cls=utils.CustomJsonEncoder))
+
+    # Test serializing objects with a "serialize" method.
+    class Foo(object):
+
+      def serialize(self):
+        return 'foo'
+
+    self.assertEqual('"foo"', json.dumps(Foo(), cls=utils.CustomJsonEncoder))
 
   def testRunWithBackoff(self):
     # Returning None forces exponential backoff to occur, and within 5 seconds
@@ -223,7 +225,7 @@ class UtilsTestCase(testing.BaseTestCase):
 
     old_blobinfo = blobstore.BlobInfo.get(old_blob_key)
     new_blob_key = utils.write_to_blobstore('Blobstore!',
-                                          old_blobinfo=old_blobinfo)
+                                            old_blobinfo=old_blobinfo)
     self.assertEqual(new_blob_key, old_blob_key)
     self.stubs.SmartUnsetAll()
 

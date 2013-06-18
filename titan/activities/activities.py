@@ -18,8 +18,10 @@
 import datetime
 import hashlib
 import json
+import logging
 import os
 from protorpc.remote import protojson
+import webob.dec
 from titan import files
 from titan import pipelines
 from titan import users
@@ -41,6 +43,7 @@ __all__ = [
     'BaseProcessor',
     'BaseAggregateProcessor',
     'FileActivityLogger',
+    'ActivitiesMiddleware',
     'ActivitiesService',
     # Functions.
     'log',
@@ -191,6 +194,23 @@ class FileActivityLogger(BaseActivityLogger):
 
     # Ensure that it gets written first.
     super(FileActivityLogger, self).finalize()
+
+class ActivitiesMiddleware(object):
+  """Titan Activities WSGI middleware."""
+
+  def __init__(self, app):
+    self.app = app
+
+  @webob.dec.wsgify
+  def __call__(self, request):
+    try:
+      response = request.get_response(self.app)
+    finally:
+      try:
+        process_activity_loggers()
+      except:
+        logging.exception('Unable to process stored activities!')
+    return response
 
 class ActivitiesService(object):
   """A service class to retrieve permanently stored activities."""

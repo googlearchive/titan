@@ -75,6 +75,7 @@ class GraphHandler(webapp2.RequestHandler):
         counter_names=params['counter_names'],
         start_date=params['start_date'],
         end_date=params['end_date'])
+
     # Render template:
     path = os.path.join(TEMPLATES_PATH, 'graph.html')
     template = jinja2.Template(open(path).read())

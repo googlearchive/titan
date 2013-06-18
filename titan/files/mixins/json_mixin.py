@@ -16,21 +16,22 @@
 """Provides JSON validation and convenience methods.
 
 Usage:
-  # Sets json_content directly and saves the file.
+  # Sets json directly and saves the file.
   titan_file = files.File('/foo/file.json')
-  titan_file.json_content = {'foo': 'bar'}
+  titan_file.json = {'foo': 'bar'}
   titan_file.save()
 
-  # Applies a JSON Patch (http://tools.ietf.org/html/rfc6902) to json_content
+  # Applies a JSON Patch (http://tools.ietf.org/html/rfc6902) to json
   # and saves the file.
   titan_file = files.File('/foo/file.json')
-  titan_file.json_content = {'foo': 'bar'}
+  titan_file.json = {'foo': 'bar'}
   titan_file.apply_patch([
       {'op': 'add', 'path': '/baz', 'value': 'qux'},
   ])
   titan_file.save()
 """
 
+import copy
 import json
 import jsonpatch
 from titan import files
@@ -40,6 +41,12 @@ class Error(Exception):
   pass
 
 class BadJsonError(ValueError, Error):
+  pass
+
+class DataFileNotFoundError(Error):
+  pass
+
+class UnsetValue(object):
   pass
 
 class JsonMixin(files.File):
@@ -54,21 +61,25 @@ class JsonMixin(files.File):
 
   @utils.compose_method_kwargs
   def __init__(self, **kwargs):
-    self._json_content = None
+    self._json = UnsetValue
     super(JsonMixin, self).__init__(**kwargs)
 
   @property
-  def json_content(self):
-    if self._json_content is None:
+  def json(self):
+    if self._json is UnsetValue:
       try:
-        self._json_content = json.loads(self.content) if self.exists else {}
+        self._json = json.loads(self.content)
       except ValueError:
         raise BadJsonError(self.content)
-    return self._json_content
+    return self._json
 
-  @json_content.setter
-  def json_content(self, value):
-    self._json_content = value
+  @json.setter
+  def json(self, value):
+    self._json = value
+
+  @property
+  def has_unsaved_json(self):
+    return self._json is not UnsetValue
 
   @utils.compose_method_kwargs
   def write(self, **kwargs):
@@ -82,13 +93,13 @@ class JsonMixin(files.File):
     # JSON validation won't happen when writing blobs instead of content.
     # Prevent invalid JSON from ever being written to JSON files.
     if not self._is_django_template(kwargs['content'] or ''):
-      self._json_content = self._get_json_or_die(kwargs['content'] or '')
+      self._json = self._get_json_or_die(kwargs['content'] or '')
     return super(JsonMixin, self).write(**kwargs)
 
   def _is_django_template(self, content):
     # Weak test to see if the file is actually a Django template that
     # generates a JSON file when rendered. These types of files are not
-    # validated and do not allow the use of the json_content property.
+    # validated and do not allow the use of the json property.
     return '{%' in content
 
   def _get_json_or_die(self, content):
@@ -102,7 +113,7 @@ class JsonMixin(files.File):
     """Dumps the JSON content to a string and writes it to the file."""
     if separators is None:
       separators = (',', ': ')
-    content = json.dumps(self.json_content, sort_keys=sort_keys,
+    content = json.dumps(self.json, sort_keys=sort_keys,
                          indent=indent, separators=separators)
     return self.write(content, meta=meta)
 
@@ -114,5 +125,76 @@ class JsonMixin(files.File):
     Returns:
       JSON content.
     """
-    self._json_content = jsonpatch.apply_patch(self.json_content, patch)
-    return self.json_content
+    self._json = jsonpatch.apply_patch(self.json, patch)
+    return self.json
+
+class AbstractDataPersistence(object):
+  """Convenience class for decoupling data objects from persistence layer.
+
+  For first-party data objects that need persistent storage, subclass this
+  class rather than files.File.
+
+  The data is always stored as a JSON-serialized dictionary.
+
+  Usage:
+    class Widget(json_mixin.AbstractDataPersistence):
+
+      def __init__(self, key):
+        self.key = key
+        self.__data_file = None
+
+      @property
+      def _data_file(self):
+        if self.__data_file is None:
+          self.__data_file = files.File('/{}.json'.format(self.key))
+        return self.__data_file
+
+    # Subclasses are dictionary-like and are stored when save() is called.
+    widget = Widget(key='foo')
+    widget['foo'] = True
+    widget.save()
+  """
+
+  @property
+  def _data_file(self):
+    raise NotImplementedError(
+        'Superclass must implement _data_file property. It must return a '
+        'files.File object that is memoized per instance.')
+
+  @property
+  def exists(self):
+    return self._data_file.exists
+
+  def __setitem__(self, key, value):
+    # Allow setting values to unsaved files.
+    if not self.exists and not self._data_file.has_unsaved_json:
+      self._data_file.json = {}
+
+    self._data_file.json[key] = value
+
+  def __getitem__(self, key):
+    return self._data_file.json[key]
+
+  def __delitem__(self, key):
+    del self._data_file.json[key]
+
+  def update(self, data):
+    # Allow setting values to unsaved files.
+    if not self.exists and not self._data_file.has_unsaved_json:
+      self._data_file.json = {}
+    self._data_file.json.update(data)
+
+  def get(self, key, default=None):
+    return self._data_file.json.get(key, default)
+
+  def save(self, sort_keys=False, indent=2, separators=None, meta=None):
+    """Save the current state of the object to the data file."""
+    if not self.exists and not self._data_file.has_unsaved_json:
+      # As opposed to the JsonMixin, we can allow non-existent data JSON files
+      # to be saved without content because we assume it's an empty dictionary.
+      self._data_file.json = {}
+    self._data_file.save(
+        sort_keys=sort_keys, indent=indent, separators=separators, meta=meta)
+
+  def serialize(self):
+    return copy.deepcopy(self._data_file.json)

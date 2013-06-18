@@ -82,7 +82,8 @@ class BaseCommand(appcommands.Cmd):
   def vcs_factory(self):
     if not self._vcs_factory:
       self._vcs_factory = versions_client.RemoteVcsFactory(
-          host=self.host, secure=not FLAGS.insecure)
+          host=self.host, secure=not FLAGS.insecure,
+          _titan_client=self.remote_file_factory.titan_client)
     return self._vcs_factory
 
 class UploadCommand(BaseCommand):

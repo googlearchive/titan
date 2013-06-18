@@ -49,6 +49,10 @@ Usage:
   def download_file():
     # Perform file upload...
 
+Usage:
+  # Use as a WSGI middleware for page latency.
+  application = stats.LatencyMiddleware(wsgi.WSGIApplication(routes))
+
 Internal design and terminology:
   - "Window" or "aggregation window" used below is a unix timestamp rounded to
     some number of seconds. Each window can be thought of as a bucket of time
@@ -71,6 +75,7 @@ import json
 import logging
 import os
 import time
+import webob.dec
 from titan import activities
 from titan import files
 from titan.common import utils
@@ -90,6 +95,7 @@ __all__ = [
     'StaticCounter',
     'AverageTime',
     'AverageTimingCounter',
+    'LatencyMiddleware',
     'CountersService',
     'StatsActivity',
     'StatsActivityLogger',
@@ -295,6 +301,41 @@ class Count(AbstractStatDecorator):
       self._counter.increment()
       return func(*args, **kwargs)
     return wrapper
+
+def make_latency_counters():
+  """Creates the latency counter for the middleware logging."""
+  return [AverageTimingCounter('response/latency')]
+
+class LatencyMiddleware(object):
+  """Titan Stats WSGI middleware."""
+
+  def __init__(self, app):
+    self.app = app
+
+  @webob.dec.wsgify
+  def __call__(self, request):
+    """Adds a latency counter into the application request path."""
+    if 'HTTP_X_APPENGINE_CRON' in os.environ:
+      return request.get_response(self.app)
+
+    try:
+      # Time the overall request duration.
+      main_timing_counter = AverageTimingCounter('response/latency')
+      main_timing_counter.start()
+
+      # Perform request.
+      response = request.get_response(self.app)
+    finally:
+      try:
+        main_timing_counter.stop()
+        self._log_counters([main_timing_counter])
+      except:
+        logging.exception('Unable to save main timing counter!')
+
+    return response
+
+  def _log_counters(self, counters):
+    log_counters(counters, counters_func=make_latency_counters)
 
 class CountersService(object):
   """A service class to retrieve permanently stored counter stats."""

@@ -404,7 +404,9 @@ class File(object):
       if encoding is not None:
         raise TypeError(
             'If given a unicode object for "content", the "encoding" '
-            'argument cannot be given.')
+            'argument cannot be given.\n'
+            'Encoding: {!r}\n'
+            'Partial content: {!r}'.format(encoding, content[:100]))
       encoding = 'utf-8'
       content = content.encode(encoding)
     return content, encoding
@@ -1279,7 +1281,7 @@ def _delete_blobs(blobs, file_paths):
 def _read_content_or_blob(titan_file):
   file_ent = _get_file_entities(titan_file)
   if not file_ent:
-    raise BadFileError('File does not exist: %s' % titan_file.real_path)
+    raise BadFileError('File does not exist: %s' % titan_file.path)
   if file_ent.content is not None:
     content = file_ent.content
   else:

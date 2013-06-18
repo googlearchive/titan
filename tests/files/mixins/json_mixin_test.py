@@ -41,34 +41,42 @@ class JsonMixinTestCase(testing.BaseTestCase):
     # Verify valid JSON writes successfully.
     titan_file.write(json.dumps({'a': True}))
 
-    # Verify behavior of json_content property.
+    # Verify behavior of json property.
     titan_file.write('{"a":"b"}')
-    self.assertEqual({'a': 'b'}, titan_file.json_content)
-    titan_file.json_content['c'] = 'd'
-    self.assertEqual({'a': 'b', 'c': 'd'}, titan_file.json_content)
+    self.assertEqual({'a': 'b'}, titan_file.json)
+    titan_file.json['c'] = 'd'
+    self.assertEqual({'a': 'b', 'c': 'd'}, titan_file.json)
     titan_file.save()
 
-    # Get json_content out of the saved file.
+    # Get json out of the saved file.
     titan_file = files.File('/foo/file.json')
-    self.assertEqual({'a': 'b', 'c': 'd'}, titan_file.json_content)
+    self.assertEqual({'a': 'b', 'c': 'd'}, titan_file.json)
 
-    # Verify invalid JSON raises an error when accessed using json_content.
+    # Verify invalid JSON raises an error when accessed using json.
     titan_file = files.File('/foo/file.json')
     titan_file.write('{% some django tag %}')
-    self.assertRaises(json_mixin.BadJsonError, lambda: titan_file.json_content)
+    self.assertRaises(json_mixin.BadJsonError, lambda: titan_file.json)
 
-    # Verify ability to set json_content on a new file.
+    # Verify ability to set json on a new file.
     titan_file = files.File('/foo/new_file.json')
-    titan_file.json_content = None
+    titan_file.json = None
+    self.assertIsNone(titan_file.json)
     titan_file.save()
-    titan_file.json_content = {'foo': 'bar'}
+    titan_file.json = {}
+    self.assertEqual({}, titan_file.json)
+    titan_file.save()
+    titan_file.json = {'foo': 'bar'}
     titan_file.save()
     titan_file = files.File('/foo/new_file.json')
-    self.assertEqual({'foo': 'bar'}, titan_file.json_content)
+    self.assertEqual({'foo': 'bar'}, titan_file.json)
+
+    # Error handling.
+    self.assertRaises(
+        files.BadFileError, lambda: files.File('/fake.json').json)
 
   def testApplyPatch(self):
     titan_file = files.File('/foo/file.json')
-    titan_file.json_content = {
+    titan_file.json = {
         'foo': ['bar', 'baz']
     }
     titan_file.apply_patch([{
@@ -79,7 +87,68 @@ class JsonMixinTestCase(testing.BaseTestCase):
     expected = {
         'foo': ['bar', 'qux', 'baz']
     }
-    self.assertEqual(expected, titan_file.json_content)
+    self.assertEqual(expected, titan_file.json)
+
+class AbstractDataPersistenceTestCase(testing.BaseTestCase):
+
+  def setUp(self):
+    super(AbstractDataPersistenceTestCase, self).setUp()
+    files.register_file_mixins([json_mixin.JsonMixin])
+
+  def testAbstractDataPersistence(self):
+    # Test abstract class.
+    self.assertRaises(
+        NotImplementedError, json_mixin.AbstractDataPersistence().serialize)
+
+    # Create an arbitrary "widget" persistent data object.
+    widget = Widget('my-widget')
+    self.assertFalse(widget.exists)
+    self.assertRaises(files.BadFileError, widget.serialize)
+    self.assertRaises(files.BadFileError, widget.__getitem__, 'foo')
+    widget['bar'] = False
+    widget.update({'foo': False})
+    self.assertEqual({'bar': False, 'foo': False}, widget.serialize())
+    widget.save()
+    self.assertEqual({'bar': False, 'foo': False}, widget.serialize())
+    del widget['bar']
+    self.assertEqual({'foo': False}, widget.serialize())
+    widget.save()
+    self.assertEqual({'foo': False}, widget.serialize())
+    self.assertTrue(widget.exists)
+    self.assertRaises(KeyError, lambda: widget['fake'])
+
+    # Test get().
+    self.assertIsNone(widget.get('fake'))
+    self.assertFalse(widget.get('fake', False))
+
+    # Test __setitem__ and __getitem__.
+    widget['foo'] = True
+    self.assertTrue(widget['foo'])
+    self.assertTrue(widget.get('foo', False))
+    self.assertEqual({'foo': True}, widget.serialize())
+    self.assertRaises(KeyError, lambda: widget['bar'])
+
+    # Test update().
+    widget.update({'bar': True})
+    self.assertTrue(widget['foo'])
+    self.assertTrue(widget['bar'])
+    widget.save()
+
+    # Recreate object and test.
+    widget = Widget('my-widget')
+    self.assertEqual({'foo': True, 'bar': True}, widget.serialize())
+
+class Widget(json_mixin.AbstractDataPersistence):
+
+  def __init__(self, key):
+    self.key = key
+    self.__data_file = None
+
+  @property
+  def _data_file(self):
+    if self.__data_file is None:
+      self.__data_file = files.File('/{}.json'.format(self.key))
+    return self.__data_file
 
 if __name__ == '__main__':
   basetest.main()

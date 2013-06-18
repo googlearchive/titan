@@ -44,14 +44,14 @@ class AuthenticationError(Error):
 class RpcError(Error):
   pass
 
-def auth_func():
+def create_auth_func():
   """Default auth func."""
   email = ''
   password = ''
   if sys.stdin.isatty():
     email = raw_input('Email: ')
     password = getpass.getpass('Password: ')
-  return email, password
+  return lambda: (email, password)
 
 class TitanClient(appengine_rpc.HttpRpcServer):
   """RPC class to make authenticated requests to an App Engine app.
@@ -187,18 +187,21 @@ class Response(object):
 class AbstractRemoteFactory(object):
   """Abstract factory for creating Remote* objects."""
 
-  def __init__(self, host, auth_function=auth_func, user_agent=USER_AGENT,
-               source=SOURCE, secure=True, **kwargs):
+  def __init__(self, host, auth_function=None,
+               create_auth_function=create_auth_func, user_agent=USER_AGENT,
+               source=SOURCE, secure=True, _titan_client=None, **kwargs):
     self.host = host
     self.auth_function = auth_function
+    self.create_auth_function = create_auth_function
     self.user_agent = user_agent
     self.source = source
     self.secure = secure
     self.kwargs = kwargs
-    self._titan_client = None
+    self._titan_client = _titan_client
 
   @property
   def titan_client(self):
+    """Property for the current titan client."""
     if not self._titan_client:
       self._titan_client = self._get_titan_client(
           host=self.host,
@@ -210,6 +213,8 @@ class AbstractRemoteFactory(object):
     return self._titan_client
 
   def _get_titan_client(self, **kwargs):
+    if not self.auth_function:
+      self.auth_function = self.create_auth_function()
     return TitanClient(**kwargs)
 
   def validate_client_auth(self):
