@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Titan Tasks - Titan for App Engine
     </title>
   </head>
   <body>
@@ -32,75 +32,78 @@
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; Titan Tasks
         </div>
         <hr>
+        <h1>
+          Titan Tasks
+        </h1>
+        <h2>
+          Introduction
+        </h2>
         <p>
-          <strong><em>Titan for App Engine</em></strong> is a suite of powerful tools that helps
-          make building Python apps on App Engine even easier.
+          Titan Tasks is a wrapper around the native <a href=
+          "https://developers.google.com/appengine/docs/python/taskqueue/">App Engine Task Queue
+          API</a> which adds the ability to get realtime feedback and statistics over batches of
+          deferred tasks.
         </p>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          This provides a powerful mechanism for grouping tasks into logical units and providing
+          fast UI feedback as the tasks are scheduled and processed in the background. This gives
+          you much more specific and customizable data as an alternative to the <a href=
+          "https://developers.google.com/appengine/docs/python/taskqueue/queues#Queue_fetch_statistics">
+          Queue.fetch_statistics()</a> API.
         </p>
+        <p>
+          This is only relevant for push queues, at least for now.
+        </p>
+        <h2>
+          Installation
+        </h2>
+        <p>
+          See the <a href="/titan/install.html">Titan installation guide</a>.
+        </p>
+        <h2>
+          Demo
+        </h2>
         <ul>
-          <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
-            <ul>
-              <li>
-                <strong><a href="/titan/files/versions.html">Titan Versions</a></strong>: a version
-                control system for atomically updating files.
-              </li>
-              <li>
-                <strong><a href="/titan/files/microversions.html">Titan Microversions</a></strong>:
-                automatic versioning of every file change.
-              </li>
-              <li>
-                <strong><a href="/titan/files/mixins.html">Mixins</a></strong>: simple plugins that
-                let you extend and customize Titan Files.
-              </li>
-            </ul>
+          <li>Demo: <a href=
+          "https://titan-tasks-demo.appspot.com/">https://titan-tasks-demo.appspot.com/</a>
+          </li>
+          <li>Demo source: <a href=
+          "https://github.com/GoogleCloudPlatform/titan/tree/master/samples/tasks">https://github.com/GoogleCloudPlatform/titan/tree/master/samples/tasks</a>
           </li>
         </ul>
         <p>
-          Titan also includes libraries that are built on Titan Files:
+          <a href="https://titan-tasks-demo.appspot.com/"><img alt="Titan Tasks Demo" src=
+          "../images/titan-tasks.jpg" title="Titan Tasks Demo"></a>
         </p>
+        <h2>
+          Usage
+        </h2>
+        <p>
+          Check out the demo app and source above which shows an app that can create new "widgets"
+          in tasks, and provides realtime feedback as they are queued, running, successful, or
+          failed.
+        </p>
+        <h2>
+          Notes
+        </h2>
+        <p>
+          This is beta and may change as we refine the API further. The sample app uses Google
+          Closure for its JavaScript library—we would be happy to accept contributions for other
+          JavaScript libraries.
+        </p>
+        <h2>
+          Known issues:
+        </h2>
         <ul>
-          <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
-          </li>
-          <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
-          </li>
-          <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
-          </li>
-          <li>
-            <strong><a href="/titan/users/">Titan Users</a></strong>: A convenience wrapper around
-            the App Engine Users API and OAuth2.
-          </li>
-          <li>
-            <strong><a href="/titan/tasks/">Titan Tasks</a></strong>: Granular, realtime feedback
-            over deferred task batches.
-          </li>
-          <li>
-            <strong><a href="/titan/channels/">Titan Channels</a></strong>: Centralized,
-            multi-subscriber broadcast channels.
+          <li>You cannot subscribe to events from more than one task manager on a page since the
+          native Channel API limits to one open connection per page. This could be solved with a
+          shared message queue internally to <a href="/titan/channels/">Titan Channels</a>, but has
+          not been implemented yet.
           </li>
         </ul>
-        <p>
-          See the <a href="/titan/install.html">Installation Guide</a>.
-        </p>
-        <p>
-          We welcome contributions! See the <a href="/titan/developers-guide.html">Developer's
-          Guide</a> and please <a href="https://github.com/googlecloudplatform/titan/issues">file
-          bugs</a>.
-        </p>
       </section>
     </div>
     <div class="outer" id="footer_wrap">

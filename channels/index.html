@@ -6,7 +6,7 @@
     <meta content="Titan for App Engine : App Engine, extended." name="description">
     <link href="/titan/css/stylesheet.css" media="screen" rel="stylesheet">
     <title>
-      Titan for App Engine
+      Titan Channels - Titan for App Engine
     </title>
   </head>
   <body>
@@ -32,75 +32,149 @@
     <div class="outer" id="main_content_wrap">
       <section class="inner" id="main_content">
         <div id="breadcrumbs">
-          Titan
+          <a href="/titan/">Titan</a> &gt; Titan Channels
         </div>
         <hr>
+        <h1>
+          Titan Channels
+        </h1>
+        <h2>
+          Overview
+        </h2>
         <p>
-          <strong><em>Titan for App Engine</em></strong> is a suite of powerful tools that helps
-          make building Python apps on App Engine even easier.
+          <em>(from the <a href=
+          "https://developers.google.com/appengine/docs/python/channel/overview">App Engine Channel
+          API docs</a>)</em>
+        </p>
+        <blockquote>
+          <p>
+            The Channel API creates a persistent connection between your application and Google
+            servers, allowing your application to send messages to JavaScript clients in real time
+            without the use of polling. This is useful for applications designed to update users
+            about new information immediately. Some example use-cases include collaborative
+            applications, multi-player games, or chat rooms. In general, using the Channel API is a
+            better choice than polling in situations where updates can't be predicted or scripted,
+            such as when relaying information between human users or from events not generated
+            systematically.
+          </p>
+        </blockquote>
+        <h2>
+          Introduction
+        </h2>
+        <p>
+          Titan Channels is a simple wrapper around the native <a href=
+          "https://developers.google.com/appengine/docs/python/channel/overview">App Engine Channel
+          API</a> which adds the ability to have <strong>multiple users connected to a single
+          channel</strong>.
         </p>
         <p>
-          Titan started as a simple filesystem abstraction, but has grown into a fully-featured
-          library that extends the native App Engine APIs and provides reusable modules for many
-          common patterns.
+          The native App Engine library is restricted to "<a href=
+          "https://developers.google.com/appengine/docs/python/channel/overview#Caveats">one client
+          per client ID</a>", so your application must manage the list of subscribed clients in
+          order to send common messages to all of them. The Titan&nbsp;Channel API makes this
+          common use-case easier by managing that list for you.
         </p>
+        <h2>
+          Demo
+        </h2>
         <ul>
-          <li>
-            <strong><a href="/titan/files/">Titan Files</a></strong>: a filesystem abstraction for
-            App Engine.
-            <ul>
-              <li>
-                <strong><a href="/titan/files/versions.html">Titan Versions</a></strong>: a version
-                control system for atomically updating files.
-              </li>
-              <li>
-                <strong><a href="/titan/files/microversions.html">Titan Microversions</a></strong>:
-                automatic versioning of every file change.
-              </li>
-              <li>
-                <strong><a href="/titan/files/mixins.html">Mixins</a></strong>: simple plugins that
-                let you extend and customize Titan Files.
-              </li>
-            </ul>
+          <li>Demo: <a href=
+          "https://titan-channel-demo.appspot.com/">https://titan-channel-demo.appspot.com/</a>
+          </li>
+          <li>Demo source: <a href=
+          "https://github.com/GoogleCloudPlatform/titan/tree/master/samples/channel">https://github.com/GoogleCloudPlatform/titan/tree/master/samples/channel</a>
           </li>
         </ul>
+        <h2>
+          Usage
+        </h2>
         <p>
-          Titan also includes libraries that are built on Titan Files:
+          The code flow is very similar to using the native Channel API. The server-side code path
+          looks something like:
         </p>
+        <pre>
+<code># First, create a secret channel token for the individual user's JavaScript client.
+token = channel.CreateChannel(some_unique_client_id)
+...
+# Second, subscribe the client to the broadcast channel.
+broadcast_channel = channel.BroadcastChannel('shared-channel-key')
+broadcast_channel.Subscribe(some_unique_client_id)
+...
+# Send messages using the broadcast channel.
+broadcast_channel.SendMessage('hello world!')
+</code>
+</pre>
+        <p>
+          While the client side using <a href=
+          "https://developers.google.com/closure/library/">Google Closure Library</a> looks
+          something like:
+        </p>
+        <pre>
+<code>var broadcastChannel = new titan.channel.BroadcastChannel('');
+goog.events.listen(
+    broadcastChannel, titan.channel.BroadcastChannel.EventType.CONNECTED, function(e) {
+      // After the connection is open, subscribe to all messages.
+      broadcastChannel.subscribe();
+
+      // This endpoint will call broadcast_channel.Subscribe() for the given client_id.
+      goog.net.XhrIo.send('/join', null, 'POST', 'client_id=');
+    });
+broadcastChannel.connect('');
+</code>
+</pre>
+        <hr>
+        <p>
+          Check out the demo app and source above that shows a simple chat room app. Basically, the
+          important bits in the source are:
+        </p>
+        <p>
+          The request handler to join the chat room:
+        </p>
+        <pre>
+<code>from titan import channel
+
+class JoinRoomHandler(webapp2.RequestHandler):
+
+  def post(self):
+    client_id = self.request.get('client_id')
+    broadcast_channel = channel.BroadcastChannel(key='chat-room-name')
+    broadcast_channel.Subscribe(client_id)
+</code>
+</pre>
+        <p>
+          And the request handler for sending a message:
+        </p>
+        <pre>
+<code>from titan import channel
+from titan import users
+
+class SendMessageHandler(webapp2.RequestHandler):
+
+  def post(self):
+    user = users.GetCurrentUser()
+    message = self.request.get('message')
+    broadcast_channel = channel.BroadcastChannel(key='chat-room-name')
+    message = '%s: %s' % (user.email, cgi.escape(message, quote=True))
+    broadcast_channel.SendMessage(message)
+</code>
+</pre>
+        <h2>
+          Notes
+        </h2>
+        <p>
+          This is beta and may change as we refine the API further. The sample app uses Google
+          Closure for its JavaScript library—we would be happy to accept contributions for other
+          JavaScript libraries.
+        </p>
+        <h2>
+          Known issues:
+        </h2>
         <ul>
-          <li>
-            <strong><a href="/titan/activities/">Titan Activities</a></strong>: Activity tracking
-            for application activities.
-          </li>
-          <li>
-            <strong><a href="/titan/stats/">Titan Stats</a></strong>: Customizable counters for
-            recording app statistics over time.
-          </li>
-          <li>
-            <strong><a href="/titan/pipelines/">Titan Pipelines</a></strong>: A data-processing
-            pipeline implementation.
-          </li>
-          <li>
-            <strong><a href="/titan/users/">Titan Users</a></strong>: A convenience wrapper around
-            the App Engine Users API and OAuth2.
-          </li>
-          <li>
-            <strong><a href="/titan/tasks/">Titan Tasks</a></strong>: Granular, realtime feedback
-            over deferred task batches.
-          </li>
-          <li>
-            <strong><a href="/titan/channels/">Titan Channels</a></strong>: Centralized,
-            multi-subscriber broadcast channels.
+          <li>You cannot subscribe to more than one broadcast channel on a page since the native
+          Channel API limits to one open connection per page. This could be solved with a shared
+          message queue internally to the Titan Channel API, but has not been implemented yet.
           </li>
         </ul>
-        <p>
-          See the <a href="/titan/install.html">Installation Guide</a>.
-        </p>
-        <p>
-          We welcome contributions! See the <a href="/titan/developers-guide.html">Developer's
-          Guide</a> and please <a href="https://github.com/googlecloudplatform/titan/issues">file
-          bugs</a>.
-        </p>
       </section>
     </div>
     <div class="outer" id="footer_wrap">
