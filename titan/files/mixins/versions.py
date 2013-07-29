@@ -21,6 +21,7 @@ Documentation:
 
 import hashlib
 import logging
+import os
 import re
 
 from google.appengine.ext import ndb
@@ -29,6 +30,7 @@ from titan.common import strong_counters
 from titan import files
 from titan import users
 from titan.common import utils
+from titan.files import dirs
 
 class ChangesetStatus(object):
   staging = 'new'
@@ -58,6 +60,9 @@ class ChangesetError(Error, ValueError):
 class InvalidChangesetError(ChangesetError):
   pass
 
+class ChangesetNotFoundError(ChangesetError):
+  pass
+
 class FileVersionError(Error, ValueError):
   pass
 
@@ -79,7 +84,7 @@ class NoManifestError(ChangesetError):
 class ChangesetRebaseError(ChangesetError):
   pass
 
-class FileVersioningMixin(files.File):
+class FileVersioningMixin(dirs.DirManagerMixin, files.File):
   """Mixin to provide versioned file handling.
 
   If created without an associated changeset, this object will dynamically
@@ -350,12 +355,14 @@ class FileVersioningMixin(files.File):
           kwargs['modified_by'] = kwargs.get(
               'modified_by', root_file.modified_by)
           kwargs['modified'] = kwargs.get('modified', root_file.modified)
-          if not kwargs['content'] and not kwargs['blob']:
+          if kwargs['content'] is None and kwargs['blob'] is None:
             # Neither content or blob given, copy content from root_file.
             if root_file.blob:
               kwargs['blob'] = root_file.blob
             else:
               kwargs['content'] = root_file.content
+              # Unset encoding, let it be set based on the root content.
+              kwargs['encoding'] = None
           # Copy meta attributes.
           for key, value in root_file.meta.serialize().iteritems():
             if key not in kwargs['meta']:
@@ -452,7 +459,7 @@ class Changeset(object):
       self._changeset_ent = _Changeset.get_by_id(
           str(self._num), parent=root_changeset, namespace=self.namespace)
       if not self._changeset_ent:
-        raise ChangesetError('Changeset %s does not exist.' % self._num)
+        raise ChangesetNotFoundError('Changeset %s does not exist.' % self._num)
     return self._changeset_ent
 
   @property
@@ -601,25 +608,64 @@ class Changeset(object):
     if not self._finalized_files:
       raise ChangesetError(
           'Cannot guarantee strong consistency when associated file paths '
-          'have not been finalized. Perhaps you want list_files?')
+          'have not been finalized. See finalize_associated_files() '
+          'or use changeset.list_files() for an eventually-consistent view.')
 
     titan_files = files.Files(
         files=list(self._associated_files), namespace=self.namespace)
     return titan_files
 
-  def list_files(self):
+  def list_files(self, dir_path, recursive=False, depth=None, filters=None,
+                 limit=None, offset=None, order=None,
+                 include_deleted=True, include_manifested=False, **kwargs):
     """Queries and returns a Files object containing this changeset's files.
 
     This method is always eventually consistent and may not contain recently
     changed files.
 
+    Args:
+      dir_path: Absolute directory path.
+      recursive: Whether to list files recursively.
+      depth: If recursive, a positive integer to limit the recursion depth.
+          1 is one folder deep, 2 is two folders deep, etc.
+      filters: An iterable of FileProperty comparisons, for example:
+          [files.FileProperty('created_by') == 'example@example.com']
+      order: An iterable of files.FileProperty objects to sort the result set.
+      limit: An integer limiting the number of files returned.
+      offset: Number of files to offset the query by.
+      include_deleted: Whether or not to include deleted files.
+      include_manifested: Whether or not to include manifested files in
+          the result set. If given, the following arguments cannot be passed:
+          depth, filters, order, limit, offset.
     Raises:
       ChangesetError: If the status is 'deleted' or 'deleted-by-submit'.
+      ValueError: If include_manifested is set and unsupported args are passed.
     Returns:
-      A files.Files object.
+      A files.OrderedFiles object.
     """
+    utils.validate_dir_path(dir_path)
+    manifested_paths_to_changeset_num = {}
+    if include_manifested:
+      if (depth is not None or filters is not None or order is not None
+          or limit is not None or offset is not None):
+        raise ValueError(
+            'The following arguments are not supported when '
+            'include_manifested is set: depth, filters, order, limit, offset.')
+      if self.status == ChangesetStatus.staging:
+        # If staging changeset, fetch manifest from base_changeset.
+        changeset_with_manifest = self.base_changeset
+      elif self.status == ChangesetStatus.submitted:
+        # If submitted changeset, fetch manifest from self.
+        changeset_with_manifest = self
+
+      if changeset_with_manifest:  # Skip if this is the first-ever changeset.
+        manifested_paths_to_changeset_num = _list_manifested_paths(
+            changeset=changeset_with_manifest,
+            dir_path=dir_path, recursive=recursive)
+
     if self.status in (
-        ChangesetStatus.deleted_by_submit, ChangesetStatus.deleted):
+        ChangesetStatus.deleted_by_submit, ChangesetStatus.deleted,
+        ChangesetStatus.presubmit):
       raise ChangesetError(
           'Cannot list files from changeset {:d} which is "{}".'.format(
               self.num, self.status))
@@ -629,14 +675,94 @@ class Changeset(object):
       # the staging changeset's number, since they are never moved.
       changeset = changeset.linked_changeset
 
-    versioned_files = files.Files.list(
-        changeset.base_path, namespace=self.namespace, recursive=True,
+    if not include_deleted:
+      if filters is None:
+        filters = []
+      filters.append(files.FileProperty('status') != FileStatus.deleted)
+
+    versioned_files = files.OrderedFiles.list(
+        utils.safe_join(changeset.base_path, dir_path[1:]),
+        namespace=self.namespace, recursive=recursive,
+        depth=depth, filters=filters, order=order, limit=limit, offset=offset,
         # Important: use changeset=self, not changeset=changeset, to make sure
         # submitted changesets are viewed correctly and not manifested.
         changeset=self,
-        _allow_deleted_files=True)
+        _allow_deleted_files=include_deleted,
+        **kwargs)
+
+    if include_manifested and manifested_paths_to_changeset_num:
+      new_versioned_files = files.OrderedFiles(namespace=self.namespace)
+      for path in manifested_paths_to_changeset_num:
+        titan_file = files.File(
+            path, changeset=self, namespace=self.namespace, **kwargs)
+        new_versioned_files.update(
+            files.Files(files=[titan_file], namespace=self.namespace, **kwargs))
+      # Overlay changeset files on top of manifested files:
+      new_versioned_files.update(versioned_files)
+      versioned_files = new_versioned_files
+      versioned_files.sort()
+
     # Recreate a Files object to get rid of versioned paths in the keys:
-    return files.Files(files=versioned_files.values(), namespace=self.namespace)
+    return files.OrderedFiles(
+        files=versioned_files.values(), namespace=self.namespace)
+
+  def list_directories(self, dir_path, include_manifested=False, **kwargs):
+    """Lists directories.
+
+    This method is always eventually consistent and may not contain recently
+    changed directories.
+
+    Args:
+      dir_path: Absolute directory path.
+      include_manifested: Whether or not to include manifested directories in
+          the result set.
+      **kwargs: Keyword arguments to pass through to Dir objects.
+    Raises:
+      ChangesetError: If list_directories is called on unsupported changesets.
+    Returns:
+      A dirs.Dirs object.
+    """
+    utils.validate_dir_path(dir_path)
+    if self.status == ChangesetStatus.staging:
+      versioned_dir_path = self.base_path
+      # If staging changeset, fetch manifest from base_changeset.
+      changeset_with_manifest = self.base_changeset
+    elif self.status == ChangesetStatus.submitted:
+      versioned_dir_path = self.linked_changeset_base_path
+      # If submitted changeset, fetch manifest from self.
+      changeset_with_manifest = self
+    else:
+      raise ChangesetError(
+          'Unsupported changeset status: {}'.format(self.status))
+
+    if include_manifested:
+      manifested_paths_to_changeset_num = _list_manifested_paths(
+          # Must always be recursive to include sparse, deep directory trees.
+          changeset=changeset_with_manifest, dir_path=dir_path, recursive=True)
+
+    titan_dirs = dirs.Dirs.list(
+        utils.safe_join(versioned_dir_path, dir_path[1:]),
+        namespace=self.namespace, strip_prefix=versioned_dir_path, **kwargs)
+
+    complete_dir_paths = set()
+    if include_manifested and manifested_paths_to_changeset_num:
+      for path in manifested_paths_to_changeset_num:
+        # These are file paths, strip them down to directory paths.
+        complete_dir_paths.add(os.path.dirname(path))
+      complete_dir_paths -= set(['/', dir_path])
+
+      depth = 1 if dir_path == '/' else dir_path.count('/') + 1
+      for manifested_dir_path in complete_dir_paths:
+        # Strip path name down to just one directory deeper than dir_path.
+        manifested_dir_path = manifested_dir_path[1:]
+        path = os.path.join('/', *manifested_dir_path.split('/')[:depth])
+        titan_dir = dirs.Dir(path, namespace=self.namespace, **kwargs)
+        titan_dirs[titan_dir.path] = titan_dir
+      titan_dirs.sort()
+
+    # Recreate the Dirs object to get rid of versioned paths in the keys:
+    return dirs.Dirs(
+        dirs=titan_dirs.values(), strip_prefix=versioned_dir_path, **kwargs)
 
   def revert_file(self, titan_file):
     _require_file_has_staging_changeset(titan_file)
@@ -1142,7 +1268,8 @@ class VersionControlService(object):
       if not force:
         raise
       # Got force=True, get files with an eventually-consistent query.
-      staged_files = staging_changeset.list_files()
+      staged_files = staging_changeset.list_files(
+          '/', recursive=True, include_deleted=True)
 
     # Preload files so that they are not lazily loaded inside of the commit
     # transaction and count against the xg-transaction limit.
@@ -1193,14 +1320,8 @@ class VersionControlService(object):
       new_manifest = {}
       # If this isn't the first-ever committed changeset, copy the old manifest.
       if staging_changeset.base_changeset:
-        manifest_shard_keys = _make_manifest_shard_keys(base_changeset)
-        manifest_shards = ndb.get_multi(manifest_shard_keys)
-        if not all(manifest_shards):
-          raise CommitError(
-              'Expected complete manifest shards, but got: {!r}'.format(
-                  manifest_shards))
-        for manifest_shard in manifest_shards:
-          new_manifest.update(manifest_shard.paths_to_changeset_num)
+        full_manifest = _fetch_full_manifest(base_changeset)
+        new_manifest.update(full_manifest)
 
       for staged_file in staged_files.itervalues():
         if staged_file.meta.status == FileStatus.deleted:
@@ -1347,6 +1468,41 @@ def _make_versioned_path(path, changeset):
   if not isinstance(path, basestring):
     raise TypeError('path argument must be a string: %r' % path)
   return VERSIONS_PATH_FORMAT % (changeset.num, path)
+
+def _fetch_full_manifest(base_changeset):
+  full_manifest = {}
+  manifest_shard_keys = _make_manifest_shard_keys(base_changeset)
+  manifest_shards = ndb.get_multi(manifest_shard_keys)
+  if not all(manifest_shards):
+    raise CommitError(
+        'Expected complete manifest shards, but got: {!r}'.format(
+            manifest_shards))
+  for manifest_shard in manifest_shards:
+    full_manifest.update(manifest_shard.paths_to_changeset_num)
+  return full_manifest
+
+def _list_manifested_paths(changeset, dir_path, recursive=False):
+  paths_to_changeset_num = _fetch_full_manifest(changeset)
+
+  # Add trailing slash.
+  if dir_path != '/' and not dir_path.endswith('/'):
+    dir_path += '/'
+
+  desired_start_depth = dir_path.count('/') - 1
+  new_paths_to_changeset_num = {}
+  # Limit paths by dir_path and recursive.
+  for path, changeset_num in paths_to_changeset_num.iteritems():
+    # Depth 0 is root, depth 1 is one folder deep, etc.
+    path_depth = path.count('/') - 1
+    # Discard paths which are not deep enough or too deep.
+    if (path_depth < desired_start_depth
+        or not recursive and path_depth > desired_start_depth):
+      continue
+    # Discard paths in different directories.
+    if not path.startswith(dir_path):
+      continue
+    new_paths_to_changeset_num[path] = changeset_num
+  return new_paths_to_changeset_num
 
 def _require_file_has_changeset(titan_file):
   if not titan_file.changeset:

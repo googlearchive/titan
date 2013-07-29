@@ -90,8 +90,8 @@ class WidgetsTasksStartHandler(webapp2.RequestHandler):
 
 def create_deferred_widgets(task_manager, widget_ids):
   for task_key in widget_ids:
-    task_manager.DeferTask(task_key, create_widget)
-  task_manager.Finalize()
+    task_manager.defer_task(task_key, create_widget)
+  task_manager.finalize()
 
 def create_widget():
   # A fake method.

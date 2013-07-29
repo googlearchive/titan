@@ -786,6 +786,77 @@ class TestCase(unittest.TestCase):
       for a, b in itertools.product(group, group):
         CheckEqual(a, b)
 
+  def assertDictEqual(self, a, b, msg=None):
+    """Raises AssertionError if a and b are not equal dictionaries.
+
+    Args:
+      a: A dict, the expected value.
+      b: A dict, the actual value.
+      msg: An optional str, the associated message.
+
+    Raises:
+      AssertionError: if the dictionaries are not equal.
+    """
+    self.assertIsInstance(a, dict, 'First argument is not a dictionary')
+    self.assertIsInstance(b, dict, 'Second argument is not a dictionary')
+
+    def Sorted(iterable):
+      try:
+        return sorted(iterable)  # In 3.3, unordered objects are possible.
+      except TypeError:
+        return list(iterable)
+
+    if a == b:
+      return
+    a_items = Sorted(a.iteritems())
+    b_items = Sorted(b.iteritems())
+
+    unexpected = []
+    missing = []
+    different = []
+
+    safe_repr = unittest.util.safe_repr
+
+    def Repr(dikt):
+      """Deterministic repr for dict."""
+      # Sort the entries based on their repr, not based on their sort order,
+      # which will be non-deterministic across executions, for many types.
+      entries = sorted((safe_repr(k), safe_repr(v))
+                       for k, v in dikt.iteritems())
+      return '{%s}' % (', '.join('%s: %s' % pair for pair in entries))
+
+    message = ['%s != %s%s' % (Repr(a), Repr(b), ' (%s)' % msg if msg else '')]
+
+    # The standard library default output confounds lexical difference with
+    # value difference; treat them separately.
+    for a_key, a_value in a_items:
+      if a_key not in b:
+        unexpected.append((a_key, a_value))
+      elif a_value != b[a_key]:
+        different.append((a_key, a_value, b[a_key]))
+
+    if unexpected:
+      message.append(
+          'Unexpected, but present entries:\n%s' % ''.join(
+              '%s: %s\n' % (safe_repr(k), safe_repr(v)) for k, v in unexpected))
+
+    if different:
+      message.append(
+          'repr() of differing entries:\n%s' % ''.join(
+              '%s: %s != %s\n' % (safe_repr(k), safe_repr(a_value),
+                                  safe_repr(b_value))
+              for k, a_value, b_value in different))
+
+    for b_key, b_value in b_items:
+      if b_key not in a:
+        missing.append((b_key, b_value))
+    if missing:
+      message.append(
+          'Missing entries:\n%s' % ''.join(
+              ('%s: %s\n' % (safe_repr(k), safe_repr(v)) for k, v in missing)))
+
+    raise self.failureException('\n'.join(message))
+
   def assertUrlEqual(self, a, b):
     """Asserts that urls are equal, ignoring ordering of query params."""
     parsed_a = urlparse.urlparse(a)
@@ -1108,9 +1179,15 @@ def _WriteTestData(data, filename):
   os.close(fd)
 
 
+_INT_TYPES = (int, long)  # Sadly there is no types.IntTypes defined for us.
+
+
 def _WalkStructureForProblems(a, b, aname, bname, problem_list):
   """The recursive comparison behind assertSameStructure."""
-  if type(a) != type(b):
+  if type(a) != type(b) and not (
+      isinstance(a, _INT_TYPES) and isinstance(b, _INT_TYPES)):
+    # We do not distinguish between int and long types as 99.99% of Python 2
+    # code should never care.  They collapse into a single type in Python 3.
     problem_list.append('%s is a %r but %s is a %r' %
                         (aname, type(a), bname, type(b)))
     # If they have different types there's no point continuing

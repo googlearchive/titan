@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Copyright 2012 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +51,13 @@ class FileVersioningMixin(versions.FileVersioningMixin, files.File):
       return False
     return versions.FileVersioningMixin.should_apply_mixin(**kwargs)
 
+def process_microversions():
+  results = microversions.process_data()
+  for result in results:
+    if 'error' in result:
+      raise result['error']
+  return results
+
 class MicroversionsTest(testing.BaseTestCase):
 
   def setUp(self):
@@ -85,7 +93,7 @@ class MicroversionsTest(testing.BaseTestCase):
     # This will immediately go to blobstore, then the deferred task will
     # have a "blob" argument:
     files.File('/foo').write(LARGE_FILE_CONTENT)
-    microversions.process_data()
+    process_microversions()
     # After tasks run, verify correct content was saved to the versioned paths:
     file_versions = self.vcs.get_file_versions('/foo')
 
@@ -112,18 +120,18 @@ class MicroversionsTest(testing.BaseTestCase):
 
     # Verify that this doesn't error, the behavior should be the same as above.
     files.File('/foo').write(EXPLODING_FILE_CONTENT)
-    microversions.process_data()
+    process_microversions()
 
   def testMicroversions(self):
     # write.
-    files.File('/foo').write('foo')
-    self.Logout()  # Mimic the cron job.
-    results = microversions.process_data()
+    files.File('/foo').write('foo', encoding='utf-8')
+    self.logout()  # Mimic the cron job.
+    results = process_microversions()
     self.login()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(2, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset)
-    self.assertEqual('foo', titan_file.content)
+    self.assertEqual(u'foo', titan_file.content)
 
     # The final changeset's created_by should be None, because it's created
     # internally in a cron job and shares multiple user writes.
@@ -132,7 +140,7 @@ class MicroversionsTest(testing.BaseTestCase):
     # write with an existing root file (which should be copied to the version).
     files.File('/foo', _no_mixins=True).write('new foo')
     files.File('/foo').write(meta={'color': 'blue'})
-    results = microversions.process_data()
+    results = process_microversions()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(4, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset)
@@ -142,7 +150,7 @@ class MicroversionsTest(testing.BaseTestCase):
     # Delete. Also, this verifies that delete doesn't rely on the presence
     # of the root file.
     files.File('/foo').delete()
-    results = microversions.process_data()
+    results = process_microversions()
     final_changeset = results[0]['changeset'].linked_changeset
     self.assertEqual(6, final_changeset.num)
     titan_file = files.File('/foo', changeset=final_changeset)
@@ -158,9 +166,9 @@ class MicroversionsTest(testing.BaseTestCase):
     self.assertEqual(versions.FileStatus.created, file_versions[2].status)
 
   def testStronglyConsistentCommits(self):
-    # Microversions uses FinalizeAssociatedPaths so the Commit() path should use
-    # the always strongly-consistent get_files(), rather than a query. Verify
-    # this behavior by simulating a never-consistent HR datastore.
+    # Microversions uses finalize_associated_files so the commit() path should
+    # use the always strongly-consistent get_files(), rather than a query.
+    # Verify this behavior by simulating a never-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=0)
     self.testbed.init_datastore_v3_stub(consistency_policy=policy)
 
@@ -184,17 +192,17 @@ class MicroversionsTest(testing.BaseTestCase):
 
     # Verify that the blob is not deleted when microversioned content resizes.
     files.File('/foo').write(blob=blob_key)
-    microversions.process_data()
+    process_microversions()
     titan_file = files.File('/foo')
     self.assertTrue(titan_file.blob)
     self.assertEqual('Blobstore!', titan_file.content)
-    microversions.process_data()
+    process_microversions()
     # Resize as smaller (shouldn't delete the old blob).
     files.File('/foo').write('foo')
     files.File('/foo').write(blob=blob_key)  # Resize back to large size.
     # Delete file (shouldn't delete the old blob).
     files.File('/foo').delete()
-    microversions.process_data()
+    process_microversions()
     file_versions = self.vcs.get_file_versions('/foo')
 
     # Deleted file (blob should be None).

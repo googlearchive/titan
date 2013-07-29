@@ -63,6 +63,9 @@ class FileTestCase(testing.BaseTestCase):
     _ = titan_file.mime_type
     self.assertNotEqual(None, titan_file._file_ent)
     self.assertTrue(titan_file.is_loaded)
+    titan_file.unload()
+    self.assertFalse(titan_file.is_loaded)
+    self.assertIsNone(titan_file._file_ent)
 
     # Init with a _TitanFile entity.
     file_ent = files._TitanFile.get_by_id('/foo/bar.html')
@@ -340,6 +343,7 @@ class FileTestCase(testing.BaseTestCase):
     self.assertRaises(TypeError, titan_file.write, content=None, blob=None)
     self.assertRaises(TypeError, titan_file.write, content='Test',
                       blob=self.blob_key)
+    self.assertRaises(TypeError, titan_file.write, encoding='utf-8')
 
     # There are some reserved words that cannot be used in meta properties.
     invalid_meta_keys = [

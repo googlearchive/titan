@@ -15,14 +15,14 @@
 
 """Tests for endpoints.py."""
 
-from tests.common import testing
+from tests.common.lib import endpointstest
 
 import webtest
 from protorpc import message_types
 from titan.common.lib.google.apputils import basetest
 from titan import endpoints
 
-class EndpointsTest(testing.EndpointsTestCase):
+class EndpointsTest(endpointstest.EndpointsTestCase):
 
   def CreateWsgiApplication(self):
     """Returns the wsgi application for the service endpoint testing."""

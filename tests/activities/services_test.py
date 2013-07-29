@@ -15,14 +15,14 @@
 
 """Tests for services.py."""
 
-from tests.common import testing
+from tests.common.lib import endpointstest
 
 from titan.common.lib.google.apputils import basetest
 from titan import endpoints
 from titan.activities import messages
 from titan.activities import services
 
-class ServicesTest(testing.EndpointsTestCase):
+class ServicesTest(endpointstest.EndpointsTestCase):
 
   def setUp(self):
     super(ServicesTest, self).setUp()

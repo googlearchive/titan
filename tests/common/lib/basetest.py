@@ -24,10 +24,11 @@ from google.appengine.api import apiproxy_stub_map
 from google.appengine.datastore import datastore_stub_util
 from google.appengine.ext import deferred
 from google.appengine.ext import testbed
-from titan.common.lib.google.apputils import basetest
-from google.appengine.api.search import simple_search_stub
 from google.appengine.runtime import request_environment
 from google.appengine.runtime import runtime
+from titan.common.lib.google.apputils import basetest
+
+from google.appengine.api.search import simple_search_stub
 
 # Replace start_new_thread with a version where new threads inherit os.environ
 # from their creator thread.
@@ -49,8 +50,9 @@ class AppEngineTestCase(basetest.TestCase):
     self.InitTestbed()
 
     # Register the search stub (until included in init_all_stubs).
-    self.search_stub = simple_search_stub.SearchServiceStub()
-    apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
+    if simple_search_stub:
+      self.search_stub = simple_search_stub.SearchServiceStub()
+      apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
 
     # Fake an always strongly-consistent HR datastore.
     policy = datastore_stub_util.PseudoRandomHRConsistencyPolicy(probability=1)
@@ -109,6 +111,7 @@ class AppEngineTestCase(basetest.TestCase):
       self.users_stub.SetOAuthUser(
           email=email, user_id=user_id, domain=organization, is_admin=is_admin,
           scopes=scopes)
+      os.environ['HTTP_AUTHORIZATION'] = 'Bearer 1/accesstoken'
     else:
       self.testbed.setup_env(
           overwrite=True,
@@ -129,6 +132,8 @@ class AppEngineTestCase(basetest.TestCase):
     self.users_stub.SetOAuthUser(email=None)
     if 'OAUTH_ERROR_CODE' in os.environ:
       del os.environ['OAUTH_ERROR_CODE']
+    if 'HTTP_AUTHORIZATION' in os.environ:
+      del os.environ['HTTP_AUTHORIZATION']
 
   def RunDeferredTasks(self, queue_name='default', runs=None, delete=True):
     """Runs all of the deferred tasks in a particular queue.

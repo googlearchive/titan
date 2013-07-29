@@ -83,11 +83,26 @@ class DirManagerTest(testing.BaseTestCase):
     self.assertEqual('b', titan_dir.name)
     self.assertEqual('/a/b', titan_dir.path)
 
+  def testStripPrefix(self):
+    files.register_file_mixins([dirs.DirManagerMixin])
+    titan_dir = dirs.Dir('/a/b', strip_prefix='/a')
+    self.assertEqual('/b', titan_dir.path)
+    titan_dir = dirs.Dir('/a/b', strip_prefix='/a/')
+    self.assertEqual('/b', titan_dir.path)
+    self.assertFalse(titan_dir.exists)
+    files.File('/a/b/foo').write('')
+    self.assertTrue(titan_dir.exists)
+    titan_dirs = dirs.Dirs.list('/a/', strip_prefix='/a/')
+    # Recreate object to strip paths:
+    titan_dirs = dirs.Dirs(dirs=titan_dirs.values())
+    self.assertEqual('/b', titan_dirs['/b'].path)
+
   def testModifiedPath(self):
     # Test serialize().
     now = datetime.datetime.now()
     expected = {
         'path': '/foo',
+        'namespace': None,
         'modified': now,
         'action': dirs._STATUS_AVAILABLE,
     }
@@ -98,9 +113,10 @@ class DirManagerTest(testing.BaseTestCase):
 
     # /a/b/foo is written.
     modified_path = dirs.ModifiedPath(
-        '/a/b/foo', modified=0, action=PATH_WRITE_ACTION)
+        '/a/b/foo', namespace=None, modified=0, action=PATH_WRITE_ACTION)
     affected_dirs = dir_service.compute_affected_dirs([modified_path])
     expected_affected_dirs = {
+        'namespace': None,
         'dirs_with_adds': set(['/a', '/a/b']),
         'dirs_with_deletes': set(),
     }
@@ -108,9 +124,10 @@ class DirManagerTest(testing.BaseTestCase):
 
     # /a/b/foo is deleted.
     modified_path = dirs.ModifiedPath(
-        '/a/b/foo', modified=0, action=PATH_DELETE_ACTION)
+        '/a/b/foo', namespace=None, modified=0, action=PATH_DELETE_ACTION)
     affected_dirs = dir_service.compute_affected_dirs([modified_path])
     expected_affected_dirs = {
+        'namespace': None,
         'dirs_with_adds': set(),
         'dirs_with_deletes': set(['/a', '/a/b']),
     }
@@ -118,11 +135,14 @@ class DirManagerTest(testing.BaseTestCase):
 
     # /a/b/foo is added, then deleted -- dirs should exist in only one list.
     added_path = dirs.ModifiedPath(
-        '/a/b/foo', modified=123123.1, action=PATH_WRITE_ACTION)
+        '/a/b/foo', namespace=None, modified=123123.1, action=PATH_WRITE_ACTION)
     deleted_path = dirs.ModifiedPath(
-        '/a/b/foo', modified=123123.2, action=PATH_DELETE_ACTION)
-    affected_dirs = dir_service.compute_affected_dirs([added_path, deleted_path])
+        '/a/b/foo', namespace=None, modified=123123.2,
+        action=PATH_DELETE_ACTION)
+    affected_dirs = dir_service.compute_affected_dirs(
+        [added_path, deleted_path])
     expected_affected_dirs = {
+        'namespace': None,
         'dirs_with_adds': set(),
         'dirs_with_deletes': set(['/a', '/a/b']),
     }
@@ -130,11 +150,14 @@ class DirManagerTest(testing.BaseTestCase):
 
     # Test different file paths -- dirs should exist in both lists.
     added_path = dirs.ModifiedPath(
-        '/a/b/foo', modified=123123.1, action=PATH_WRITE_ACTION)
+        '/a/b/foo', namespace=None, modified=123123.1, action=PATH_WRITE_ACTION)
     deleted_path = dirs.ModifiedPath(
-        '/a/b/c/d/bar', modified=123123.2, action=PATH_DELETE_ACTION)
-    affected_dirs = dir_service.compute_affected_dirs([added_path, deleted_path])
+        '/a/b/c/d/bar', namespace=None, modified=123123.2,
+        action=PATH_DELETE_ACTION)
+    affected_dirs = dir_service.compute_affected_dirs(
+        [added_path, deleted_path])
     expected_affected_dirs = {
+        'namespace': None,
         'dirs_with_adds': set(['/a', '/a/b']),
         'dirs_with_deletes': set(['/a', '/a/b', '/a/b/c', '/a/b/c/d']),
     }
@@ -142,34 +165,31 @@ class DirManagerTest(testing.BaseTestCase):
 
     # Test chronological ordering, even with out-of-order arguments.
     path1 = dirs.ModifiedPath(
-        '/a/b/foo', modified=123123.0, action=PATH_DELETE_ACTION)
+        '/a/b/foo', namespace=None, modified=123123.0,
+        action=PATH_DELETE_ACTION)
     path2 = dirs.ModifiedPath(
-        '/a/b/foo', modified=123123.2, action=PATH_WRITE_ACTION)
+        '/a/b/foo', namespace=None, modified=123123.2, action=PATH_WRITE_ACTION)
     path3 = dirs.ModifiedPath(
-        '/a/b/foo', modified=123123.1, action=PATH_DELETE_ACTION)
+        '/a/b/foo', namespace=None, modified=123123.1,
+        action=PATH_DELETE_ACTION)
     affected_dirs = dir_service.compute_affected_dirs([path1, path2, path3])
     expected_affected_dirs = {
+        'namespace': None,
         'dirs_with_adds': set(['/a', '/a/b']),
         'dirs_with_deletes': set(),
     }
     self.assertEqual(expected_affected_dirs, affected_dirs)
 
-  def testInitializeDirsFromCurrentState(self):
-    # Don't register the factory before doing this (so the dirs aren't created):
-    files.File('/a/b/foo').write('')
-    files.File('/a/b/bar').write('')
-    files.File('/a/d/foo').write('').delete()
+  def testNamespaces(self):
+    files.register_file_mixins([dirs.DirManagerMixin])
 
-    # Force the initializer to run twice by making batch size < len(files).
-    # This does not test the respawning code path.
-    self.stubs.SmartSet(dirs, 'INITIALIZER_BATCH_SIZE', 2)
+    self.assertIsNone(dirs.Dir('/').namespace)
+    self.assertEqual('aaa', dirs.Dir('/', namespace='aaa').namespace)
 
-    self.assertFalse(dirs.Dir('/a').exists)
-    dirs.init_dirs_from_current_state()
-    self.RunDeferredTasks('default')
-    self.assertTrue(dirs.Dir('/a').exists)
-    self.assertTrue(dirs.Dir('/a/b').exists)
-    self.assertFalse(dirs.Dir('/a/d').exists)
+    files.File('/a/a/foo', namespace='aaa').write('')
+    files.File('/z/z/foo').write('')
+    self.assertEqual(['/a'], dirs.Dirs.list('/', namespace='aaa').keys())
+    self.assertEqual(['/z'], dirs.Dirs.list('/').keys())
 
 if __name__ == '__main__':
   basetest.main()

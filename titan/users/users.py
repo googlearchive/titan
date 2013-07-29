@@ -40,12 +40,6 @@ from google.appengine.api import users as users_lib
 from google.appengine.ext import ndb
 from google.appengine.ext.ndb import model
 from google.appengine.ext.ndb import utils as ndb_utils
-try:
-  from titan import endpoints
-except ImportError:
-  # Allow environmental differences for clients of Titan Users, especially
-  # testing environments that may not have lower-level protorpc dependencies.
-  endpoints = None
 
 __all__ = [
     # Constants.
@@ -100,6 +94,10 @@ class TitanUser(object):
   @property
   def email(self):
     return self._email
+
+  @property
+  def username(self):
+    return self.email.split('@')[0]
 
   @property
   def user_id(self):
@@ -200,36 +198,22 @@ def get_current_user(oauth_scopes=OAUTH_SCOPES):
     # Avoid more RPCs, no other user can possibly exist in a task.
     return
 
-  user = users_lib.get_current_user()
-  if user:
-    is_admin = users_lib.is_current_user_admin()
-    organization = os.environ.get('USER_ORGANIZATION')
-    return TitanUser(user.email(), organization=organization, _user=user,
-                     _is_admin=is_admin)
-
-  if endpoints:
-    # Memoize the call to endpoints.get_current_user() because it is noisy.
-    if 'TITAN_ENDPOINTS_USER' in os.environ:
-      user = os.environ['TITAN_ENDPOINTS_USER']
-    else:
-      user = endpoints.get_current_user()
-      os.environ['TITAN_ENDPOINTS_USER'] = user
-
-    if user:
-      # TODO(user): is_admin may not work correctly as we're not sure if the
-      # os variable is set properly.
-      organization = os.environ.get('USER_ORGANIZATION')
-      return TitanUser(user.email(), organization=organization, _user=user,
-                       _is_oauth_user=True)
-
-  # If an OAuth scope is provided, request the current OAuth user, if any.
-  if oauth_scopes:
+  # If an OAuth scope is provided, request the current OAuth user, if any. This
+  # should capture endpoints users as well as long as the OAuth scope matches.
+  if oauth_scopes and 'HTTP_AUTHORIZATION' in os.environ:
     user = _get_current_oauth_user(oauth_scopes)
     if user:
       is_admin = oauth.is_current_user_admin(_format_oauth_scopes(oauth_scopes))
       organization = os.environ.get('USER_ORGANIZATION')
       return TitanUser(user.email(), organization=organization, _user=user,
                        _is_admin=is_admin, _is_oauth_user=True)
+
+  user = users_lib.get_current_user()
+  if user:
+    is_admin = users_lib.is_current_user_admin()
+    organization = os.environ.get('USER_ORGANIZATION')
+    return TitanUser(user.email(), organization=organization, _user=user,
+                     _is_admin=is_admin)
 
 def create_login_url(dest_url=None):
   return users_lib.create_login_url(dest_url)

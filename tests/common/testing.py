@@ -21,7 +21,6 @@ import os
 import mox
 from mox import stubout
 from google.appengine.ext import testbed
-from tests.common.lib import endpointstest
 from titan.files import dirs
 
 class MockableTestCase(common_basetest.AppEngineTestCase):
@@ -87,6 +86,9 @@ class BaseTestCase(MockableTestCase):
       email = args[0]
     return super(BaseTestCase, self).Login(
         email or 'titanuser@example.com', *args[1:], **kwargs)
+
+  def logout(self):
+    return super(BaseTestCase, self).Logout()
 
   def assertEntityEqual(self, ent, other_ent, ignore=None):
     """Assert equality of properties and dynamic properties of two entities.
@@ -172,7 +174,4 @@ class BaseTestCase(MockableTestCase):
     for key in ent.properties():
       props[key] = ent.__dict__['_' + key]
     return props
-
-class EndpointsTestCase(endpointstest.EndpointsTestCase, BaseTestCase):
-  pass
 

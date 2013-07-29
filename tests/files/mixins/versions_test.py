@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # Copyright 2012 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -172,6 +173,19 @@ class VersionsTest(testing.BaseTestCase):
     self.assertEqual('red', titan_file.meta.color)
     self.assertEqual(False, titan_file.meta.flag)  # untouched meta property.
 
+  def testEmptyRootFile(self):
+    # Regression test: make sure that content='' is correctly handled when
+    # copying root file attributes.
+    changeset = self.vcs.new_staging_changeset()
+    files.File('/foo', changeset=changeset).write(u'∆∆∆')
+    changeset.finalize_associated_files()
+    self.vcs.commit(changeset)
+    changeset = self.vcs.new_staging_changeset()
+    files.File('/foo', changeset=changeset).write('', encoding='utf-8')
+    changeset.finalize_associated_files()
+    self.vcs.commit(changeset)
+    self.assertEqual('', files.File('/foo').content)
+
   def testNewStagingChangeset(self):
     changeset = self.vcs.new_staging_changeset()
 
@@ -279,10 +293,11 @@ class VersionsTest(testing.BaseTestCase):
     # NOTE: the status checks here are merely for testing purposes.
     # VersionedFile objects should never be trusted for canonical version info.
     self.assertRaises(
-        versions.ChangesetError, versions.Changeset(12).list_files)
+        versions.ChangesetError,
+        lambda: versions.Changeset(12).list_files('/'))
     self.assertRaises(
         versions.ChangesetError, versions.Changeset(12).get_files)
-    titan_files = versions.Changeset(13).list_files()
+    titan_files = versions.Changeset(13).list_files('/')
     self.assertEqual(titan_files['/foo'].meta.status, FILE_EDITED)
     self.assertEqual(titan_files['/bar'].meta.status, FILE_DELETED)
     self.assertEqual(titan_files['/baz'].meta.status, FILE_EDITED)
@@ -302,6 +317,159 @@ class VersionsTest(testing.BaseTestCase):
         'created_by': 'titanuser@example.com',
     }
     self.assertEqual(expected_data, changeset.serialize())
+
+  def testListFiles(self):
+    changeset = self.vcs.new_staging_changeset()
+    # Test list files within first staging changeset.
+    self.assertEqual(
+        [], changeset.list_files('/').keys())
+    self.assertEqual(
+        [], changeset.list_files('/', include_manifested=True).keys())
+    files.File('/foo', changeset=changeset).write('foo')
+    files.File('/a/foo', changeset=changeset).write('foo')
+    files.File('/a/bar', changeset=changeset).write('bar')
+    changeset.finalize_associated_files()
+    self.vcs.commit(changeset)  # Changeset 2.
+
+    changeset = self.vcs.new_staging_changeset()
+    files.File('/foo', changeset=changeset).delete()
+    changeset.finalize_associated_files()
+    self.vcs.commit(changeset)  # Changeset 4.
+
+    titan_files = versions.Changeset(2).list_files(dir_path='/')
+    self.assertEqual(['/foo'], titan_files.keys())
+    titan_files = versions.Changeset(2).list_files(dir_path='/', recursive=True)
+    self.assertEqual(['/a/bar', '/a/foo', '/foo'], titan_files.keys())
+    titan_files = versions.Changeset(2).list_files(dir_path='/a/')
+    self.assertEqual(['/a/bar', '/a/foo'], titan_files.keys())
+    # Test limit and offset.
+    titan_files = versions.Changeset(2).list_files(
+        dir_path='/', recursive=True, limit=1, offset=1)
+    self.assertEqual(['/a/foo'], titan_files.keys())
+
+    # Test included_deleted.
+    titan_files = versions.Changeset(4).list_files(dir_path='/')
+    self.assertEqual(['/foo'], titan_files.keys())
+    self.assertEqual(
+        versions.FileStatus.deleted, titan_files.values()[0].meta.status)
+    titan_files = versions.Changeset(4).list_files(
+        dir_path='/', include_deleted=False)
+    self.assertEqual([], titan_files.keys())
+
+    # Test include_manifested on a finalized changeset.
+    titan_files = versions.Changeset(4).list_files(
+        '/', include_deleted=False, include_manifested=True)
+    self.assertEqual([], titan_files.keys())
+    titan_files = versions.Changeset(4).list_files('/', include_manifested=True)
+    self.assertEqual(['/foo'], titan_files.keys())
+    titan_files = versions.Changeset(4).list_files(
+        '/', recursive=True, include_manifested=True)
+    self.assertEqual(['/a/bar', '/a/foo', '/foo'], titan_files.keys())
+    titan_files = versions.Changeset(4).list_files(
+        '/a/', recursive=True, include_manifested=True)
+    self.assertEqual(['/a/bar', '/a/foo'], titan_files.keys())
+    titan_files = versions.Changeset(4).list_files(
+        '/b', recursive=True, include_manifested=True)
+    self.assertEqual([], titan_files.keys())
+
+    # Test include_manifested on a staging changeset.
+    changeset = self.vcs.new_staging_changeset()  # Changeset 5 (staging).
+    files.File('/a/qux', changeset=changeset).write('qux')
+    titan_files = versions.Changeset(5).list_files(
+        '/', include_deleted=False, include_manifested=True)
+    self.assertEqual([], titan_files.keys())
+    titan_files = versions.Changeset(5).list_files(
+        '/', recursive=True, include_manifested=True)
+    self.assertEqual(['/a/bar', '/a/foo', '/a/qux'], titan_files.keys())
+    titan_files = versions.Changeset(5).list_files(
+        '/a/', recursive=True, include_manifested=True)
+    self.assertEqual(['/a/bar', '/a/foo', '/a/qux'], titan_files.keys())
+    titan_files = versions.Changeset(5).list_files(
+        '/b', recursive=True, include_manifested=True)
+    self.assertEqual([], titan_files.keys())
+    # Verify reading a manifested and a non-manifested file.
+    titan_files = versions.Changeset(5).list_files(
+        '/', recursive=True, include_manifested=True)
+    self.assertEqual('foo', titan_files['/a/foo'].content)
+    self.assertEqual('qux', titan_files['/a/qux'].content)
+
+    # Error handling.
+    self.assertRaises(
+        ValueError,
+        versions.Changeset(2).list_files,
+        dir_path='/', include_manifested=True, depth=1, filters=[], order=[])
+    self.assertRaises(
+        ValueError, versions.Changeset(2).list_files,
+        '/', include_manifested=True, limit=10, offset=1)
+
+  def testPrivateListManifestedPaths(self):
+    changeset = self.vcs.new_staging_changeset()
+    files.File('/foo', changeset=changeset).write('')
+    files.File('/a/foo', changeset=changeset).write('')
+    files.File('/a/bar', changeset=changeset).write('')
+    files.File('/a/a/foo', changeset=changeset).write('')
+    files.File('/b/foo', changeset=changeset).write('')
+    changeset.finalize_associated_files()
+    changeset = self.vcs.commit(changeset)  # Changeset 2.
+
+    paths_to_changeset_num = versions._list_manifested_paths(
+        changeset=changeset, dir_path='/')
+    self.assertSameElements(['/foo'], paths_to_changeset_num.keys())
+
+    paths_to_changeset_num = versions._list_manifested_paths(
+        changeset=changeset, dir_path='/', recursive=True)
+    self.assertSameElements(
+        ['/foo', '/a/foo', '/a/bar', '/a/a/foo', '/b/foo'],
+        paths_to_changeset_num.keys())
+
+    paths_to_changeset_num = versions._list_manifested_paths(
+        changeset=changeset, dir_path='/a')
+    self.assertSameElements(['/a/foo', '/a/bar'], paths_to_changeset_num.keys())
+
+    paths_to_changeset_num = versions._list_manifested_paths(
+        changeset=changeset, dir_path='/b', recursive=True)
+    self.assertSameElements(['/b/foo'], paths_to_changeset_num.keys())
+
+  def testListDirectories(self):
+    changeset = self.vcs.new_staging_changeset()
+    files.File('/foo', changeset=changeset).write('')
+    self.assertEqual([], changeset.list_directories('/').keys())
+    files.File('/a/foo', changeset=changeset).write('')
+    files.File('/a/a/foo', changeset=changeset).write('')
+    self.assertEqual(['/a'], changeset.list_directories('/').keys())
+    self.assertEqual([], changeset.list_directories('/fake/').keys())
+    changeset = self.vcs.commit(changeset, force=True)
+    self.assertEqual(['/a'], changeset.list_directories('/').keys())
+    self.assertEqual([], changeset.list_directories('/fake/').keys())
+
+    changeset = self.vcs.new_staging_changeset()
+    # Before writes:
+    self.assertEqual([], changeset.list_directories('/').keys())
+    self.assertEqual(
+        ['/a'], changeset.list_directories('/', include_manifested=True).keys())
+    self.assertEqual(
+        ['/a/a'],
+        changeset.list_directories('/a', include_manifested=True).keys())
+
+    files.File('/a/foo', changeset=changeset).write('')
+    files.File('/a/a/a/foo', changeset=changeset).write('')
+    files.File('/b/foo', changeset=changeset).write('')
+    # Before commit:
+    self.assertEqual(['/a', '/b'], changeset.list_directories('/').keys())
+    self.assertEqual(['/a/a'], changeset.list_directories('/a').keys())
+    self.assertEqual(['/a/a/a'], changeset.list_directories('/a/a').keys())
+    changeset = self.vcs.commit(changeset, force=True)
+    # After commit:
+    self.assertEqual(['/a', '/b'], changeset.list_directories('/').keys())
+    self.assertEqual(['/a/a'], changeset.list_directories('/a').keys())
+    self.assertEqual(['/a/a/a'], changeset.list_directories('/a/a').keys())
+
+    # No namespace mixing:
+    changeset = self.vcs.new_staging_changeset(namespace='aaa')
+    self.assertEqual([], changeset.list_directories('/').keys())
+    files.File('/foo', changeset=changeset, namespace='aaa').write('')
+    changeset = self.vcs.commit(changeset, force=True)
+    self.assertEqual([], changeset.list_directories('/').keys())
 
   def testGetFileVersions(self):
     self.make_testdata()
@@ -351,6 +519,10 @@ class VersionsTest(testing.BaseTestCase):
     self.assertFalse(files.File('/bar', changeset=changeset).exists)
     self.assertFalse(files.File('/qux', changeset=changeset).exists)
     changeset = versions.Changeset(4)
+    # Verify the current state of the filesystem in the default namespace.
+    # Force use of dynamic _FilePointer by not passing the changeset arg.
+    self.assertEqual('newfoo', files.File('/foo').content)
+    self.assertEqual('bar', files.File('/bar').content)
 
     # Verify the state of the filesystem in the 'aaa' namespace at changeset 2.
     changeset = versions.Changeset(2, namespace='aaa')

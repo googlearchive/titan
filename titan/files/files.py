@@ -273,6 +273,9 @@ class File(object):
     """Whether or not this lazy object has been evaluated."""
     return bool(self._file_ent)
 
+  def unload(self):
+    self._file_ent = None
+
   @property
   def name(self):
     """Filename without directories."""
@@ -478,6 +481,9 @@ class File(object):
       raise ValueError('"created_by" must be a users.TitanUser instance.')
     if modified_by is not None and not isinstance(modified_by, users.TitanUser):
       raise ValueError('"modified_by" must be a users.TitanUser instance.')
+    if encoding is not None and content is None and blob is None:
+      raise TypeError(
+          '"content" or "blob" must be passed if "encoding" is passed.')
 
     # If given unicode, encode it as UTF-8 and flag it for future decoding.
     content, encoding = self._maybe_encode_content(content, encoding)
@@ -825,7 +831,7 @@ class Files(collections.Mapping):
     return True
 
   def __repr__(self):
-    return '<Files %r>' % self.keys()
+    return '<%s %r>' % (self.__class__.__name__, self.keys())
 
   def _add_file(self, titan_file):
     # Use .path here to allow virtual file path, not forcing real_path.

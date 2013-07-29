@@ -15,21 +15,13 @@
 
 import collections
 import datetime
-import gc
 import json
-import logging
 import os
 import time
-
-from google.appengine import runtime
 from google.appengine.api import taskqueue
-from google.appengine.ext import deferred
 from google.appengine.ext import ndb
-
 from titan import files
 from titan.common import utils
-# Explicitly import this for the one-time high-coupling to a private method.
-from titan.files import files as files_internal
 
 WINDOW_SIZE_SECONDS = 10
 TASKQUEUE_NAME = 'titan-dirs'
@@ -55,6 +47,9 @@ class InvalidMetaError(Error):
 class RespawnSignalError(Error):
   pass
 
+class NamespaceMismatchError(Error):
+  pass
+
 class DirManagerMixin(files.File):
   """Mixin to initiate directory update tasks when files change."""
 
@@ -77,7 +72,8 @@ class DirManagerMixin(files.File):
   def update_titan_dirs(self, async=True):
     """Updates parent path directories to make sure they exist."""
     modified_path = ModifiedPath(
-        path=self.path,
+        path=self.real_path,
+        namespace=self.namespace,
         modified=time.time(),
         action=_STATUS_AVAILABLE,
     )
@@ -99,6 +95,7 @@ class DirManagerMixin(files.File):
     window = _get_window(now)
     path_data = {
         'path': self.path,
+        'namespace': self.namespace,
         'modified': now,
         'action': _STATUS_DELETED,
     }
@@ -154,6 +151,7 @@ class DirTaskConsumer(object):
       path_data = json.loads(task.payload)
       modified_path = ModifiedPath(
           path=path_data['path'],
+          namespace=path_data['namespace'],
           modified=path_data['modified'],
           action=path_data['action'],
       )
@@ -189,22 +187,25 @@ class ModifiedPath(object):
   WRITE = 1
   DELETE = 2
 
-  def __init__(self, path, modified, action):
+  def __init__(self, path, namespace, modified, action):
     """Constructor.
 
     Args:
       path: Absolute path of modified file (including filename).
+      namespace: The namespace of the modified file.
       modified: Unix timestamp float.
       action: One of ModifiedPath.WRITE or ModifiedPath.DELETE.
     """
-    utils.validate_file_path(path)
+    Dir.validate_path(path, namespace=namespace)
     self.path = path
+    self.namespace = namespace
     self.modified = modified
     self.action = action
 
   def serialize(self):
     results = {
         'path': self.path,
+        'namespace': self.namespace,
         'modified': self.modified,
         'action': self.action,
     }
@@ -218,19 +219,23 @@ class DirService(object):
 
     Args:
       modified_paths: A list of ModifiedPath objects.
+    Raises:
+      NamespaceMismatchError: If mixing namespaces.
     Returns:
       A dictionary containing 'dirs_with_adds' and 'dirs_with_deletes',
       both of which are sets of strings containing the affect dir paths.
     """
+    if modified_paths:
+      namespace = modified_paths[0].namespace
     # First, merge file path modifications.
     # Perform an in-order pass to get the final modified state of each file.
     sorted_paths = sorted(modified_paths, key=lambda path: path.modified)
     new_modified_paths = {}
     for modified_path in sorted_paths:
-      if modified_path.path.startswith('/_titan/ver/'):
-        # Small integration with versions mixin: don't create directories
-        # for versioned file paths. See note in _create_all_dirs_with_respawn.
-        continue
+      if modified_path.namespace != namespace:
+        raise NamespaceMismatchError(
+            'Namespace "{}" does not match namespace "{}".'.format(
+                modified_path.namespace, namespace))
       new_modified_paths[modified_path.path] = modified_path
     sorted_paths = sorted(new_modified_paths.values(),
                           key=lambda path: path.modified)
@@ -253,13 +258,15 @@ class DirService(object):
     dirs_with_deletes.discard('/')
 
     affected_dirs = {
+        'namespace': namespace,
         'dirs_with_adds': dirs_with_adds,
         'dirs_with_deletes': dirs_with_deletes,
     }
     return affected_dirs
 
   @ndb.toplevel
-  def update_affected_dirs(self, dirs_with_adds, dirs_with_deletes, async=False):
+  def update_affected_dirs(self, dirs_with_adds, dirs_with_deletes,
+                           namespace=None, async=False):
     """Manage changes to _TitanDir entities computed by compute_affected_dirs."""
     # Order deletes by depth first. This isn't actually by depth, but all we
     # need to guarantee here is that paths with common subdirs are deleted
@@ -274,8 +281,8 @@ class DirService(object):
     #   3. The directory path is not present in dirs_with_adds.
     dirs_paths_to_delete = []
     for path in dirs_with_deletes:
-      if path in dirs_with_adds or files.Files.list(path, limit=1,
-                                                    _internal=True):
+      if path in dirs_with_adds or files.Files.list(
+          path, namespace=namespace, limit=1, _internal=True):
         # The directory is marked for addition, or files still exist in it.
         continue
       subdirs = Dirs.list(path, limit=2)
@@ -289,8 +296,11 @@ class DirService(object):
       dirs_paths_to_delete.append(path)
 
     # Batch get all directory entities, both added and deleted.
-    dir_keys = [ndb.Key(_TitanDir, path) for path in dirs_paths_to_delete]
-    dir_keys += [ndb.Key(_TitanDir, path) for path in dirs_with_adds]
+    ns = namespace
+    dir_keys = [
+        ndb.Key(_TitanDir, path, namespace=ns) for path in dirs_paths_to_delete]
+    dir_keys += [
+        ndb.Key(_TitanDir, path, namespace=ns) for path in dirs_with_adds]
     existing_dir_ents = ndb.get_multi(dir_keys)
     # Transform into a dictionary mapping paths to existing entities:
     existing_dirs = {}
@@ -310,7 +320,10 @@ class DirService(object):
       else:
         # Missing directory entity, create a new one and mark as deleted.
         ent = _TitanDir(
+            # NDB properties:
             id=path,
+            namespace=namespace,
+            # Model properties:
             name=os.path.basename(path),
             parent_path=os.path.dirname(path),
             parent_paths=utils.split_path(path),
@@ -330,7 +343,10 @@ class DirService(object):
       else:
         # Missing directory entity, create a new one and mark as available.
         ent = _TitanDir(
+            # NDB properties:
             id=path,
+            namespace=namespace,
+            # Model properties:
             name=os.path.basename(path),
             parent_path=os.path.dirname(path),
             parent_paths=utils.split_path(path),
@@ -348,30 +364,42 @@ class DirService(object):
 class Dir(object):
   """A simple directory."""
 
-  # TODO(user): implement Copy and Move methods, and properties.
-
-  def __init__(self, path):
+  def __init__(self, path, namespace=None, strip_prefix=None):
     Dir.validate_path(path)
+    if strip_prefix:
+      Dir.validate_path(strip_prefix)
+      # Strip trailing slash.
+      if strip_prefix.endswith('/'):
+        strip_prefix = strip_prefix[:-1]
+
     # Strip trailing slash.
     if path != '/' and path.endswith('/'):
       path = path[:-1]
     self._path = path
-    self._name = os.path.basename(self.path)
+    self._name = os.path.basename(path)
     self._meta = None
     self._dir_ent = None
+    self._strip_prefix = strip_prefix
+    self._namespace = namespace
 
   @property
   def _dir(self):
     """Internal property that allows lazy-loading of the public properties."""
     if not self._dir_ent:
-      self._dir_ent = _TitanDir.get_by_id(self.path)
+      self._dir_ent = _TitanDir.get_by_id(self._path, namespace=self.namespace)
       if not self._dir_ent or self._dir_ent.status == _STATUS_DELETED:
-        raise InvalidDirectoryError('Directory does not exist: %s' % self.path)
+        raise InvalidDirectoryError('Directory does not exist: %s' % self._path)
     return self._dir_ent
 
   @property
   def path(self):
+    if self._strip_prefix:
+      return self._path[len(self._strip_prefix):]
     return self._path
+
+  @property
+  def namespace(self):
+    return self._namespace
 
   @property
   def meta(self):
@@ -396,8 +424,10 @@ class Dir(object):
     return self._name
 
   @staticmethod
-  def validate_path(path):
-    return utils.validate_dir_path(path)
+  def validate_path(path, namespace=None):
+    utils.validate_dir_path(path)
+    if namespace is not None:
+      utils.validate_namespace(namespace)
 
   def set_meta(self, meta):
     _TitanDir.validate_meta_properties(meta)
@@ -414,30 +444,60 @@ class Dir(object):
     return data
 
 class Dirs(collections.Mapping):
-  """A mapping of directory paths to Dir objects."""
+  """An ordered mapping of directory paths to Dir objects."""
 
-  def __init__(self, paths):
+  def __init__(self, paths=None, dirs=None, namespace=None, **kwargs):
     """Constructor.
 
     Args:
       paths: An iterable of absolute directory paths.
+      dirs: An iterable of Dir objects.
+      namespace: The filesystem namespace.
+      **kwargs: Keyword arguments to pass through to Dir objects.
     Raises:
       ValueError: If given invalid paths.
+      TypeError: If not given "paths" or "dirs".
     """
     self._titan_dirs = {}
-    if not hasattr(paths, '__iter__'):
+    self._ordered_paths = []
+    self._namespace = namespace
+    if paths is not None and dirs is not None:
+      raise TypeError('Either "paths" or "dirs" must be given.')
+    if paths is not None and not hasattr(paths, '__iter__'):
       raise ValueError('"paths" must be an iterable.')
-    for path in paths:
-      self._titan_dirs[path] = Dir(path=path)
+    if dirs is not None and not hasattr(dirs, '__iter__'):
+      raise ValueError('"dirs" must be an iterable.')
+
+    if paths is not None:
+      for path in paths:
+        self._add_dir(Dir(path=path, namespace=namespace, **kwargs))
+    if dirs is not None:
+      for titan_dir in dirs:
+        self._add_dir(titan_dir)
+
+  def _add_dir(self, titan_dir):
+    if titan_dir.namespace != self.namespace:
+      raise NamespaceMismatchError(
+          'Dir namespace "{}" does not match Dirs namespace "{}".'.format(
+              titan_dir.namespace, self.namespace))
+    if titan_dir.path not in self._titan_dirs:
+      self._ordered_paths.append(titan_dir.path)
+    self._titan_dirs[titan_dir.path] = titan_dir
+
+  def _remove_dir(self, path):
+    self._ordered_paths.remove(path)
+    del self._titan_dirs[path]
 
   def __delitem__(self, path):
-    del self._titan_dirs[path]
+    self._remove_dir(path)
 
   def __getitem__(self, path):
     return self._titan_dirs[path]
 
   def __setitem__(self, path, titan_dir):
     assert isinstance(titan_dir, Dir)
+    if titan_dir.path not in self:
+      self._ordered_paths.append(titan_dir.path)
     self._titan_dirs[path] = titan_dir
 
   def __contains__(self, other):
@@ -445,7 +505,7 @@ class Dirs(collections.Mapping):
     return path in self._titan_dirs
 
   def __iter__(self):
-    for key in self._titan_dirs:
+    for key in self._ordered_paths:
       yield key
 
   def __len__(self):
@@ -462,31 +522,45 @@ class Dirs(collections.Mapping):
   def __repr__(self):
     return '<Dirs %r>' % self.keys()
 
+  @property
+  def namespace(self):
+    return self._namespace
+
   def update(self, other_titan_dirs):
+    if other_titan_dirs.namespace != self.namespace:
+      raise NamespaceMismatchError(
+          'Dirs namespace "{}" does not match Dirs namespace "{}".'.format(
+              other_titan_dirs.namespace, self.namespace))
     for titan_dir in other_titan_dirs.itervalues():
       self[titan_dir.path] = titan_dir
 
+  def sort(self):
+    self._ordered_paths.sort()
+
   @classmethod
-  def list(cls, path, limit=None):
+  def list(cls, path, namespace=None, limit=None, **kwargs):
     """List the sub-directories of a directory.
 
     Args:
       path: An absolute directory path.
+      namespace: The filesystem namespace.
       limit: An integer limiting the number of sub-directories returned.
+      **kwargs: Keyword arguments to pass through to Dir objects.
     Returns:
       A lazy Dirs mapping.
     """
-    Dir.validate_path(path)
+    Dir.validate_path(path, namespace=namespace)
 
     # Strip trailing slash.
     if path != '/' and path.endswith('/'):
       path = path[:-1]
 
-    dirs_query = _TitanDir.query()
+    dirs_query = _TitanDir.query(namespace=namespace)
     dirs_query = dirs_query.filter(_TitanDir.parent_path == path)
     dirs_query = dirs_query.filter(_TitanDir.status == _STATUS_AVAILABLE)
     dir_keys = dirs_query.fetch(limit=limit, keys_only=True)
-    titan_dirs = cls([key.id() for key in dir_keys])
+    titan_dirs = cls(
+        [key.id() for key in dir_keys], namespace=namespace, **kwargs)
     return titan_dirs
 
   def serialize(self):
@@ -494,120 +568,6 @@ class Dirs(collections.Mapping):
     for titan_dir in self.itervalues():
       data[titan_dir.name] = titan_dir.serialize()
     return data
-
-def init_dirs_from_current_state(taskqueue_name='default'):
-  """Spawns task to create and cleanup all directories from current file state.
-
-  This is potentially expensive because it must touch every Titan File in
-  existence.
-
-  Args:
-    taskqueue_name: The name of the taskqueue which will be used.
-  """
-  deferred.defer(_create_all_dirs_with_respawn, _queue=taskqueue_name)
-  deferred.defer(_clean_dirs_with_respawn, _queue=taskqueue_name)
-
-def _create_all_dirs_with_respawn(cursor=None, include_versioned_dirs=False):
-  """A long-running, dir-creation task which respawns until completion."""
-  now = datetime.datetime.now()
-  # Disable the in-context cache to avoid OOM issues from cached query results.
-  ndb.get_context().set_cache_policy(False)
-  try:
-    count = 0
-    more = True
-    dir_service = DirService()
-    query = files_internal._TitanFile.query()
-
-    while more:
-      if not cursor:
-        # First run.
-        ents, cursor, more = query.fetch_page(INITIALIZER_BATCH_SIZE)
-      else:
-        ents, cursor, more = query.fetch_page(
-            INITIALIZER_BATCH_SIZE, start_cursor=cursor)
-      modified_paths = []
-      for ent in ents:
-        if not include_versioned_dirs and ent.path.startswith('/_titan/ver/'):
-          # Skip versioned paths since there is already much metadata around
-          # discovering file versions in a changeset, and also because
-          # microversions can create very numerous, duplicate, deep
-          # directory trees.
-          # NOTE: can't skip these entities by adding an inequality to the
-          # query because of the cursor handling, so skip them manually here.
-          continue
-        try:
-          modified_path = ModifiedPath(
-              path=ent.path,
-              modified=now,
-              action=ModifiedPath.WRITE,
-          )
-        except ValueError:
-          # Skip any old, invalid files which may end in a trailing slash. :(
-          logging.error('Skipping invalid path: %s', repr(ent.path))
-          continue
-        modified_paths.append(modified_path)
-
-      if modified_paths:
-        affected_dirs = dir_service.compute_affected_dirs(modified_paths)
-        if affected_dirs['dirs_with_adds']:
-          dir_service.update_affected_dirs(**affected_dirs)
-          logging.info('Created directories: \n%s',
-                       '\n'.join(sorted(list(affected_dirs['dirs_with_adds']))))
-
-      # Save the second-to-last cursor, because if we exceed the deadline above,
-      # we need to restart the last update.
-      penultimate_cursor = cursor
-      count += 1
-
-      # Attempt to avoid OOM errors.
-      gc.collect()
-      if count >= INITIALIZER_NUM_BATCHES:
-        raise RespawnSignalError
-  except (runtime.DeadlineExceededError, RespawnSignalError):
-    try:
-      taskqueue_name = os.environ['HTTP_X_APPENGINE_QUEUENAME']
-      deferred.defer(
-          _create_all_dirs_with_respawn,
-          cursor=penultimate_cursor, _queue=taskqueue_name)
-    except:
-      logging.exception('Unable to finish creating directories!')
-
-def _clean_dirs_with_respawn(cursor=None):
-  """A long-running, dir-cleanup task which respawns until completion."""
-  # Disable the in-context cache to avoid OOM issues from cached query results.
-  ndb.get_context().set_cache_policy(False)
-  try:
-    more = True
-    query = _TitanDir.query()
-    while more:
-      if not cursor:
-        # First run.
-        ents, cursor, more = query.fetch_page(INITIALIZER_BATCH_SIZE)
-      else:
-        ents, cursor, more = query.fetch_page(
-            INITIALIZER_BATCH_SIZE, start_cursor=cursor)
-      dir_keys_to_delete = []
-      for ent in ents:
-        # A directory is empty if it doesn't have any files, recursively.
-        titan_files = files.Files.list(ent.path, recursive=True, limit=1,
-                                       _internal=True)
-        if not titan_files:
-          dir_keys_to_delete.append(ent.key)
-
-      # Delete the empty directories.
-      ndb.delete_multi(dir_keys_to_delete)
-
-      # Save the second-to-last cursor, because if we exceed the deadline
-      # we need to restart the last update.
-      penultimate_cursor = cursor
-  except runtime.DeadlineExceededError:
-    try:
-      taskqueue_name = os.environ['HTTP_X_APPENGINE_QUEUENAME']
-      deferred.defer(
-          _clean_dirs_with_respawn,
-          cursor=penultimate_cursor, _queue=taskqueue_name)
-    except:
-      logging.exception('Unable to finish cleaning empty directories!')
 
 class _TitanDir(ndb.Expando):
   """Model for representing a dir; don't use directly outside of this module.
