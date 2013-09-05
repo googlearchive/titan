@@ -379,7 +379,8 @@ class CustomJsonEncoder(json.JSONEncoder):
   def default(self, obj):
     """Override of json.JSONEncoder method."""
     # Objects with custom Serialize() function.
-    serialize_func = getattr(obj, 'serialize', getattr(obj, 'Serialize', None))
+    serialize_func = (getattr(obj, 'serialize', None) or
+                      getattr(obj, 'Serialize', None))
     if serialize_func:
       if self.full is not None:
         return serialize_func(full=self.full)

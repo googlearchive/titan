@@ -133,6 +133,30 @@ def TemporaryFileWithContents(contents, **kw):
   temporary_file.close()
 
 
+# TODO(user): remove after migration to Python 3.2.
+# This context manager can be replaced with tempfile.TemporaryDirectory in
+# Python 3.2 (http://bugs.python.org/issue5178,
+# http://docs.python.org/dev/library/tempfile.html#tempfile.TemporaryDirectory).
+@contextlib.contextmanager
+def TemporaryDirectory(suffix='', prefix='tmp', base_path=''):
+  """A context manager to create a temporary directory and clean up on exit.
+
+  The parameters are the same ones expected by tempfile.mkdtemp.
+  The directory will be securely and atomically created.
+  Everything under it will be removed when exiting the context.
+
+  Args:
+    suffix: optional suffix.
+    prefix: options prefix.
+    base_path: the base path under which to create the temporary directory.
+  Yields:
+    The absolute path of the new temporary directory.
+  """
+  temp_dir_path = tempfile.mkdtemp(suffix, prefix, base_path)
+  yield temp_dir_path
+  RmDirs(temp_dir_path)
+
+
 def MkDirs(directory, force_mode=None):
   """Makes a directory including its parent directories.
 

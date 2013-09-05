@@ -37,6 +37,7 @@ __all__ = [
     'ACTIVITIES_ENVIRON_KEY',
     # Classes.
     'Activity',
+    'ActivityProperty',
     'ActivitiesService',
     'BaseActivityLogger',
     'BaseProcessorActivityLogger',
@@ -100,6 +101,14 @@ class Activity(object):
         key=self.key,
         keys=self.keys,
         meta=json.dumps(self.meta))
+
+class ActivityProperty(files.FileProperty):
+  """A convenience wrapper for creating filters for Activity searches.
+
+  Usage:
+    filters = [ActivityProperty('color') == 'blue']
+    ActivitiesService.get_activities(['create'], filters=filters)
+  """
 
 class BaseActivityLogger(object):
   """An abstract activity for logging."""
@@ -215,7 +224,8 @@ class ActivitiesMiddleware(object):
 class ActivitiesService(object):
   """A service class to retrieve permanently stored activities."""
 
-  def get_activities(self, keys, user=None, start=None, end=None):
+  def get_activities(self, keys, user=None, start=None, end=None, filters=None,
+                     limit=None, offset=None, order=None):
     """Query for a set of stored activities.
 
     Args:
@@ -223,6 +233,8 @@ class ActivitiesService(object):
       user: A user to filter on.
       start: A datetime.datetime object. Defaults to the previous hour.
       end: A datetime.datetime object. Defaults to current day.
+      filters: A list of filters to apply to the activity retrieval.
+      order: An iterable of ActivityProperty objects to sort the result set.
     Raises:
       ValueError: if end time is greater than start time.
     Returns:
@@ -240,15 +252,17 @@ class ActivitiesService(object):
     # Get all activities within the range.
     titan_files = files.OrderedFiles([])
     for key in keys:
-      filters = [
-          files.FileProperty('activity_key') == key,
+      filters = filters or []
+      filters += [
+          files.FileProperty('activity_keys') == key,
           files.FileProperty('created') >= start,
           files.FileProperty('created') <= end,
       ]
       if user:
         filters.append(files.FileProperty('user') == user.email)
-      new_titan_files = files.OrderedFiles.list(BASE_DIR, recursive=True,
-                                                filters=filters, _internal=True)
+      new_titan_files = files.OrderedFiles.list(
+          BASE_DIR, recursive=True, filters=filters, order=order,
+          limit=limit, offset=offset, _internal=True)
       titan_files.update(new_titan_files)
 
     final_results = []

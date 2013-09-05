@@ -50,7 +50,8 @@ class AppEngineTestCase(basetest.TestCase):
     self.InitTestbed()
 
     # Register the search stub (until included in init_all_stubs).
-    if simple_search_stub:
+    if (simple_search_stub and
+        apiproxy_stub_map.apiproxy.GetStub('search') is None):
       self.search_stub = simple_search_stub.SearchServiceStub()
       apiproxy_stub_map.apiproxy.RegisterStub('search', self.search_stub)
 

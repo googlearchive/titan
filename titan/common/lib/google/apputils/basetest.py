@@ -332,6 +332,46 @@ class TestCase(unittest.TestCase):
       desc = '\n'.join((desc, doc_first_line))
     return desc
 
+  def assertStartsWith(self, actual, expected_start):
+    """Assert that actual.startswith(expected_start) is True.
+
+    Args:
+      actual: str
+      expected_start: str
+    """
+    if not actual.startswith(expected_start):
+      self.fail('%r does not start with %r' % (actual, expected_start))
+
+  def assertNotStartsWith(self, actual, unexpected_start):
+    """Assert that actual.startswith(unexpected_start) is False.
+
+    Args:
+      actual: str
+      unexpected_start: str
+    """
+    if actual.startswith(unexpected_start):
+      self.fail('%r does start with %r' % (actual, unexpected_start))
+
+  def assertEndsWith(self, actual, expected_end):
+    """Assert that actual.endswith(expected_end) is True.
+
+    Args:
+      actual: str
+      expected_end: str
+    """
+    if not actual.endswith(expected_end):
+      self.fail('%r does not end with %r' % (actual, expected_end))
+
+  def assertNotEndsWith(self, actual, unexpected_end):
+    """Assert that actual.endswith(unexpected_end) is False.
+
+    Args:
+      actual: str
+      unexpected_end: str
+    """
+    if actual.endswith(unexpected_end):
+      self.fail('%r does end with %r' % (actual, unexpected_end))
+
   def assertSequenceStartsWith(self, prefix, whole, msg=None):
     """An equality assertion for the beginning of ordered sequences.
 
@@ -384,6 +424,20 @@ class TestCase(unittest.TestCase):
       msg += ': %s' % missing_msg
     else:
       msg = missing_msg
+    self.fail(msg)
+
+  def assertNoCommonElements(self, expected_seq, actual_seq, msg=None):
+    """Checks whether actual iterable and expected iterable are disjoint."""
+    common = set(expected_seq) & set(actual_seq)
+    if not common:
+      return
+
+    common_msg = 'Common elements %s\nExpected: %s\nActual: %s' % (
+        common, expected_seq, actual_seq)
+    if msg:
+      msg += ': %s' % common_msg
+    else:
+      msg = common_msg
     self.fail(msg)
 
   # TODO(user): Provide an assertItemsEqual method when our super class
@@ -595,9 +649,25 @@ class TestCase(unittest.TestCase):
                 _QuoteLongString(err),
                 regexes)))
 
+  class _AssertRaisesContext(object):
+    def __init__(self, expected_exception, test_case, test_func):
+      self.expected_exception = expected_exception
+      self.test_case = test_case
+      self.test_func = test_func
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_value, tb):
+      if exc_type is None:
+        self.test_case.fail(self.expected_exception.__name__ + ' not raised')
+      if not issubclass(exc_type, self.expected_exception):
+        return False
+      self.test_func(exc_value)
+      return True
+
   def assertRaisesWithPredicateMatch(self, expected_exception, predicate,
-                                     callable_obj, *args,
-                                     **kwargs):
+                                     callable_obj=None, *args, **kwargs):
     """Asserts that exception is thrown and predicate(exception) is true.
 
     Args:
@@ -607,46 +677,61 @@ class TestCase(unittest.TestCase):
       callable_obj: Function to be called.
       args: Extra args.
       kwargs: Extra keyword args.
+    Returns:
+      A context manager if callable_obj is None. Otherwise, None.
+    Raises:
+      self.failureException if callable_obj does not raise a macthing exception.
     """
-    try:
-      callable_obj(*args, **kwargs)
-    except expected_exception as err:
+    def Check(err):
       self.assert_(predicate(err),
                    '%r does not match predicate %r' % (err, predicate))
-    else:
-      self.fail(expected_exception.__name__ + ' not raised')
+
+    context = self._AssertRaisesContext(expected_exception, self, Check)
+    if callable_obj is None:
+      return context
+    with context:
+      callable_obj(*args, **kwargs)
 
   def assertRaisesWithLiteralMatch(self, expected_exception,
-                                   expected_exception_message, callable_obj,
-                                   *args, **kwargs):
+                                   expected_exception_message,
+                                   callable_obj=None, *args, **kwargs):
     """Asserts that the message in a raised exception equals the given string.
 
-    Unlike assertRaisesWithRegexpMatch this method takes a literal string, not
+    Unlike assertRaisesRegexp, this method takes a literal string, not
     a regular expression.
+
+    with self.assertRaisesWithLiteralMatch(ExType, 'message'):
+      DoSomething()
 
     Args:
       expected_exception: Exception class expected to be raised.
       expected_exception_message: String message expected in the raised
         exception.  For a raise exception e, expected_exception_message must
         equal str(e).
-      callable_obj: Function to be called.
+      callable_obj: Function to be called, or None to return a context.
       args: Extra args.
       kwargs: Extra kwargs.
+    Returns:
+      A context manager if callable_obj is None. Otherwise, None.
+    Raises:
+      self.failureException if callable_obj does not raise a macthing exception.
     """
-    try:
-      callable_obj(*args, **kwargs)
-    except expected_exception as err:
+    def Check(err):
       actual_exception_message = str(err)
       self.assert_(expected_exception_message == actual_exception_message,
                    'Exception message does not match.\n'
                    'Expected: %r\n'
                    'Actual: %r' % (expected_exception_message,
                                    actual_exception_message))
-    else:
-      self.fail(expected_exception.__name__ + ' not raised')
+
+    context = self._AssertRaisesContext(expected_exception, self, Check)
+    if callable_obj is None:
+      return context
+    with context:
+      callable_obj(*args, **kwargs)
 
   def assertRaisesWithRegexpMatch(self, expected_exception, expected_regexp,
-                                  callable_obj, *args, **kwargs):
+                                  callable_obj=None, *args, **kwargs):
     """Asserts that the message in a raised exception matches the given regexp.
 
     This is just a wrapper around assertRaisesRegexp. Please use
@@ -656,18 +741,17 @@ class TestCase(unittest.TestCase):
       expected_exception: Exception class expected to be raised.
       expected_regexp: Regexp (re pattern object or string) expected to be
         found in error message.
-      callable_obj: Function to be called.
+      callable_obj: Function to be called, or None to return a context.
       args: Extra args.
       kwargs: Extra keyword args.
+    Returns:
+      A context manager if callable_obj is None. Otherwise, None.
+    Raises:
+      self.failureException if callable_obj does not raise a macthing exception.
     """
-    # TODO(user): this is a good candidate for a global
-    # search-and-replace.
-    self.assertRaisesRegexp(
-        expected_exception,
-        expected_regexp,
-        callable_obj,
-        *args,
-        **kwargs)
+    # TODO(user): this is a good candidate for a global search-and-replace.
+    return self.assertRaisesRegexp(expected_exception, expected_regexp,
+                                   callable_obj, *args, **kwargs)
 
   def assertContainsInOrder(self, strings, target):
     """Asserts that the strings provided are found in the target in order.
@@ -721,11 +805,11 @@ class TestCase(unittest.TestCase):
     self.assertTotallyOrdered(
       [None],  # None should come before everything else.
       [1],     # Integers sort earlier.
-      ['foo'],  # As do strings.
       [A(1, 'a')],
       [A(2, 'b')],  # 2 is after 1.
-      [A(2, 'c'), A(2, 'd')],  # The second argument is irrelevant.
-      [A(3, 'z')])
+      [A(3, 'c'), A(3, 'd')],  # The second argument is irrelevant.
+      [A(4, 'z')],
+      ['foo'])  # Strings sort last.
 
     Args:
      groups: A list of groups of elements.  Each group of elements is a list
@@ -800,16 +884,16 @@ class TestCase(unittest.TestCase):
     self.assertIsInstance(a, dict, 'First argument is not a dictionary')
     self.assertIsInstance(b, dict, 'Second argument is not a dictionary')
 
-    def Sorted(iterable):
+    def Sorted(list_of_items):
       try:
-        return sorted(iterable)  # In 3.3, unordered objects are possible.
+        return sorted(list_of_items)  # In 3.3, unordered are possible.
       except TypeError:
-        return list(iterable)
+        return list_of_items
 
     if a == b:
       return
-    a_items = Sorted(a.iteritems())
-    b_items = Sorted(b.iteritems())
+    a_items = Sorted(list(a.iteritems()))
+    b_items = Sorted(list(b.iteritems()))
 
     unexpected = []
     missing = []

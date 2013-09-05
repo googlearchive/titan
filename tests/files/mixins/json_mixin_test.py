@@ -22,6 +22,8 @@ from titan.common.lib.google.apputils import basetest
 from titan import files
 from titan.files.mixins import json_mixin
 
+LARGE_FILE_CONTENT = 'a' * (1 << 21)  # 2 MiB.
+
 class JsonMixinTestCase(testing.BaseTestCase):
 
   def setUp(self):
@@ -56,6 +58,10 @@ class JsonMixinTestCase(testing.BaseTestCase):
     titan_file = files.File('/foo/file.json')
     titan_file.write('{% some django tag %}')
     self.assertRaises(json_mixin.BadJsonError, lambda: titan_file.json)
+
+    # Verify JSON is not checked for blobs (out of necessity, not correctness).
+    titan_file = files.File('/foo/some-blob').write(LARGE_FILE_CONTENT)
+    files.File('/foo/file.json').write(blob=titan_file.blob.key())
 
     # Verify ability to set json on a new file.
     titan_file = files.File('/foo/new_file.json')

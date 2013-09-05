@@ -92,7 +92,8 @@ class JsonMixin(files.File):
     """
     # JSON validation won't happen when writing blobs instead of content.
     # Prevent invalid JSON from ever being written to JSON files.
-    if not self._is_django_template(kwargs['content'] or ''):
+    blob = kwargs['blob']
+    if not blob and not self._is_django_template(kwargs['content'] or ''):
       self._json = self._get_json_or_die(kwargs['content'] or '')
     return super(JsonMixin, self).write(**kwargs)
 
