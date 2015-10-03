@@ -4,4 +4,4 @@
 from titan import files
 from titan.files import dirs
 
-files.RegisterFileMixins([dirs.DirManagerMixin])
+files.register_file_mixins([dirs.DirManagerMixin])

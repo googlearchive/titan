@@ -205,7 +205,7 @@ class AbstractRemoteFactory(object):
     if not self._titan_client:
       self._titan_client = self._get_titan_client(
           host=self.host,
-          auth_function=self.auth_function,
+          auth_function=self.auth_function or self.create_auth_function(),
           user_agent=self.user_agent,
           source=self.source,
           secure=self.secure,
@@ -213,8 +213,6 @@ class AbstractRemoteFactory(object):
     return self._titan_client
 
   def _get_titan_client(self, **kwargs):
-    if not self.auth_function:
-      self.auth_function = self.create_auth_function()
     return TitanClient(**kwargs)
 
   def validate_client_auth(self):
